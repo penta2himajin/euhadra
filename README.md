@@ -240,7 +240,3 @@ cargo test                  # 39 tests
 cargo run -- --help         # CLI usage
 cargo build --features onnx # with ONNX inference (requires ort)
 ```
-
-## License
-
-MIT OR Apache-2.0
