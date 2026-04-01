@@ -1,0 +1,36 @@
+[package]
+name = "euhadra"
+version = "0.1.0"
+edition = "2021"
+description = "A programmable voice input framework — ASR, LLM refinement, and OS integration as composable adapters"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive"] }
+arboard = "3"
+cpal = "0.15"
+
+# ONNX inference (opt-in)
+ort = { version = "2.0.0-rc.12", optional = true }
+ndarray = { version = "0.17", optional = true }
+tokenizers = { version = "0.21", optional = true }
+rustfft = { version = "6", optional = true }
+
+[features]
+default = []
+onnx = ["dep:ort", "dep:ndarray", "dep:tokenizers", "dep:rustfft"]
+
+[[bin]]
+name = "euhadra"
+path = "src/main.rs"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
+
