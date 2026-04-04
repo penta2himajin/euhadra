@@ -21,11 +21,11 @@ cpal = "0.15"
 ort = { version = "2.0.0-rc.12", optional = true }
 ndarray = { version = "0.17", optional = true }
 tokenizers = { version = "0.21", optional = true }
-rustfft = { version = "6", optional = true }
+parakeet-rs = { version = "0.3", optional = true }
 
 [features]
 default = []
-onnx = ["dep:ort", "dep:ndarray", "dep:tokenizers", "dep:rustfft"]
+onnx = ["dep:ort", "dep:ndarray", "dep:tokenizers", "dep:parakeet-rs"]
 
 [[bin]]
 name = "euhadra"
