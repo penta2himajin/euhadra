@@ -236,7 +236,7 @@ docs/
 ## Development
 
 ```bash
-cargo test                  # 39 tests
+cargo test                  # run unit + integration tests
 cargo run -- --help         # CLI usage
 cargo build --features onnx # with ONNX inference (requires ort)
 ```

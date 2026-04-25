@@ -291,7 +291,7 @@ impl TextProcessor for BasicPunctuationRestorer {
         let mut corrections = Vec::new();
         let mut capitalize_next = true;
 
-        for (_i, ch) in text.chars().enumerate() {
+        for ch in text.chars() {
             if capitalize_next && ch.is_alphabetic() {
                 let upper: String = ch.to_uppercase().collect();
                 if upper != ch.to_string() {

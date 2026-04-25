@@ -262,10 +262,8 @@ impl PhonemeCorrector {
                 _ => phon_sim,
             };
 
-            if score >= self.threshold {
-                if best.is_none() || score > best.unwrap().1 {
-                    best = Some((i, score));
-                }
+            if score >= self.threshold && (best.is_none() || score > best.unwrap().1) {
+                best = Some((i, score));
             }
         }
 
@@ -375,9 +373,7 @@ impl TextProcessor for PhonemeCorrector {
             });
 
             result_words[cand.start] = self.custom_entries[cand.entry_idx].word.clone();
-            for j in cand.start..end {
-                consumed[j] = true;
-            }
+            consumed[cand.start..end].fill(true);
         }
 
         // Rebuild text, skipping consumed (merged) words

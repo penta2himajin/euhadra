@@ -5,7 +5,7 @@
 ```bash
 mise exec rust -- cargo build                  # 通常ビルド
 mise exec rust -- cargo build --features onnx  # ONNX機能付きビルド
-mise exec rust -- cargo test                   # テスト実行 (39 tests)
+mise exec rust -- cargo test                   # テスト実行 (unit + integration)
 mise exec rust -- cargo clippy                 # lint
 ```
 
