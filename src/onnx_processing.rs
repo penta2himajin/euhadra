@@ -270,7 +270,7 @@ impl TextProcessor for OnnxPunctuationRestorer {
             let (punct, should_upper) = Self::parse_label(&word_labels[i]);
 
             let mut w = word.to_string();
-            if should_upper && w.chars().next().map_or(false, |c| c.is_alphabetic()) {
+            if should_upper && w.chars().next().is_some_and(|c| c.is_alphabetic()) {
                 let first_len = w.chars().next().unwrap().len_utf8();
                 let first: String = w.chars().next().unwrap().to_uppercase().collect();
                 if first != w[..first_len] {

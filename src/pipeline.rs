@@ -192,6 +192,7 @@ impl std::error::Error for PipelineError {}
 // Session execution
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 async fn run_session(
     asr: Arc<dyn AsrAdapter>,
     filters: Vec<Arc<dyn TextFilter>>,
@@ -553,7 +554,7 @@ mod tests {
             .unwrap();
         drop(audio_tx);
 
-        let result = handle.await.unwrap().unwrap();
+        let _result = handle.await.unwrap().unwrap();
         let buf = outputs.lock().await;
         match &buf[0] {
             RefinementOutput::TextInsertion { text, .. } => {

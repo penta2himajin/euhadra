@@ -63,6 +63,12 @@ impl MockContextProvider {
     }
 }
 
+impl Default for MockContextProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl ContextProvider for MockContextProvider {
     async fn get_context(&self) -> ContextSnapshot {
@@ -147,6 +153,12 @@ impl MockEmitter {
 
     pub fn outputs(&self) -> std::sync::Arc<tokio::sync::Mutex<Vec<RefinementOutput>>> {
         self.outputs.clone()
+    }
+}
+
+impl Default for MockEmitter {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

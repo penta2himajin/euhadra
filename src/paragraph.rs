@@ -76,6 +76,12 @@ pub struct ParagraphSplitter {
     pub separator: String,
 }
 
+impl Default for ParagraphSplitter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ParagraphSplitter {
     /// Create a splitter with only max-sentence constraint (no embedder).
     pub fn new() -> Self {
@@ -338,8 +344,10 @@ mod tests {
     #[tokio::test]
     async fn test_splitter_skip_chat() {
         let splitter = ParagraphSplitter::new();
-        let mut ctx = ContextSnapshot::default();
-        ctx.field_type = Some(FieldType::ChatMessage);
+        let ctx = ContextSnapshot {
+            field_type: Some(FieldType::ChatMessage),
+            ..Default::default()
+        };
         let text = "First sentence. Second sentence. Third sentence. Fourth. Fifth. Sixth. Seventh. Eighth. Ninth. Tenth.";
         let r = splitter.process(text, &ctx).await.unwrap();
         assert_eq!(r.text, text); // no change for chat
@@ -362,26 +370,6 @@ mod tests {
         let text = "One. Two. Three.";
         let r = splitter.process(text, &ctx).await.unwrap();
         assert!(!r.text.contains("\n\n"));
-    }
-
-    // Mock embedder for testing semantic breaks
-    struct MockEmbedder {
-        embeddings: Vec<Vec<f32>>,
-    }
-
-    impl MockEmbedder {
-        fn new(embeddings: Vec<Vec<f32>>) -> Self {
-            Self { embeddings }
-        }
-    }
-
-    impl TextEmbedder for MockEmbedder {
-        fn embed(&self, text: &str) -> Result<Vec<f32>, ProcessError> {
-            // Use sentence index based on order of calls
-            // Simple: hash the text to pick an embedding
-            let idx = text.len() % self.embeddings.len();
-            Ok(self.embeddings[idx].clone())
-        }
     }
 
     #[tokio::test]
