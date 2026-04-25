@@ -857,48 +857,71 @@ Robust 用の補助データ:
 - Mix manifest (`tests/evaluation/manifests/l2_robust.tsv`) を commit する完全な再現性: 現状はランタイムで seed から生成。MUSAN/RIR pool のバージョン固定が前提となるため、最初のリリース benchmark を実走させた後に確定版を commit する
 - `aishell1-test` setup script は archive 全体 (16 GB) を fetch する。test split のみの mirror が見つかれば script を更新する
 
-### Phase C-1 — L3 直接評価 (無償データのみ、Phase A 完了後)
+### Phase C — L3 評価 (一部実装、CI 対象外、`cargo eval-l3` 経由)
 
-無償または学術無償で取得できるデータのみで直接 F1 を測る。Cochlis 商用化以前から運用可能。
+L3 は **手動 / 研究レポート用途**。CI には乗せず、ローカルマシンでローカルアノテーション + ローカルデータに対して走らせる。Setup と評価実行を統合した単一の Cargo エイリアス経由で起動する:
 
+```bash
+# C-1: ja self-correction 直接 F1 (commit 済 annotation を使用)
+cargo eval-l3 -- --task self-correction --lang ja \
+    --input tests/evaluation/annotations/ja_self_correction.jsonl
+
+# C-2: 自然発話 fixture に対する layer ablation
+cargo eval-l3 -- --task ablation --lang ja \
+    --input tests/evaluation/fixtures-natural/ja.jsonl
 ```
-tests/evaluation/l3_direct/
-├── filler_buckeye.rs               (en filler F1、Buckeye、研究無償)
-├── filler_magicdata_ramc.rs        (zh filler F1、OpenSLR 123、無償)
-├── filler_cs2w.rs                  (zh filler text-only F1、CC-BY-SA、CI 候補)
-├── filler_cejc.rs                  (ja filler F1、CEJC free edition)
-├── paragraph_tedlium.rs            (en 段落 F1、Pk / WindowDiff)
-└── paragraph_cejc.rs               (ja 段落 F1)
-```
 
-CS2W は音声不要かつ軽量なため、**L1 スモークと同じ CI ジョブで回す候補**。
+#### Phase C-1 — L3 直接評価 (F1)
 
-### Phase C-2 — L3 Ablation 評価 (E2E データ流用、Phase A 完了後)
+| データセット | 言語 | 状態 | アクセス |
+|---|---|---|---|
+| **自社 ja self-correction** (35 発話) | ja | **✓ commit 済** (`tests/evaluation/annotations/ja_self_correction.jsonl`) | 自社制作、project license。Claude 下書き、人手レビュー予定 |
+| Buckeye filler | en | 未実装 | https://buckeyecorpus.osu.edu (要登録) |
+| MagicData-RAMC filler | zh | 未実装 (zh filter 未実装のため評価対象なし) | OpenSLR 123 (`scripts/download_l3_data.sh magicdata-ramc-info` で取得手順) |
+| CS2W filler text-only | zh | clone 済 (`scripts/download_l3_data.sh cs2w`)、評価未実装 (zh filter 待ち) | https://github.com/guozishan/CS2W |
+| CEJC filler / self-correction | ja | 未実装 | NINJAL Corpus Portal (要申請) |
+| TED-LIUM 段落分割 F1 | en | 未実装 | OpenSLR 51 (~50 GB、`scripts/download_l3_data.sh tedlium3-test`) |
+
+#### Phase C-2 — L3 Ablation (ΔWER/CER)
 
 §3.7 の E2E データに対して各層を on / off で走らせ ΔWER/CER を測る。F1 用追加 annotation 不要。
 
-```
-tests/evaluation/l3_ablation/
-├── filter_ablation.rs              (filter on/off × en/ja/zh)
-├── self_correction_ablation.rs     (detector on/off × en/ja/zh)
-├── phoneme_ablation.rs             (with/without dict、§3.4 の主評価)
-└── paragraph_proxy.rs              (段落あたり文数分布、§3.5 補助)
-```
+| 言語 | fixtures | 状態 |
+|---|---|---|
+| en | `tests/evaluation/fixtures-natural/en.jsonl` (10 発話、FLEURS 由来 whisper-tiny output) | **✓ commit 済** |
+| ja | `tests/evaluation/fixtures-natural/ja.jsonl` (10 発話、同上) | **✓ commit 済** |
+| zh | `tests/evaluation/fixtures-natural/zh.jsonl` (10 発話、同上) | **✓ commit 済** |
 
-**Phase C-1 と並行可能**。F1 と ΔWER の両方が出揃うと §3.0 のパターン表で診断できるので、両方走らせるのが本来の運用形態。
+現状の natural-speech fixtures は FLEURS (読み上げ音声) に whisper-tiny を通した小規模サンプル。**Tier 1 / Tier 2 self-correction の効果はほぼ見えない**ことを前提とする。本格的な自然発話 ablation には ReazonSpeech / WenetSpeech-meeting / TED-LIUM へ拡張が必要 (フォローアップ; ReazonSpeech は HF gated repo、TED-LIUM は ~50 GB)。
 
-### Phase C-3 — 自前アノテ + 自己訂正 F1 (中コスト)
+`scripts/build_l3_natural_fixtures.py` で fixtures を再生成可能。`source=manifest --manifest <path>` を渡せば任意の FLEURS フォーマット manifest から fixtures を生成する。
 
-§5.6 のコスト見積に従い、ja / zh の self-correction span を自前アノテ:
+#### Phase C-3 — 自前アノテ + 自己訂正 F1
 
-```
-tests/evaluation/l3_direct/
-├── self_correction_cejc.rs         (ja、自前 span アノテ後)
-├── self_correction_magicdata.rs    (zh、自前 span アノテ後)
-└── tools/annotation_guidelines.md  (Switchboard stylebook + CSJ + CS2W ベース)
-```
+| 言語 | annotation | 状態 |
+|---|---|---|
+| **ja self-correction** (35 発話) | `tests/evaluation/annotations/ja_self_correction.jsonl` | **✓ Claude 下書き済、人手レビュー待ち** |
+| zh self-correction | — | 未実装 (§5.6 で ¥100–200k 見積) |
 
-5h × 2 名 × 言語数 で **¥200–400k** または社内 4–6 人週。商用化検討フェーズの直前で実施するのが ROI 上効率的。
+ja annotation のスキーマと判定ルールは `tests/evaluation/annotations/guidelines.md` を参照。
+PR レビューで以下を確認:
+1. cue 語の使い方が自然か (機械的すぎないか)
+2. span 境界の判定が guidelines §3.2 のルールに従っているか
+3. edge case (`edge_001`, `edge_002`) の判定が妥当か
+4. クリーン文に違和感がないか
+
+ja annotation v0.1 で `SelfCorrectionDetector` を評価した結果 (現状値):
+
+| 指標 | 値 |
+|---|---|
+| utterance-level F1 | 1.000 (28/28 fire correct, 7/7 silence correct) |
+| span-level F1 (IoU≥0.5) | 0.964 (27/28 boundary match) |
+| span-level F1 (strict) | 0.964 |
+
+**1 件の miss**: 「鈴木課長、っていうか佐藤課長です」で detector が cue だけ除去し reparandum を残す現象 ←
+`っていうか` cue 処理の限界。改修は別 PR。L3 評価が detector の真のロジックエッジを surface してくれる例。
+
+5h × 2 名 × 言語数 で **¥200–400k** または社内 4–6 人週 (フル運用時)。現状は v0.1 の 35 発話 (Claude 下書き) を起点とし、人手レビューで silver-standard へ昇格、規模を必要に応じて拡張する。
 
 ### Phase D — 商用ライセンスデータ (任意、Cochlis 商用化フェーズ)
 

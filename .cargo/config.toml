@@ -7,3 +7,4 @@
 eval-l1 = "run --release --example eval_l1_smoke"
 eval-l1-fast = "run --release --example eval_l1_fast"
 eval-l2 = "run --release --example eval_l2"
+eval-l3 = "run --release --example eval_l3"
