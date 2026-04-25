@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "generated": "epoch:1777100309",
+  "asr_model": "ggml-tiny (en) / ggml-tiny (multilingual)",
+  "languages": {
+    "en": {
+      "samples": 10,
+      "wer": 0.0837,
+      "asr_latency_ms": {
+        "p50": 818.41,
+        "p95": 973.86
+      },
+      "e2e_latency_ms": {
+        "p50": 818.41,
+        "p95": 973.86
+      }
+    },
+    "ja": {
+      "samples": 10,
+      "cer": 0.4224,
+      "asr_latency_ms": {
+        "p50": 1020.56,
+        "p95": 1569.63
+      },
+      "e2e_latency_ms": {
+        "p50": 1020.56,
+        "p95": 1569.64
+      }
+    },
+    "zh": {
+      "samples": 10,
+      "cer": 0.3231,
+      "asr_latency_ms": {
+        "p50": 975.38,
+        "p95": 1257.32
+      },
+      "e2e_latency_ms": {
+        "p50": 975.38,
+        "p95": 1257.32
+      }
+    }
+  },
+  "tolerances": {
+    "wer_absolute_warn": 0.05,
+    "wer_absolute_fail": 0.1,
+    "wer_relative_warn": 0.2,
+    "wer_relative_fail": 0.5,
+    "latency_p50_relative_warn": 1.0,
+    "latency_p50_relative_fail": 2.0,
+    "e2e_latency_p50_relative_warn": 0.5,
+    "e2e_latency_p50_relative_fail": 1.5
+  }
+}

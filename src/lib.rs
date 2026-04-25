@@ -11,6 +11,7 @@ pub mod mic;
 pub mod mock;
 pub mod whisper_local;
 pub mod prelude;
+pub mod eval;
 
 #[cfg(feature = "onnx")]
 pub mod onnx_processing;
