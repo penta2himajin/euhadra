@@ -34,4 +34,7 @@ path = "src/main.rs"
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
 async-trait = "0.1"
+# Used by examples/eval_l2.rs for FFT-based RIR convolution. Dev-only
+# so default cargo build stays lean.
+rustfft = "6"
 

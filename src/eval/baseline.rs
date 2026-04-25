@@ -40,6 +40,14 @@ pub struct LanguageBaseline {
     pub cer: Option<f64>,
     pub asr_latency_ms: LatencyRecord,
     pub e2e_latency_ms: LatencyRecord,
+    /// Real-Time Factor: ASR processing time divided by audio duration.
+    /// `< 1.0` means the engine ran faster than real-time (required for
+    /// streaming dictation). Stored separately from latency because it
+    /// is hardware-normalised (RTF on a 5-second utterance is directly
+    /// comparable to RTF on a 10-second utterance, while raw latency is
+    /// not). `None` on legacy baselines that pre-date RTF reporting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rtf: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -69,6 +77,21 @@ pub struct Tolerances {
     pub latency_p50_relative_fail: f64,
     pub e2e_latency_p50_relative_warn: f64,
     pub e2e_latency_p50_relative_fail: f64,
+    /// RTF regression tolerances (relative). RTF correlates with latency
+    /// on the same model + runner pair, but tracking it independently
+    /// catches the case where a faster runner masks a model-side
+    /// slowdown.
+    #[serde(default = "default_rtf_warn")]
+    pub rtf_relative_warn: f64,
+    #[serde(default = "default_rtf_fail")]
+    pub rtf_relative_fail: f64,
+}
+
+fn default_rtf_warn() -> f64 {
+    1.00
+}
+fn default_rtf_fail() -> f64 {
+    2.00
 }
 
 impl Default for Tolerances {
@@ -89,6 +112,8 @@ impl Default for Tolerances {
             latency_p50_relative_fail: 2.00, // 3× slower → fail
             e2e_latency_p50_relative_warn: 0.50,
             e2e_latency_p50_relative_fail: 1.50,
+            rtf_relative_warn: default_rtf_warn(),
+            rtf_relative_fail: default_rtf_fail(),
         }
     }
 }
@@ -157,6 +182,12 @@ pub fn check_language(
             tol.e2e_latency_p50_relative_fail,
         ),
     ));
+    if let (Some(m), Some(b)) = (measured.rtf, baseline.rtf) {
+        out.push((
+            "rtf".to_string(),
+            check_latency(m, b, tol.rtf_relative_warn, tol.rtf_relative_fail),
+        ));
+    }
     out
 }
 
@@ -358,6 +389,7 @@ mod tests {
             cer,
             asr_latency_ms: LatencyRecord { p50: 100.0, p95: 200.0 },
             e2e_latency_ms: LatencyRecord { p50: 150.0, p95: 250.0 },
+            rtf: Some(0.20),
         }
     }
 
@@ -415,6 +447,33 @@ mod tests {
         let results = check_language(&measured, &baseline, &tol);
         let v = &results.iter().find(|(k, _)| k == "asr_latency_p50_ms").unwrap().1;
         assert!(matches!(v, Verdict::Fail(_)), "got {v:?}");
+    }
+
+    #[test]
+    fn rtf_regression_classified() {
+        let baseline = bl(Some(0.20), None);
+        let mut measured = baseline.clone();
+        let tol = Tolerances::default();
+        // Defaults: warn at +100% (2× RTF), fail at +200% (3× RTF)
+        measured.rtf = Some(0.50); // 0.20 → 0.50, +150% → warn
+        let results = check_language(&measured, &baseline, &tol);
+        let v = &results.iter().find(|(k, _)| k == "rtf").unwrap().1;
+        assert!(matches!(v, Verdict::Warn(_)), "got {v:?}");
+
+        measured.rtf = Some(0.70); // +250% → fail
+        let results = check_language(&measured, &baseline, &tol);
+        let v = &results.iter().find(|(k, _)| k == "rtf").unwrap().1;
+        assert!(matches!(v, Verdict::Fail(_)), "got {v:?}");
+    }
+
+    #[test]
+    fn rtf_missing_skips_check() {
+        let baseline = bl(Some(0.20), None);
+        let mut measured = baseline.clone();
+        measured.rtf = None;
+        let tol = Tolerances::default();
+        let results = check_language(&measured, &baseline, &tol);
+        assert!(results.iter().all(|(k, _)| k != "rtf"));
     }
 
     #[test]

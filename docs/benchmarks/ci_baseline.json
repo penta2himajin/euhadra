@@ -1,43 +1,46 @@
 {
   "schema_version": 1,
-  "generated": "epoch:1777100309",
+  "generated": "epoch:1777107217",
   "asr_model": "ggml-tiny (en) / ggml-tiny (multilingual)",
   "languages": {
     "en": {
       "samples": 10,
       "wer": 0.0837,
       "asr_latency_ms": {
-        "p50": 818.41,
-        "p95": 973.86
+        "p50": 756.1,
+        "p95": 4425.48
       },
       "e2e_latency_ms": {
-        "p50": 818.41,
-        "p95": 973.86
-      }
+        "p50": 756.11,
+        "p95": 4425.48
+      },
+      "rtf": 0.1561
     },
     "ja": {
       "samples": 10,
       "cer": 0.4224,
       "asr_latency_ms": {
-        "p50": 1020.56,
-        "p95": 1569.63
+        "p50": 997.14,
+        "p95": 4260.85
       },
       "e2e_latency_ms": {
-        "p50": 1020.56,
-        "p95": 1569.64
-      }
+        "p50": 997.14,
+        "p95": 4260.85
+      },
+      "rtf": 0.1425
     },
     "zh": {
       "samples": 10,
       "cer": 0.3231,
       "asr_latency_ms": {
-        "p50": 975.38,
-        "p95": 1257.32
+        "p50": 932.31,
+        "p95": 1152.8
       },
       "e2e_latency_ms": {
-        "p50": 975.38,
-        "p95": 1257.32
-      }
+        "p50": 932.32,
+        "p95": 1152.81
+      },
+      "rtf": 0.078
     }
   },
   "tolerances": {
@@ -48,6 +51,8 @@
     "latency_p50_relative_warn": 1.0,
     "latency_p50_relative_fail": 2.0,
     "e2e_latency_p50_relative_warn": 0.5,
-    "e2e_latency_p50_relative_fail": 1.5
+    "e2e_latency_p50_relative_fail": 1.5,
+    "rtf_relative_warn": 1.0,
+    "rtf_relative_fail": 2.0
   }
 }

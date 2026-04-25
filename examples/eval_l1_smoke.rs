@@ -184,10 +184,17 @@ async fn evaluate_language(
     let mut samples_counted = 0;
     let mut asr_latency = Samples::new();
     let mut e2e_latency = Samples::new();
+    // RTF = ASR processing time / audio duration. Aggregated as the
+    // mean across utterances (each utterance contributes its own RTF
+    // observation).
+    let mut total_asr_secs = 0.0_f64;
+    let mut total_audio_secs = 0.0_f64;
 
     for row in &manifest.rows {
         let audio = read_wav(&row.audio_path)
             .map_err(|e| format!("read_wav {}: {e}", row.audio_path.display()))?;
+        let audio_secs =
+            audio.samples.len() as f64 / (audio.sample_rate as f64 * audio.channels as f64);
 
         let pipeline = build_pipeline(whisper_cli, model, lang)?;
 
@@ -209,8 +216,11 @@ async fn evaluate_language(
             .await
             .map_err(|e| format!("join: {e}"))?
             .map_err(|e| format!("pipeline: {e}"))?;
-        asr_latency.record(asr_start.elapsed());
+        let asr_elapsed = asr_start.elapsed();
+        asr_latency.record(asr_elapsed);
         e2e_latency.record(e2e_start.elapsed());
+        total_asr_secs += asr_elapsed.as_secs_f64();
+        total_audio_secs += audio_secs;
 
         let hyp = &result.raw_text;
         let w = wer(&row.reference, hyp);
@@ -245,12 +255,19 @@ async fn evaluate_language(
         _ => (None, Some(round4(mean_cer))),
     };
 
+    let rtf = if total_audio_secs > 0.0 {
+        Some(round4(total_asr_secs / total_audio_secs))
+    } else {
+        None
+    };
+
     Ok(LanguageBaseline {
         samples: samples_counted,
         wer: wer_field,
         cer: cer_field,
         asr_latency_ms: LatencyRecord::from(asr_summary),
         e2e_latency_ms: LatencyRecord::from(e2e_summary),
+        rtf,
     })
 }
 
@@ -284,8 +301,12 @@ fn print_language_result(lang: &str, r: &LanguageBaseline) {
         "en" => format!("WER={:.4}", r.wer.unwrap_or(f64::NAN)),
         _ => format!("CER={:.4}", r.cer.unwrap_or(f64::NAN)),
     };
+    let rtf_str = match r.rtf {
+        Some(rtf) => format!("RTF={rtf:.3}"),
+        None => "RTF=n/a".to_string(),
+    };
     println!(
-        "[{lang}] n={}  {primary}  asr p50={:.0}ms p95={:.0}ms  e2e p50={:.0}ms p95={:.0}ms",
+        "[{lang}] n={}  {primary}  {rtf_str}  asr p50={:.0}ms p95={:.0}ms  e2e p50={:.0}ms p95={:.0}ms",
         r.samples,
         r.asr_latency_ms.p50,
         r.asr_latency_ms.p95,
