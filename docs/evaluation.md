@@ -513,6 +513,92 @@ L3 直接評価で商用利用も視野に入れる場合の価格情報。**契
 
 **推奨アプローチ**: Shriberg / Meteer の reparandum スキームを言語横断の構造的バックボーンとし、CSJ の `(F)` / `(D)` 閉集合を ja に、対応する zh 閉集合 (嗯 / 呃 / 啊 / 那个 / 这个 / 就是 等) を新規定義する。**音声に触れる前にガイドライン整備で半日確保**することが推奨。
 
+#### 5.6.1 アノテーションスキーマと commit ポリシー
+
+**入力**: 各コーパスの (utterance_id, text) ペア。アノテータは音声を録らず、転記もしない。**transcript の上にラベルを貼る** だけ。
+
+**出力スキーマ** (JSON-Lines、1 発話 / 行):
+
+Filler annotation 例 (zh):
+```json
+{
+  "utterance_id": "magicdata_ramc_train_001234_seg_5",
+  "text": "嗯 我觉得这个事情应该这样处理",
+  "fillers": [
+    {"start": 0, "end": 1, "label": "嗯"},
+    {"start": 5, "end": 7, "label": "这个"}
+  ]
+}
+```
+
+Self-correction (reparandum/repair) 例 (zh):
+```json
+{
+  "utterance_id": "magicdata_ramc_train_005678_seg_2",
+  "text": "我想去波士顿啊丹佛工作",
+  "repairs": [
+    {
+      "reparandum":  {"start": 3, "end": 6},
+      "interregnum": {"start": 6, "end": 7},
+      "repair":      {"start": 7, "end": 9},
+      "type": "substitution"
+    }
+  ]
+}
+```
+
+`repair.type` の closed set: `substitution` / `insertion` / `deletion` / `abandoned`。
+
+**リポジトリ commit ポリシー**:
+
+| 物件 | リポジトリ commit | 理由 |
+|---|---|---|
+| 元コーパスの音声 / transcript | **NG** | 元ライセンス + サイズ。`scripts/download_eval_data.sh` 経由で取得 |
+| アノテーション JSON-Lines | **OK** | 自社制作物、軽量、`utterance_id` で元データを参照 |
+| アノテーションガイドライン .md | **OK** | 自社制作物、再現性に必須 |
+| キャリブレーション結果 (κ 値、調停ログ) | **OK** | 評価レポート用 |
+| LLM 下書きの生出力 (検証前) | **NG (任意)** | 中間生成物、価値低い |
+
+つまり Phase C-3 で `tests/evaluation/annotations/{ja_filler,ja_self_correction,zh_filler,zh_self_correction}.jsonl` + `tests/evaluation/annotations/guidelines/*.md` のみ commit する。
+
+#### 5.6.2 LLM 補助による自動化 (hybrid パイプライン)
+
+純人手アノテのコストを下げるため、LLM を **下書き生成器** として使う。**ただし純 LLM 出力を ground truth にしてはならない** — 評価対象 (filler 検出器・自己訂正検出器) と LLM が同じ判断を下すなら測定が循環する。
+
+**評価循環の回避ルール**:
+- パイプライン側で LLM refiner を使う場合、**アノテ用 LLM は別系統** (e.g., パイプライン Claude → アノテ Gemini / Qwen)
+- LLM 単独で打ったラベルは **silver standard** であって gold ではない
+- 必ず **gold subset (全体の 5–10%)** を純人手二重 + 調停で作り、LLM ↔ 人手 IAA を計算
+- 系統的バイアス (e.g., LLM が `あの` を過剰検出) を毎ラウンドレポート
+
+**Hybrid パイプライン (5 段階)**:
+
+1. **LLM 下書き** — Claude / Gemini / Qwen で 100% 自動ラベリング。プロンプトに **closed class を必ず明示列挙**、出力は strict JSON schema 強制、span 確信度 (logprob 平均) も同時取得
+2. **自動検証** — 閉集合外の文字列が `filler` ラベル、reparandum と repair が同一文字列、段落跨ぎ span などを reject
+3. **人手スポットチェック** — ランダム 10–20% を抽出し人手レビュー、LLM ↔ 人手 IAA を計算
+4. **昇格判定** — IAA κ ≥ 0.7 なら silver standard で進む、< 0.7 なら全件フル人手レビューに昇格
+5. **gold subset 並行作成** — 最初から 5–10% を純人手二重 + 調停。LLM ↔ 人手の系統差分を継続監視
+
+**コスト比較** (zh self-correction、5h 音声 ~1,500 発話想定):
+
+| アプローチ | 人手作業量 | API コスト | 合計概算 |
+|---|---|---|---|
+| 純人手 (二重 + 調停) | ~30 人時 | 0 | ¥100–200k |
+| **Hybrid (推奨)** | ~6–10 人時 | $5–15 | **¥30–50k** |
+| 純 LLM (検証なし) | 0 | $5–10 | $5–10 — **ground truth として無効** |
+
+Hybrid で 50–70% 削減。前提として gold subset の確保を必須とする。
+
+**プロンプト設計のチェックリスト**:
+- closed class を文字列リテラルで列挙 (LLM の暗黙判断に頼らない)
+- reparandum/repair 境界規則を明文化 + 具体例 5–10 個 (Switchboard stylebook サマリ)
+- 出力 JSON schema を厳格化 (生成失敗時はリトライ)
+- `confidence` フィールドを必須にし、低確信度サンプルを優先的に人手レビューへ回せるようにする
+
+**自動化の適性が低いタスク** (純人手 + 調停を維持):
+- Reparandum span boundary の **微調整** (文字単位の境界決定) — LLM ↔ 人手 IAA がそもそも κ 0.6–0.7 程度に留まる
+- ガイドライン境界ケース (e.g., `じゃない` が否定か言い直しか) — 文脈依存度が高く、LLM プロンプトでは網羅しきれない
+
 ---
 
 ## 6. 推奨テストスイート (2026 Q2 開始時点)
