@@ -726,7 +726,32 @@ fn print_summary(cli: &Cli, r: &EvalResult) {
         r.e2e_p50_ms,
         r.e2e_p95_ms,
     );
+    // Absolute-threshold warnings (independent of any per-runner
+    // baseline). Same thresholds as `Tolerances::default()`.
+    if r.rtf >= ABS_RTF_WARN {
+        eprintln!(
+            "[warn] RTF {:.3} ≥ {:.1} — slower than real-time, breaks streaming dictation",
+            r.rtf, ABS_RTF_WARN
+        );
+    }
+    if r.asr_p50_ms >= ABS_LATENCY_WARN_MS {
+        eprintln!(
+            "[warn] ASR p50 latency {:.0}ms ≥ {:.0}ms",
+            r.asr_p50_ms, ABS_LATENCY_WARN_MS
+        );
+    }
+    if r.e2e_p50_ms >= ABS_LATENCY_WARN_MS {
+        eprintln!(
+            "[warn] E2E p50 latency {:.0}ms ≥ {:.0}ms",
+            r.e2e_p50_ms, ABS_LATENCY_WARN_MS
+        );
+    }
 }
+
+/// Absolute thresholds for "user-perceived too-slow" warnings. Same
+/// numbers as `Tolerances::default()` so L1 and L2 share the contract.
+const ABS_RTF_WARN: f64 = 1.0;
+const ABS_LATENCY_WARN_MS: f64 = 1000.0;
 
 fn round1(x: f64) -> f64 {
     (x * 10.0).round() / 10.0

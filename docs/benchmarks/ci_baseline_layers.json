@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated": "epoch:1777105453",
+  "generated": "epoch:1777108893",
   "languages": {
     "en": {
       "fixtures": 27,
@@ -12,16 +12,16 @@
       },
       "layer_latency_us": {
         "filler": {
-          "p50": 3.74,
-          "p95": 6.13
+          "p50": 3.64,
+          "p95": 6.67
         },
         "punctuation": {
-          "p50": 0.4,
-          "p95": 0.51
+          "p50": 0.38,
+          "p95": 0.48
         },
         "self_correction": {
-          "p50": 0.61,
-          "p95": 1.55
+          "p50": 0.65,
+          "p95": 1.61
         }
       }
     },
@@ -35,16 +35,16 @@
       },
       "layer_latency_us": {
         "filler": {
-          "p50": 0.34,
+          "p50": 0.33,
           "p95": 0.41
         },
         "punctuation": {
           "p50": 0.24,
-          "p95": 0.31
+          "p95": 0.3
         },
         "self_correction": {
-          "p50": 0.73,
-          "p95": 0.83
+          "p50": 0.79,
+          "p95": 0.94
         }
       }
     },
@@ -59,8 +59,8 @@
           "p95": 0.2
         },
         "self_correction": {
-          "p50": 0.64,
-          "p95": 0.69
+          "p50": 0.69,
+          "p95": 0.74
         }
       }
     }
@@ -69,6 +69,7 @@
     "ablation_absolute_warn": 0.02,
     "ablation_absolute_fail": 0.05,
     "layer_latency_p50_relative_warn": 2.0,
-    "layer_latency_p50_relative_fail": 4.0
+    "layer_latency_p50_relative_fail": 4.0,
+    "layer_latency_absolute_warn_us": 1000000.0
   }
 }
