@@ -1,0 +1,9 @@
+# Project-local cargo configuration.
+#
+# Aliases let `cargo eval-l1` / `cargo eval-l2` drive the long-running
+# benchmarks without remembering the full release-mode example flags.
+
+[alias]
+eval-l1 = "run --release --example eval_l1_smoke"
+eval-l1-fast = "run --release --example eval_l1_fast"
+eval-l2 = "run --release --example eval_l2"

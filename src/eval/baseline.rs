@@ -40,6 +40,14 @@ pub struct LanguageBaseline {
     pub cer: Option<f64>,
     pub asr_latency_ms: LatencyRecord,
     pub e2e_latency_ms: LatencyRecord,
+    /// Real-Time Factor: ASR processing time divided by audio duration.
+    /// `< 1.0` means the engine ran faster than real-time (required for
+    /// streaming dictation). Stored separately from latency because it
+    /// is hardware-normalised (RTF on a 5-second utterance is directly
+    /// comparable to RTF on a 10-second utterance, while raw latency is
+    /// not). `None` on legacy baselines that pre-date RTF reporting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rtf: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -69,6 +77,42 @@ pub struct Tolerances {
     pub latency_p50_relative_fail: f64,
     pub e2e_latency_p50_relative_warn: f64,
     pub e2e_latency_p50_relative_fail: f64,
+    /// RTF regression tolerances (relative). RTF correlates with latency
+    /// on the same model + runner pair, but tracking it independently
+    /// catches the case where a faster runner masks a model-side
+    /// slowdown.
+    #[serde(default = "default_rtf_warn")]
+    pub rtf_relative_warn: f64,
+    #[serde(default = "default_rtf_fail")]
+    pub rtf_relative_fail: f64,
+    /// Absolute thresholds — anchored to user-perceived dictation
+    /// quality, independent of the per-runner baseline. These exist
+    /// because the relative checks let an already-bad baseline slide;
+    /// the absolutes pin the floor.
+    ///
+    /// `rtf_absolute_warn`: RTF at or above this is a streaming-quality
+    /// red flag (≥ 1.0 = slower than real-time).
+    /// `*_latency_absolute_warn_ms`: latency at or above this is too
+    /// slow to feel responsive.
+    #[serde(default = "default_rtf_absolute_warn")]
+    pub rtf_absolute_warn: f64,
+    #[serde(default = "default_latency_absolute_warn_ms")]
+    pub asr_latency_absolute_warn_ms: f64,
+    #[serde(default = "default_latency_absolute_warn_ms")]
+    pub e2e_latency_absolute_warn_ms: f64,
+}
+
+fn default_rtf_warn() -> f64 {
+    1.00
+}
+fn default_rtf_fail() -> f64 {
+    2.00
+}
+fn default_rtf_absolute_warn() -> f64 {
+    1.00
+}
+fn default_latency_absolute_warn_ms() -> f64 {
+    1000.0
 }
 
 impl Default for Tolerances {
@@ -89,6 +133,11 @@ impl Default for Tolerances {
             latency_p50_relative_fail: 2.00, // 3× slower → fail
             e2e_latency_p50_relative_warn: 0.50,
             e2e_latency_p50_relative_fail: 1.50,
+            rtf_relative_warn: default_rtf_warn(),
+            rtf_relative_fail: default_rtf_fail(),
+            rtf_absolute_warn: default_rtf_absolute_warn(),
+            asr_latency_absolute_warn_ms: default_latency_absolute_warn_ms(),
+            e2e_latency_absolute_warn_ms: default_latency_absolute_warn_ms(),
         }
     }
 }
@@ -157,7 +206,55 @@ pub fn check_language(
             tol.e2e_latency_p50_relative_fail,
         ),
     ));
+    if let (Some(m), Some(b)) = (measured.rtf, baseline.rtf) {
+        out.push((
+            "rtf".to_string(),
+            check_latency(m, b, tol.rtf_relative_warn, tol.rtf_relative_fail),
+        ));
+    }
+
+    // Absolute thresholds — independent of baseline; tied to user-
+    // perceived quality so the relative checks can't paper over a
+    // genuinely-too-slow run.
+    if let Some(m) = measured.rtf {
+        out.push((
+            "rtf_absolute".to_string(),
+            check_absolute_max(m, tol.rtf_absolute_warn, |x| format!("{x:.3}")),
+        ));
+    }
+    out.push((
+        "asr_latency_p50_ms_absolute".to_string(),
+        check_absolute_max(
+            measured.asr_latency_ms.p50,
+            tol.asr_latency_absolute_warn_ms,
+            |x| format!("{x:.0}ms"),
+        ),
+    ));
+    out.push((
+        "e2e_latency_p50_ms_absolute".to_string(),
+        check_absolute_max(
+            measured.e2e_latency_ms.p50,
+            tol.e2e_latency_absolute_warn_ms,
+            |x| format!("{x:.0}ms"),
+        ),
+    ));
     out
+}
+
+/// Warns (never fails) when `measured` is at or above `warn_at`.
+/// Used for absolute thresholds that exist alongside relative
+/// regression checks: the user told us "X is too slow / too high
+/// regardless of where the baseline sits", so we surface it as a
+/// permanent floor.
+fn check_absolute_max(measured: f64, warn_at: f64, fmt: impl Fn(f64) -> String) -> Verdict {
+    if measured.is_nan() || warn_at <= 0.0 {
+        return Verdict::Pass;
+    }
+    if measured >= warn_at {
+        Verdict::Warn(format!("{} ≥ {}", fmt(measured), fmt(warn_at)))
+    } else {
+        Verdict::Pass
+    }
 }
 
 fn check_error_rate(measured: f64, baseline: f64, tol: &Tolerances) -> Verdict {
@@ -269,6 +366,16 @@ pub struct LayerTolerances {
     /// Relative latency drift allowed before warning / failing.
     pub layer_latency_p50_relative_warn: f64,
     pub layer_latency_p50_relative_fail: f64,
+    /// Absolute upper bound on per-layer p50 latency, in microseconds.
+    /// Defaults to 1 second (1_000_000 μs) — layers are expected to be
+    /// sub-millisecond in practice, so this is a sanity floor for
+    /// catastrophic regressions, not a tight budget.
+    #[serde(default = "default_layer_latency_absolute_warn_us")]
+    pub layer_latency_absolute_warn_us: f64,
+}
+
+fn default_layer_latency_absolute_warn_us() -> f64 {
+    1_000_000.0
 }
 
 impl Default for LayerTolerances {
@@ -283,6 +390,7 @@ impl Default for LayerTolerances {
             ablation_absolute_fail: 0.05,
             layer_latency_p50_relative_warn: 2.00,
             layer_latency_p50_relative_fail: 4.00,
+            layer_latency_absolute_warn_us: default_layer_latency_absolute_warn_us(),
         }
     }
 }
@@ -343,6 +451,14 @@ pub fn check_language_layers(
             tol.layer_latency_p50_relative_fail,
         );
         out.push((format!("latency/{layer}_p50_us"), v));
+
+        // Absolute upper bound — independent of baseline.
+        out.push((
+            format!("latency/{layer}_p50_us_absolute"),
+            check_absolute_max(m_lat.p50, tol.layer_latency_absolute_warn_us, |x| {
+                format!("{x:.0}μs")
+            }),
+        ));
     }
     out
 }
@@ -358,6 +474,7 @@ mod tests {
             cer,
             asr_latency_ms: LatencyRecord { p50: 100.0, p95: 200.0 },
             e2e_latency_ms: LatencyRecord { p50: 150.0, p95: 250.0 },
+            rtf: Some(0.20),
         }
     }
 
@@ -415,6 +532,86 @@ mod tests {
         let results = check_language(&measured, &baseline, &tol);
         let v = &results.iter().find(|(k, _)| k == "asr_latency_p50_ms").unwrap().1;
         assert!(matches!(v, Verdict::Fail(_)), "got {v:?}");
+    }
+
+    #[test]
+    fn rtf_regression_classified() {
+        let baseline = bl(Some(0.20), None);
+        let mut measured = baseline.clone();
+        let tol = Tolerances::default();
+        // Defaults: warn at +100% (2× RTF), fail at +200% (3× RTF)
+        measured.rtf = Some(0.50); // 0.20 → 0.50, +150% → warn
+        let results = check_language(&measured, &baseline, &tol);
+        let v = &results.iter().find(|(k, _)| k == "rtf").unwrap().1;
+        assert!(matches!(v, Verdict::Warn(_)), "got {v:?}");
+
+        measured.rtf = Some(0.70); // +250% → fail
+        let results = check_language(&measured, &baseline, &tol);
+        let v = &results.iter().find(|(k, _)| k == "rtf").unwrap().1;
+        assert!(matches!(v, Verdict::Fail(_)), "got {v:?}");
+    }
+
+    #[test]
+    fn rtf_absolute_threshold_warns_at_one() {
+        let baseline = bl(Some(0.20), None);
+        let mut measured = baseline.clone();
+        let tol = Tolerances::default();
+        // RTF baseline is 0.20; bumping to 0.95 still passes both
+        // relative (within +200% fail bound from 0.20 → 0.60) and
+        // absolute (< 1.0)
+        measured.rtf = Some(0.50); // already triggers relative warn
+        let results = check_language(&measured, &baseline, &tol);
+        let v = &results
+            .iter()
+            .find(|(k, _)| k == "rtf_absolute")
+            .unwrap()
+            .1;
+        assert_eq!(v, &Verdict::Pass, "0.50 < 1.0 should be absolute pass");
+
+        // RTF crosses the absolute threshold
+        measured.rtf = Some(1.20);
+        let results = check_language(&measured, &baseline, &tol);
+        let v = &results
+            .iter()
+            .find(|(k, _)| k == "rtf_absolute")
+            .unwrap()
+            .1;
+        assert!(matches!(v, Verdict::Warn(_)), "got {v:?}");
+    }
+
+    #[test]
+    fn latency_absolute_threshold_warns_at_one_second() {
+        let baseline = bl(Some(0.20), None);
+        let mut measured = baseline.clone();
+        let tol = Tolerances::default();
+
+        measured.e2e_latency_ms.p50 = 1500.0;
+        let results = check_language(&measured, &baseline, &tol);
+        let v = &results
+            .iter()
+            .find(|(k, _)| k == "e2e_latency_p50_ms_absolute")
+            .unwrap()
+            .1;
+        assert!(matches!(v, Verdict::Warn(_)), "got {v:?}");
+
+        measured.e2e_latency_ms.p50 = 800.0;
+        let results = check_language(&measured, &baseline, &tol);
+        let v = &results
+            .iter()
+            .find(|(k, _)| k == "e2e_latency_p50_ms_absolute")
+            .unwrap()
+            .1;
+        assert_eq!(v, &Verdict::Pass);
+    }
+
+    #[test]
+    fn rtf_missing_skips_check() {
+        let baseline = bl(Some(0.20), None);
+        let mut measured = baseline.clone();
+        measured.rtf = None;
+        let tol = Tolerances::default();
+        let results = check_language(&measured, &baseline, &tol);
+        assert!(results.iter().all(|(k, _)| k != "rtf"));
     }
 
     #[test]
@@ -514,6 +711,56 @@ mod tests {
             .unwrap()
             .1;
         assert!(matches!(v, Verdict::Fail(_)), "got {v:?}");
+    }
+
+    #[test]
+    fn layer_latency_absolute_threshold_warns_at_one_second() {
+        let baseline = lbl();
+        let mut measured = baseline.clone();
+        let tol = LayerTolerances::default();
+
+        // Bump filler p50 to 1.5 seconds (absurd, but tests the path).
+        // Set baseline match so the relative check stays Pass.
+        measured.layer_latency_us.insert(
+            "filler".to_string(),
+            LatencyMicrosRecord {
+                p50: 1_500_000.0,
+                p95: 1_500_000.0,
+            },
+        );
+        // Match in baseline so the relative check would pass
+        let mut bl_match = baseline.clone();
+        bl_match.layer_latency_us.insert(
+            "filler".to_string(),
+            LatencyMicrosRecord {
+                p50: 1_500_000.0,
+                p95: 1_500_000.0,
+            },
+        );
+        let results = check_language_layers(&measured, &bl_match, &tol);
+        let v = &results
+            .iter()
+            .find(|(k, _)| k == "latency/filler_p50_us_absolute")
+            .unwrap()
+            .1;
+        assert!(matches!(v, Verdict::Warn(_)), "got {v:?}");
+
+        // Baseline-matching sub-second filler stays Pass on absolute.
+        measured.layer_latency_us.insert(
+            "filler".to_string(),
+            LatencyMicrosRecord { p50: 500.0, p95: 1000.0 },
+        );
+        bl_match.layer_latency_us.insert(
+            "filler".to_string(),
+            LatencyMicrosRecord { p50: 500.0, p95: 1000.0 },
+        );
+        let results = check_language_layers(&measured, &bl_match, &tol);
+        let v = &results
+            .iter()
+            .find(|(k, _)| k == "latency/filler_p50_us_absolute")
+            .unwrap()
+            .1;
+        assert_eq!(v, &Verdict::Pass);
     }
 
     #[test]
