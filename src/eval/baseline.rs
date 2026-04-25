@@ -1,9 +1,18 @@
-//! `ci_baseline.json` schema, I/O, and regression gating.
+//! `ci_baseline*.json` schemas, I/O, and regression gating.
 //!
-//! The baseline file lives at `docs/benchmarks/ci_baseline.json` and is
-//! read by the `eval_l1_smoke` binary on every CI run. Discrepancies are
-//! classified as `Pass` / `Warn` / `Fail` per the tolerances declared in
-//! the same file (so the policy lives next to the numbers it constrains).
+//! Two baseline files live under `docs/benchmarks/`, each consumed by a
+//! separate CI job:
+//!
+//! - `ci_baseline.json` — produced by `eval_l1_smoke` (Phase A-1):
+//!   per-language WER/CER + ASR + E2E latency from a live whisper run
+//!   on a FLEURS subset.
+//! - `ci_baseline_layers.json` — produced by `eval_l1_fast` (Phase A-2):
+//!   per-language layer ablation (ΔWER from running the pipeline with
+//!   each post-ASR layer toggled on/off) and per-layer μ-benchmark
+//!   latency.
+//!
+//! Both files are self-describing on tolerances so policy lives next to
+//! the numbers it constrains.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -207,6 +216,137 @@ fn round2(x: f64) -> f64 {
     (x * 100.0).round() / 100.0
 }
 
+// ---------------------------------------------------------------------------
+// Layer baseline (Phase A-2: ablation + per-layer latency)
+// ---------------------------------------------------------------------------
+
+/// Schema for `docs/benchmarks/ci_baseline_layers.json`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LayerBaseline {
+    pub schema_version: u32,
+    pub generated: String,
+    pub languages: BTreeMap<String, LanguageLayerBaseline>,
+    pub tolerances: LayerTolerances,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LanguageLayerBaseline {
+    pub fixtures: usize,
+    /// Mean error rate (WER for en, CER for ja/zh) of the full pipeline,
+    /// then with each post-ASR layer disabled in turn. Layer keys are
+    /// well-known identifiers: `full`, `without_filler`,
+    /// `without_self_correction`, `without_punctuation`. Languages skip
+    /// keys when the layer is not configured for them (e.g. zh has no
+    /// filter today).
+    pub ablation: BTreeMap<String, f64>,
+    /// Median + p95 latency for each layer in isolation (μ-benchmark).
+    pub layer_latency_us: BTreeMap<String, LatencyMicrosRecord>,
+}
+
+/// Per-layer μ-benchmark latency record. Reported in **microseconds**
+/// because rule-based layers are sub-millisecond on typical CI runners
+/// and millisecond rounding would erase the signal.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct LatencyMicrosRecord {
+    pub p50: f64,
+    pub p95: f64,
+}
+
+impl From<LatencySummary> for LatencyMicrosRecord {
+    fn from(s: LatencySummary) -> Self {
+        Self {
+            p50: round2(s.p50_ms * 1000.0),
+            p95: round2(s.p95_ms * 1000.0),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct LayerTolerances {
+    /// Absolute ΔWER drift allowed before warning, e.g. 0.02 = +2 abs.
+    pub ablation_absolute_warn: f64,
+    pub ablation_absolute_fail: f64,
+    /// Relative latency drift allowed before warning / failing.
+    pub layer_latency_p50_relative_warn: f64,
+    pub layer_latency_p50_relative_fail: f64,
+}
+
+impl Default for LayerTolerances {
+    fn default() -> Self {
+        // Ablation values are derived from the same fixture set every
+        // run, so they are nearly deterministic. Layer μ-benchmark
+        // latency on shared CI runners is noisy though; defaults are
+        // generous on the first revision and can be tightened once we
+        // have empirical CI data.
+        Self {
+            ablation_absolute_warn: 0.02,
+            ablation_absolute_fail: 0.05,
+            layer_latency_p50_relative_warn: 2.00,
+            layer_latency_p50_relative_fail: 4.00,
+        }
+    }
+}
+
+impl LayerBaseline {
+    pub fn load(path: &Path) -> std::io::Result<Self> {
+        let bytes = std::fs::read(path)?;
+        serde_json::from_slice(&bytes)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    }
+
+    pub fn save(&self, path: &Path) -> std::io::Result<()> {
+        let bytes = serde_json::to_vec_pretty(self)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        std::fs::write(path, bytes)?;
+        Ok(())
+    }
+}
+
+pub fn check_language_layers(
+    measured: &LanguageLayerBaseline,
+    baseline: &LanguageLayerBaseline,
+    tol: &LayerTolerances,
+) -> Vec<(String, Verdict)> {
+    let mut out = Vec::new();
+
+    for (key, m_val) in &measured.ablation {
+        let Some(b_val) = baseline.ablation.get(key) else {
+            out.push((
+                format!("ablation/{key}"),
+                Verdict::Warn(format!("no baseline entry for {key}")),
+            ));
+            continue;
+        };
+        let abs_delta = (m_val - b_val).abs();
+        let v = if abs_delta >= tol.ablation_absolute_fail {
+            Verdict::Fail(format!("{:.4} → {:.4} (|Δ| {:.4})", b_val, m_val, abs_delta))
+        } else if abs_delta >= tol.ablation_absolute_warn {
+            Verdict::Warn(format!("{:.4} → {:.4} (|Δ| {:.4})", b_val, m_val, abs_delta))
+        } else {
+            Verdict::Pass
+        };
+        out.push((format!("ablation/{key}"), v));
+    }
+
+    for (layer, m_lat) in &measured.layer_latency_us {
+        let Some(b_lat) = baseline.layer_latency_us.get(layer) else {
+            out.push((
+                format!("latency/{layer}"),
+                Verdict::Warn(format!("no baseline entry for {layer}")),
+            ));
+            continue;
+        };
+        let v = check_latency(
+            m_lat.p50,
+            b_lat.p50,
+            tol.layer_latency_p50_relative_warn,
+            tol.layer_latency_p50_relative_fail,
+        );
+        out.push((format!("latency/{layer}_p50_us"), v));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -293,5 +433,101 @@ mod tests {
         let parsed: Baseline = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.languages.len(), 2);
         assert_eq!(parsed.schema_version, 1);
+    }
+
+    fn lbl() -> LanguageLayerBaseline {
+        let mut ablation = BTreeMap::new();
+        ablation.insert("full".to_string(), 0.10);
+        ablation.insert("without_filler".to_string(), 0.20);
+        let mut layer_latency = BTreeMap::new();
+        layer_latency.insert(
+            "filler".to_string(),
+            LatencyMicrosRecord { p50: 500.0, p95: 1000.0 },
+        );
+        LanguageLayerBaseline {
+            fixtures: 25,
+            ablation,
+            layer_latency_us: layer_latency,
+        }
+    }
+
+    #[test]
+    fn layer_ablation_drift_classification() {
+        let baseline = lbl();
+        let mut measured = baseline.clone();
+        let tol = LayerTolerances::default();
+
+        // Same → pass
+        let results = check_language_layers(&measured, &baseline, &tol);
+        for (k, v) in &results {
+            assert_eq!(v, &Verdict::Pass, "{k}: expected pass, got {v:?}");
+        }
+
+        // +0.03 absolute drift on `without_filler` → warn (>=0.02, <0.05)
+        measured.ablation.insert("without_filler".to_string(), 0.23);
+        let results = check_language_layers(&measured, &baseline, &tol);
+        let v = &results
+            .iter()
+            .find(|(k, _)| k == "ablation/without_filler")
+            .unwrap()
+            .1;
+        assert!(matches!(v, Verdict::Warn(_)), "got {v:?}");
+
+        // +0.06 absolute drift → fail (>=0.05)
+        measured.ablation.insert("without_filler".to_string(), 0.26);
+        let results = check_language_layers(&measured, &baseline, &tol);
+        let v = &results
+            .iter()
+            .find(|(k, _)| k == "ablation/without_filler")
+            .unwrap()
+            .1;
+        assert!(matches!(v, Verdict::Fail(_)), "got {v:?}");
+    }
+
+    #[test]
+    fn layer_latency_drift_classification() {
+        let baseline = lbl();
+        let mut measured = baseline.clone();
+        let tol = LayerTolerances::default();
+
+        // Default tolerances: warn 200%, fail 400%
+        measured.layer_latency_us.insert(
+            "filler".to_string(),
+            LatencyMicrosRecord { p50: 1500.0, p95: 1500.0 }, // +200% → warn boundary
+        );
+        let results = check_language_layers(&measured, &baseline, &tol);
+        let v = &results
+            .iter()
+            .find(|(k, _)| k == "latency/filler_p50_us")
+            .unwrap()
+            .1;
+        assert!(matches!(v, Verdict::Warn(_)), "got {v:?}");
+
+        measured.layer_latency_us.insert(
+            "filler".to_string(),
+            LatencyMicrosRecord { p50: 3000.0, p95: 3000.0 }, // +500% → fail
+        );
+        let results = check_language_layers(&measured, &baseline, &tol);
+        let v = &results
+            .iter()
+            .find(|(k, _)| k == "latency/filler_p50_us")
+            .unwrap()
+            .1;
+        assert!(matches!(v, Verdict::Fail(_)), "got {v:?}");
+    }
+
+    #[test]
+    fn layer_baseline_round_trip_serde() {
+        let mut langs = BTreeMap::new();
+        langs.insert("en".to_string(), lbl());
+        let b = LayerBaseline {
+            schema_version: 1,
+            generated: "2026-04-25T00:00:00Z".to_string(),
+            languages: langs,
+            tolerances: LayerTolerances::default(),
+        };
+        let json = serde_json::to_string(&b).unwrap();
+        let parsed: LayerBaseline = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.languages.len(), 1);
     }
 }

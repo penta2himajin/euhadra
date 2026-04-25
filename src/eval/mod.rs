@@ -3,5 +3,6 @@
 //! `ci_baseline.json` regression gating.
 
 pub mod baseline;
+pub mod fixtures;
 pub mod latency;
 pub mod metrics;

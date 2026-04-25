@@ -1,0 +1,15 @@
+{"id":"zh_clean_001","category":"clean","reference":"我们需要更新数据库","asr_hypothesis":"我们需要更新数据库"}
+{"id":"zh_clean_002","category":"clean","reference":"明天发布新版本","asr_hypothesis":"明天发布新版本"}
+{"id":"zh_clean_003","category":"clean","reference":"测试全部通过了","asr_hypothesis":"测试全部通过了"}
+{"id":"zh_clean_004","category":"clean","reference":"请检查日志文件","asr_hypothesis":"请检查日志文件"}
+{"id":"zh_clean_005","category":"clean","reference":"配置文件已经修改","asr_hypothesis":"配置文件已经修改"}
+{"id":"zh_clean_006","category":"clean","reference":"缓存命中率不错","asr_hypothesis":"缓存命中率不错"}
+{"id":"zh_clean_007","category":"clean","reference":"会议改到下午三点","asr_hypothesis":"会议改到下午三点"}
+{"id":"zh_clean_008","category":"clean","reference":"代码评审之后再合并","asr_hypothesis":"代码评审之后再合并"}
+{"id":"zh_clean_009","category":"clean","reference":"添加索引提高查询速度","asr_hypothesis":"添加索引提高查询速度"}
+{"id":"zh_clean_010","category":"clean","reference":"服务已经重启完成","asr_hypothesis":"服务已经重启完成"}
+{"id":"zh_clean_011","category":"clean","reference":"上传到测试环境","asr_hypothesis":"上传到测试环境"}
+{"id":"zh_clean_012","category":"clean","reference":"修复了内存泄漏","asr_hypothesis":"修复了内存泄漏"}
+{"id":"zh_clean_013","category":"clean","reference":"准备发布候选版本","asr_hypothesis":"准备发布候选版本"}
+{"id":"zh_clean_014","category":"clean","reference":"等待管道任务完成","asr_hypothesis":"等待管道任务完成"}
+{"id":"zh_clean_015","category":"clean","reference":"需要轮换证书","asr_hypothesis":"需要轮换证书"}

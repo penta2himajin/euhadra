@@ -30,12 +30,14 @@ impl Samples {
     }
 
     /// Compute p50 and p95 in milliseconds. Returns `None` if no samples
-    /// have been recorded.
+    /// have been recorded. Internally stored at nanosecond resolution
+    /// so sub-millisecond layers (rule-based filters, processors) still
+    /// report meaningful percentiles.
     pub fn summary(&self) -> Option<LatencySummary> {
         if self.samples.is_empty() {
             return None;
         }
-        let mut sorted: Vec<u128> = self.samples.iter().map(|d| d.as_micros()).collect();
+        let mut sorted: Vec<u128> = self.samples.iter().map(|d| d.as_nanos()).collect();
         sorted.sort_unstable();
         Some(LatencySummary {
             p50_ms: percentile(&sorted, 0.50),
@@ -53,21 +55,21 @@ pub struct LatencySummary {
     pub samples: usize,
 }
 
-/// Linear-interpolation percentile over sorted microsecond samples,
+/// Linear-interpolation percentile over sorted **nanosecond** samples,
 /// returned in milliseconds.
-fn percentile(sorted_us: &[u128], q: f64) -> f64 {
-    debug_assert!(!sorted_us.is_empty());
-    let n = sorted_us.len();
+fn percentile(sorted_ns: &[u128], q: f64) -> f64 {
+    debug_assert!(!sorted_ns.is_empty());
+    let n = sorted_ns.len();
     if n == 1 {
-        return sorted_us[0] as f64 / 1000.0;
+        return sorted_ns[0] as f64 / 1_000_000.0;
     }
     let pos = q * (n - 1) as f64;
     let lo = pos.floor() as usize;
     let hi = pos.ceil() as usize;
     let frac = pos - lo as f64;
-    let lo_us = sorted_us[lo] as f64;
-    let hi_us = sorted_us[hi] as f64;
-    (lo_us + (hi_us - lo_us) * frac) / 1000.0
+    let lo_ns = sorted_ns[lo] as f64;
+    let hi_ns = sorted_ns[hi] as f64;
+    (lo_ns + (hi_ns - lo_ns) * frac) / 1_000_000.0
 }
 
 #[cfg(test)]

@@ -267,7 +267,7 @@ impl TextFilter for SimpleFillerFilter {
 
         // Pass 1: remove multi-word fillers
         let mut i = 0;
-        while i + 1 < n {
+        'outer: while i + 1 < n {
             for mf in &self.multi_fillers {
                 if mf.len() == 2
                     && !removed_indices[i]
@@ -282,7 +282,11 @@ impl TextFilter for SimpleFillerFilter {
                         removed_indices[i + 1] = true;
                         removed_labels.push(format!("{} {}", words[i], words[i + 1]));
                         i += 2;
-                        continue;
+                        // Skip the trailing `i += 1` and re-evaluate the
+                        // while bound, otherwise the next iteration of
+                        // `for mf` would index past the end when `i` has
+                        // just been advanced to `n`.
+                        continue 'outer;
                     }
                 }
             }
@@ -536,6 +540,18 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.text, "I think we should deploy");
+        assert!(result.removed.contains(&"you know".to_string()));
+    }
+
+    /// Regression: a multi-word filler whose match leaves `i` exactly at
+    /// the end of the word list used to fall through to the next mf in
+    /// the inner `for` loop and index `removed_indices[i + 1]`
+    /// out-of-bounds.
+    #[tokio::test]
+    async fn multi_word_filler_at_end_of_input() {
+        let filter = SimpleFillerFilter::english();
+        let result = filter.filter("deploy now you know").await.unwrap();
+        assert!(!result.text.contains("you know"), "{}", result.text);
         assert!(result.removed.contains(&"you know".to_string()));
     }
 
