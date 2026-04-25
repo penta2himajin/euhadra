@@ -72,3 +72,65 @@ jobs:
 
       - name: Clippy (onnx)
         run: cargo clippy --features onnx --all-targets --locked -- -D warnings
+
+  # L1 ASR live smoke (§1.1 / §3.8): runs whisper-tiny on a 10-utterance
+  # FLEURS subset per language, measures WER/CER and ASR + E2E latency,
+  # and gates against docs/benchmarks/ci_baseline.json. The whisper.cpp
+  # build, GGML models, and FLEURS subset are all cached so warm runs
+  # finish in roughly a minute.
+  evaluate-asr:
+    name: evaluate (ASR live smoke)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: eval
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev pkg-config build-essential cmake python3-pip
+
+      - name: Install Python deps for FLEURS download
+        run: pip3 install --quiet 'datasets==2.21.0' soundfile librosa
+
+      - name: Cache whisper.cpp build + tiny models
+        id: whisper-cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/whisper.cpp
+          key: whisper-cpp-v1.7.4-tiny-${{ runner.os }}
+
+      - name: Build whisper.cpp + download tiny models
+        run: bash scripts/setup_whisper.sh
+
+      - name: Cache FLEURS subset
+        id: fleurs-cache
+        uses: actions/cache@v4
+        with:
+          path: data/fleurs_subset
+          key: fleurs-subset-v1-en-ja-zh-n10
+
+      - name: Download FLEURS subset (cache miss only)
+        if: steps.fleurs-cache.outputs.cache-hit != 'true'
+        run: python3 scripts/download_fleurs_subset.py --n 10
+
+      - name: Build eval binary
+        run: cargo build --release --example eval_l1_smoke --locked
+
+      - name: Run L1 smoke evaluation
+        run: |
+          ./target/release/examples/eval_l1_smoke \
+            --whisper-cli vendor/whisper.cpp/build/bin/whisper-cli \
+            --model-en vendor/whisper.cpp/models/ggml-tiny.en.bin \
+            --model-multi vendor/whisper.cpp/models/ggml-tiny.bin \
+            --data-dir data/fleurs_subset \
+            --baseline docs/benchmarks/ci_baseline.json
