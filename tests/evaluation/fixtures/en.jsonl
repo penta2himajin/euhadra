@@ -1,0 +1,27 @@
+{"id":"en_filler_001","category":"pure_filler","reference":"I think we should deploy now","asr_hypothesis":"um I think uh we should deploy now"}
+{"id":"en_filler_002","category":"pure_filler","reference":"let me check the logs","asr_hypothesis":"uh let me check the logs"}
+{"id":"en_filler_003","category":"pure_filler","reference":"the build is running","asr_hypothesis":"um the build is uh running"}
+{"id":"en_filler_004","category":"pure_filler","reference":"please review the patch","asr_hypothesis":"um please uh review the uh patch"}
+{"id":"en_filler_005","category":"pure_filler","reference":"the API returns a JSON","asr_hypothesis":"the API um returns a JSON"}
+{"id":"en_filler_006","category":"pure_filler","reference":"I will restart the server","asr_hypothesis":"uh I will restart the uh server"}
+{"id":"en_filler_007","category":"pure_filler","reference":"we need to update the schema","asr_hypothesis":"we need to um update the schema"}
+{"id":"en_filler_008","category":"pure_filler","reference":"this looks correct to me","asr_hypothesis":"uh this looks correct to me"}
+{"id":"en_filler_009","category":"contextual_filler","reference":"I think the test is passing","asr_hypothesis":"so I think the test is passing"}
+{"id":"en_filler_010","category":"contextual_filler","reference":"the deployment finished","asr_hypothesis":"so the deployment finished"}
+{"id":"en_correction_001","category":"self_correction","reference":"I will deploy to production","asr_hypothesis":"I will deploy to staging no wait to production"}
+{"id":"en_correction_002","category":"self_correction","reference":"the build succeeded","asr_hypothesis":"the build failed I mean succeeded"}
+{"id":"en_correction_003","category":"self_correction","reference":"send the report to Bob","asr_hypothesis":"send the report to Alice no wait to Bob"}
+{"id":"en_correction_004","category":"self_correction","reference":"merge into the develop branch","asr_hypothesis":"merge into the main branch or rather the develop branch"}
+{"id":"en_correction_005","category":"self_correction","reference":"the meeting is at three","asr_hypothesis":"the meeting is at two no wait at three"}
+{"id":"en_correction_006","category":"self_correction","reference":"please copy the artifacts","asr_hypothesis":"please move the artifacts I mean copy the artifacts"}
+{"id":"en_correction_007","category":"self_correction","reference":"upload to the staging bucket","asr_hypothesis":"upload to the prod bucket no wait the staging bucket"}
+{"id":"en_clean_001","category":"clean","reference":"the API returns a JSON response","asr_hypothesis":"the API returns a JSON response"}
+{"id":"en_clean_002","category":"clean","reference":"configure the database connection","asr_hypothesis":"configure the database connection"}
+{"id":"en_clean_003","category":"clean","reference":"deploy after the tests pass","asr_hypothesis":"deploy after the tests pass"}
+{"id":"en_clean_004","category":"clean","reference":"check the error log for details","asr_hypothesis":"check the error log for details"}
+{"id":"en_clean_005","category":"clean","reference":"the algorithm runs in linear time","asr_hypothesis":"the algorithm runs in linear time"}
+{"id":"en_clean_006","category":"clean","reference":"merge the pull request after review","asr_hypothesis":"merge the pull request after review"}
+{"id":"en_clean_007","category":"clean","reference":"add an index to speed up the query","asr_hypothesis":"add an index to speed up the query"}
+{"id":"en_clean_008","category":"clean","reference":"we need to scale the workers","asr_hypothesis":"we need to scale the workers"}
+{"id":"en_clean_009","category":"clean","reference":"rotate the certificate next month","asr_hypothesis":"rotate the certificate next month"}
+{"id":"en_clean_010","category":"clean","reference":"the cache hit rate is acceptable","asr_hypothesis":"the cache hit rate is acceptable"}

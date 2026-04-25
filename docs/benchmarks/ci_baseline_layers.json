@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "generated": "epoch:1777105453",
+  "languages": {
+    "en": {
+      "fixtures": 27,
+      "ablation": {
+        "full": 0.0401,
+        "without_filler": 0.2037,
+        "without_punctuation": 0.0401,
+        "without_self_correction": 0.2031
+      },
+      "layer_latency_us": {
+        "filler": {
+          "p50": 3.74,
+          "p95": 6.13
+        },
+        "punctuation": {
+          "p50": 0.4,
+          "p95": 0.51
+        },
+        "self_correction": {
+          "p50": 0.61,
+          "p95": 1.55
+        }
+      }
+    },
+    "ja": {
+      "fixtures": 23,
+      "ablation": {
+        "full": 0.0,
+        "without_filler": 0.1131,
+        "without_punctuation": 0.0,
+        "without_self_correction": 0.1409
+      },
+      "layer_latency_us": {
+        "filler": {
+          "p50": 0.34,
+          "p95": 0.41
+        },
+        "punctuation": {
+          "p50": 0.24,
+          "p95": 0.31
+        },
+        "self_correction": {
+          "p50": 0.73,
+          "p95": 0.83
+        }
+      }
+    },
+    "zh": {
+      "fixtures": 15,
+      "ablation": {
+        "full": 0.0
+      },
+      "layer_latency_us": {
+        "punctuation": {
+          "p50": 0.17,
+          "p95": 0.2
+        },
+        "self_correction": {
+          "p50": 0.64,
+          "p95": 0.69
+        }
+      }
+    }
+  },
+  "tolerances": {
+    "ablation_absolute_warn": 0.02,
+    "ablation_absolute_fail": 0.05,
+    "layer_latency_p50_relative_warn": 2.0,
+    "layer_latency_p50_relative_fail": 4.0
+  }
+}
