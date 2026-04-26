@@ -60,13 +60,42 @@ pub fn cer(reference: &str, hypothesis: &str) -> f64 {
 ///   (`twelve` → `12`, `twentieth` → `20th`) so ASR output that
 ///   transcribes digits doesn't lose against word-form references
 pub fn normalize(text: &str) -> String {
+    // Coverage notes:
+    //
+    // - ASCII: every standard sentence terminator + clause separator
+    //   + bracket/quote pair.
+    // - CJK: 。 、 「 」 『 』 ・ (Japanese), 《 》 〈 〉 〝 〟 (Chinese
+    //   alternative quotes/angles), and the fullwidth ASCII clones
+    //   ？ ！ ： ； （ ） ， ． that are *distinct codepoints* from
+    //   their halfwidth counterparts (FF0C ≠ 002C). The pre-PR table
+    //   listed `?` / `!` / `:` / `;` twice, but both occurrences were
+    //   the U+003F/U+0021/... ASCII forms; the FF-block versions were
+    //   missing entirely, leaving Chinese commas (`，`, FF0C) and
+    //   Japanese fullwidth question marks unstripped.
+    // - Smart quotes: ' ' " " (U+2018 / U+2019 / U+201C / U+201D) —
+    //   Whisper / Paraformer output sometimes uses these instead of
+    //   straight ASCII quotes.
+    // - U+2026 horizontal ellipsis is treated as drop-punct so a
+    //   trailing `…` on a hypothesis doesn't fragment the last word.
     const DROP_PUNCT: &[char] = &[
+        // ASCII
         '.', ',', '?', '!', ':', ';', '"', '\'', '(', ')', '[', ']', '{', '}',
-        '。', '、', '?', '!', ':', ';', '「', '」', '『', '』', '(', ')', '・',
+        // Japanese / CJK punctuation
+        '。', '、', '「', '」', '『', '』', '・',
+        // Fullwidth ASCII clones (FF block)
+        '？', '！', '：', '；', '（', '）', '，', '．',
+        // Chinese alternative brackets / quotes
+        '《', '》', '〈', '〉', '〝', '〟',
+        // Misc
+        '…',
+        '\u{2018}', '\u{2019}', // single smart quotes ' '
+        '\u{201C}', '\u{201D}', // double smart quotes " "
     ];
     // Hyphens / dashes always behave as word separators, never as
-    // skip-and-glue. Fullwidth `−` and en/em dashes map the same way.
-    const SPLIT_PUNCT: &[char] = &['-', '–', '—', '−'];
+    // skip-and-glue. ASCII `-`, en-dash `–`, em-dash `—`, fullwidth
+    // minus `−`, and the horizontal-bar `―` (sometimes used as a
+    // sentence dash in Japanese) all map the same way.
+    const SPLIT_PUNCT: &[char] = &['-', '–', '—', '−', '―'];
 
     // Numerals first so the punctuation/case/whitespace pass below
     // operates on the canonical digit form.
@@ -587,5 +616,110 @@ mod tests {
             normalize("the quick brown fox"),
             "the quick brown fox"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // Punctuation coverage — fullwidth FF-block forms are *distinct
+    // codepoints* from their ASCII counterparts, so each must be in
+    // the table. The pre-existing `'?', '!', ':', ';', '(', ')'` on
+    // the second row of the table were ASCII duplicates, not the
+    // fullwidth versions; these tests would have caught that.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn drop_punct_covers_fullwidth_ff_block() {
+        // U+FF0C 「，」 (Chinese fullwidth comma) is the most common
+        // miss — it's what the Paraformer / Whisper-zh adapters emit
+        // between clauses.
+        assert_eq!(cer("你好，世界", "你好世界"), 0.0);
+        assert_eq!(cer("你好世界", "你好，世界"), 0.0);
+        // Symmetric coverage of the rest of the FF block.
+        for p in &['？', '！', '：', '；', '（', '）', '．'] {
+            let with_punct = format!("hello{p}world");
+            let without = "helloworld";
+            assert_eq!(
+                cer(&with_punct, without),
+                0.0,
+                "punct {p:?} not stripped"
+            );
+        }
+    }
+
+    #[test]
+    fn drop_punct_covers_japanese_brackets_and_dot() {
+        // 「 」 『 』 ・ — all already there pre-PR; pinned here so
+        // future cleanups don't drop them.
+        assert_eq!(cer("「今日は」、晴れだ。", "今日は晴れだ"), 0.0);
+        assert_eq!(cer("『良』『書』", "良書"), 0.0);
+        assert_eq!(cer("カタログ・データ", "カタログデータ"), 0.0);
+    }
+
+    #[test]
+    fn drop_punct_covers_smart_quotes_and_ellipsis() {
+        // U+2018 / U+2019 / U+201C / U+201D — Whisper output sometimes
+        // produces these instead of ASCII quotes.
+        assert_eq!(wer("\u{2018}hello\u{2019}", "hello"), 0.0);
+        assert_eq!(wer("\u{201C}hello\u{201D}", "hello"), 0.0);
+        // Horizontal ellipsis must not fragment the trailing word.
+        assert_eq!(cer("そうです…", "そうです"), 0.0);
+    }
+
+    // -----------------------------------------------------------------
+    // Symmetry — `normalize()` must be applied to BOTH reference and
+    // hypothesis. If either side were left raw, the whole point of
+    // normalisation collapses (one side carries punctuation/case the
+    // other doesn't, and Levenshtein over those is essentially
+    // no-better-than-no-normalisation).
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn normalisation_is_symmetric_across_ref_and_hyp() {
+        // ref dirty, hyp clean.
+        assert_eq!(wer("Hello, World!", "hello world"), 0.0);
+        // hyp dirty, ref clean.
+        assert_eq!(wer("hello world", "Hello, World!"), 0.0);
+        // ref carries fullwidth, hyp ASCII.
+        assert_eq!(cer("你好，世界", "你好世界"), 0.0);
+        // hyp carries fullwidth, ref clean.
+        assert_eq!(cer("你好世界", "你好，世界"), 0.0);
+        // ref carries Chinese numerals, hyp Arabic.
+        assert_eq!(cer("二零二一年", "2021年"), 0.0);
+        assert_eq!(cer("2021年", "二零二一年"), 0.0);
+        // ref word form, hyp Arabic (and the reverse).
+        assert_eq!(wer("twentieth century", "20th century"), 0.0);
+        assert_eq!(wer("20th century", "twentieth century"), 0.0);
+    }
+
+    // -----------------------------------------------------------------
+    // Whitespace coverage — `char::is_whitespace` follows Unicode's
+    // White_Space property, which includes U+3000 IDEOGRAPHIC SPACE
+    // (full-width 「　」). FLEURS-ja references occasionally use it
+    // as a clause separator instead of `、`, and Paraformer output
+    // never does, so failure to strip it would inflate ja CER.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn fullwidth_space_is_collapsed_for_wer() {
+        // U+3000 between two ASCII tokens must read as a word boundary,
+        // not a substitution.
+        assert_eq!(wer("hello\u{3000}world", "hello world"), 0.0);
+    }
+
+    #[test]
+    fn fullwidth_space_is_stripped_for_cer() {
+        // U+3000 between CJK characters must collapse the same way
+        // ASCII spaces do (the CJK CER path strips ALL whitespace).
+        let with = "今日\u{3000}は\u{3000}晴れだ";
+        let without = "今日は晴れだ";
+        assert_eq!(cer(with, without), 0.0);
+    }
+
+    #[test]
+    fn mixed_whitespace_kinds_collapse_uniformly() {
+        // ASCII space, tab, NBSP (U+00A0), and ideographic space
+        // (U+3000) all need to behave identically as separators.
+        assert_eq!(wer("a\tb", "a b"), 0.0);
+        assert_eq!(wer("a\u{00A0}b", "a b"), 0.0);
+        assert_eq!(wer("a\u{3000}b", "a b"), 0.0);
     }
 }
