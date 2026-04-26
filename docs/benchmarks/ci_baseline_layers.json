@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated": "epoch:1777177337",
+  "generated": "epoch:1777180973",
   "languages": {
     "en": {
       "fixtures": 27,
@@ -12,16 +12,16 @@
       },
       "layer_latency_us": {
         "filler": {
-          "p50": 4.23,
-          "p95": 9.14
+          "p50": 3.49,
+          "p95": 5.72
         },
         "punctuation": {
-          "p50": 0.34,
-          "p95": 0.42
+          "p50": 0.3,
+          "p95": 0.36
         },
         "self_correction": {
-          "p50": 0.6,
-          "p95": 1.04
+          "p50": 0.5,
+          "p95": 0.76
         }
       }
     },
@@ -35,32 +35,39 @@
       },
       "layer_latency_us": {
         "filler": {
-          "p50": 0.34,
-          "p95": 0.42
+          "p50": 0.28,
+          "p95": 0.34
         },
         "punctuation": {
-          "p50": 0.24,
-          "p95": 0.3
+          "p50": 0.21,
+          "p95": 0.25
         },
         "self_correction": {
-          "p50": 0.75,
-          "p95": 1.11
+          "p50": 0.62,
+          "p95": 0.85
         }
       }
     },
     "zh": {
-      "fixtures": 15,
+      "fixtures": 27,
       "ablation": {
-        "full": 0.0
+        "full": 0.0165,
+        "without_filler": 0.148,
+        "without_punctuation": 0.0165,
+        "without_self_correction": 0.0165
       },
       "layer_latency_us": {
+        "filler": {
+          "p50": 0.2,
+          "p95": 0.32
+        },
         "punctuation": {
-          "p50": 0.18,
-          "p95": 0.21
+          "p50": 0.17,
+          "p95": 0.2
         },
         "self_correction": {
-          "p50": 0.65,
-          "p95": 0.7
+          "p50": 0.55,
+          "p95": 0.63
         }
       }
     }

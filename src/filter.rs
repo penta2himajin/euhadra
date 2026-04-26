@@ -480,6 +480,149 @@ impl TextFilter for JapaneseFillerFilter {
     }
 }
 
+// ---------------------------------------------------------------------------
+// ChineseFillerFilter — Mandarin Chinese rule-based filter
+// ---------------------------------------------------------------------------
+
+/// Rule-based filter for Mandarin Chinese filler tokens.
+///
+/// Closely mirrors `JapaneseFillerFilter`: splits the input by Chinese
+/// commas (`，`), then applies a 3-pass rule set per segment:
+///
+/// 1. **Pure fillers** — `嗯`, `呃`, `哦`, etc. Always removed.
+/// 2. **Contextual fillers** — `那个`, `这个`, `就是`, `然后`, `怎么说`.
+///    These are also content words in their non-filler use (`那个`
+///    "that one", `这个` "this one", `然后` "and then") so we only
+///    remove them when they appear at sentence-initial position or
+///    just after a `。` sentence boundary.
+/// 3. **Standalone contextual fillers** — when a contextual filler
+///    forms the entire `，`-delimited segment (e.g. "那个，我们需要…"
+///    → segment 0 is the literal string "那个"), it's almost certainly
+///    a filler, not a demonstrative.
+///
+/// The closed-set lexicon is informed by the Mandarin disfluency
+/// literature surveyed in `docs/evaluation.md` §5.6.2 — well-attested
+/// surface forms with high inter-annotator agreement (κ 0.80–0.95).
+/// `啊` is intentionally **not** included as a pure filler because it
+/// frequently appears as a sentence-final particle that's part of the
+/// content; downgrading that judgement to false-positive territory
+/// is worse than leaving it in.
+pub struct ChineseFillerFilter {
+    /// Always removed regardless of position.
+    pure_fillers: Vec<String>,
+    /// Removed only at sentence-initial position or as a standalone segment.
+    contextual_fillers: Vec<String>,
+}
+
+impl ChineseFillerFilter {
+    pub fn new() -> Self {
+        Self {
+            pure_fillers: vec!["嗯", "呃", "哦", "唉", "呀"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            contextual_fillers: vec!["那个", "这个", "就是", "然后", "怎么说"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+        }
+    }
+}
+
+impl Default for ChineseFillerFilter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl TextFilter for ChineseFillerFilter {
+    async fn filter(&self, text: &str) -> Result<FilterResult, FilterError> {
+        // Split by Chinese full-width comma. Half-width "," is rare in
+        // Whisper's zh output but if it appears, we treat it the same.
+        let normalized = text.replace(',', "，");
+        let segments: Vec<&str> = normalized.split('，').collect();
+        let n = segments.len();
+        let mut removed_indices = vec![false; n];
+        let mut removed_labels: Vec<String> = Vec::new();
+
+        // Pass 1: pure fillers — remove unconditionally.
+        for i in 0..n {
+            let trimmed = segments[i].trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if self.pure_fillers.iter().any(|f| trimmed == f) {
+                removed_indices[i] = true;
+                removed_labels.push(trimmed.to_string());
+            }
+        }
+
+        // Pass 2: contextual fillers at sentence-initial position.
+        for i in 0..n {
+            if removed_indices[i] {
+                continue;
+            }
+            let trimmed = segments[i].trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let is_initial = (0..i).all(|j| {
+                removed_indices[j] || segments[j].trim().is_empty()
+            });
+            let after_period = i > 0
+                && !removed_indices[i - 1]
+                && segments[i - 1].trim().ends_with('。');
+
+            if self.contextual_fillers.iter().any(|f| trimmed == f)
+                && (is_initial || after_period)
+            {
+                removed_indices[i] = true;
+                removed_labels.push(trimmed.to_string());
+            }
+        }
+
+        // Pass 3: standalone contextual fillers (the whole segment IS
+        // the filler word). 「那个、我们需要…」 vs. 「那个人」.
+        for i in 0..n {
+            if removed_indices[i] {
+                continue;
+            }
+            let trimmed = segments[i].trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if self.contextual_fillers.iter().any(|f| trimmed == f) {
+                removed_indices[i] = true;
+                removed_labels.push(trimmed.to_string());
+            }
+        }
+
+        let kept: Vec<&str> = segments
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !removed_indices[*i])
+            .map(|(_, s)| *s)
+            .collect();
+
+        // Rejoin with 「，」, then clean up. Both `、` and `，` are
+        // 3 bytes in UTF-8 so the byte-skip from JapaneseFillerFilter
+        // applies directly.
+        let mut result = kept.join("，");
+        while result.starts_with('，') {
+            result = result[3..].to_string();
+        }
+        while result.contains("，，") {
+            result = result.replace("，，", "，");
+        }
+
+        Ok(FilterResult {
+            text: result.trim().to_string(),
+            removed: removed_labels,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -657,5 +800,93 @@ mod tests {
         assert!(!result.text.contains("映像"), "ASR artifact should be removed");
         assert!(result.text.contains("せっしゃおやかたとモースは"));
         assert!(result.text.contains("ご存知のおかたもございましょうが"));
+    }
+
+    // -----------------------------------------------------------------
+    // ChineseFillerFilter
+    // -----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn chinese_pure_filler_removed() {
+        let filter = ChineseFillerFilter::new();
+        let result = filter.filter("嗯，我们需要更新数据库").await.unwrap();
+        assert_eq!(result.text, "我们需要更新数据库");
+        assert!(result.removed.contains(&"嗯".to_string()));
+    }
+
+    #[tokio::test]
+    async fn chinese_two_pure_fillers() {
+        let filter = ChineseFillerFilter::new();
+        let result = filter.filter("呃，明天发布新版本，哦").await.unwrap();
+        assert!(!result.text.contains("呃"), "{}", result.text);
+        assert!(!result.text.contains("哦"), "{}", result.text);
+        assert!(result.text.contains("明天发布新版本"));
+    }
+
+    #[tokio::test]
+    async fn chinese_contextual_filler_at_sentence_start() {
+        let filter = ChineseFillerFilter::new();
+        let result = filter.filter("那个，测试全部通过了").await.unwrap();
+        assert_eq!(result.text, "测试全部通过了");
+        assert!(result.removed.contains(&"那个".to_string()));
+    }
+
+    #[tokio::test]
+    async fn chinese_contextual_word_in_phrase_preserved() {
+        // "那个" inside a noun phrase ("那个人" — "that person") must
+        // NOT be removed; only the standalone-segment form is a filler.
+        let filter = ChineseFillerFilter::new();
+        let result = filter.filter("那个人是谁").await.unwrap();
+        assert_eq!(result.text, "那个人是谁");
+        assert!(result.removed.is_empty());
+    }
+
+    #[tokio::test]
+    async fn chinese_standalone_contextual_filler_mid_sentence() {
+        // 「那个」 as its own 「，」-delimited segment — even mid-sentence
+        // — is the filler usage (Pass 3).
+        let filter = ChineseFillerFilter::new();
+        let result = filter
+            .filter("我觉得，那个，这个事情应该这样处理")
+            .await
+            .unwrap();
+        assert!(!result.text.contains("，那个，"), "{}", result.text);
+        assert!(result.text.contains("我觉得"));
+        assert!(result.text.contains("这个事情应该这样处理"));
+    }
+
+    #[tokio::test]
+    async fn chinese_clean_text_preserved() {
+        let filter = ChineseFillerFilter::new();
+        let result = filter
+            .filter("配置文件已经修改，缓存命中率不错")
+            .await
+            .unwrap();
+        assert_eq!(result.text, "配置文件已经修改，缓存命中率不错");
+        assert!(result.removed.is_empty());
+    }
+
+    #[tokio::test]
+    async fn chinese_halfwidth_comma_normalised() {
+        // Whisper for zh almost always emits 「，」 but if a half-width
+        // comma slips through we should still segment correctly.
+        let filter = ChineseFillerFilter::new();
+        let result = filter.filter("嗯,我们需要更新数据库").await.unwrap();
+        assert!(!result.text.contains("嗯"));
+        assert!(result.text.contains("我们需要更新数据库"));
+    }
+
+    #[tokio::test]
+    async fn chinese_contextual_after_sentence_end() {
+        // After a 。 sentence break the contextual filler appears as
+        // its own 「，」-delimited segment — Pass 2's after_period
+        // branch picks it up.
+        let filter = ChineseFillerFilter::new();
+        let result = filter
+            .filter("第一个任务完成。，然后，开始第二个")
+            .await
+            .unwrap();
+        assert!(!result.text.contains("然后"), "{}", result.text);
+        assert!(result.text.contains("开始第二个"));
     }
 }

@@ -200,7 +200,7 @@ Without the `onnx` feature, euhadra uses rule-based implementations with zero ML
 [euhadra core (Rust)]
     ├── Pipeline runtime (tokio async)
     ├── ASR adapter trait         → WhisperLocal (whisper.cpp)
-    ├── TextFilter trait          → SimpleFillerFilter, JapaneseFillerFilter
+    ├── TextFilter trait          → SimpleFillerFilter, JapaneseFillerFilter, ChineseFillerFilter
     ├── TextProcessor trait       → SelfCorrectionDetector, BasicPunctuationRestorer
     ├── LLM refiner trait         → (optional, pluggable)
     ├── Context provider trait    → Manual, Accessibility API
