@@ -29,6 +29,8 @@ use euhadra::eval::latency::Samples;
 use euhadra::eval::metrics::{cer, wer};
 #[cfg(feature = "onnx")]
 use euhadra::parakeet::ParakeetAdapter;
+#[cfg(feature = "onnx")]
+use euhadra::paraformer::ParaformerAdapter;
 use euhadra::prelude::*;
 use euhadra::whisper_local::{WhisperLocal, read_wav};
 
@@ -81,6 +83,14 @@ struct Cli {
     /// `--features onnx`.
     #[arg(long, env = "PARAKEET_EN_DIR")]
     parakeet_en_dir: Option<PathBuf>,
+
+    /// Optional path to a FunASR Paraformer-large ONNX bundle
+    /// (`model.onnx`, `am.mvn`, `tokens.json`). When provided, the
+    /// `zh` language is run through `ParaformerAdapter` instead of
+    /// whisper-tiny — gives dramatically better CER on Mandarin.
+    /// Requires `--features onnx`.
+    #[arg(long, env = "PARAFORMER_ZH_DIR")]
+    paraformer_zh_dir: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -132,6 +142,7 @@ async fn run() -> Result<(), String> {
 
     let mut used_parakeet_ja = false;
     let mut used_parakeet_en = false;
+    let mut used_paraformer_zh = false;
 
     for lang in &cli.langs {
         let manifest = load_manifest(&cli.data_dir, lang)
@@ -150,6 +161,7 @@ async fn run() -> Result<(), String> {
             lang,
             cli.parakeet_ja_dir.as_deref(),
             cli.parakeet_en_dir.as_deref(),
+            cli.paraformer_zh_dir.as_deref(),
         )?;
         if lang == "ja" && cli.parakeet_ja_dir.is_some() {
             used_parakeet_ja = true;
@@ -157,15 +169,19 @@ async fn run() -> Result<(), String> {
         if lang == "en" && cli.parakeet_en_dir.is_some() {
             used_parakeet_en = true;
         }
+        if lang == "zh" && cli.paraformer_zh_dir.is_some() {
+            used_paraformer_zh = true;
+        }
 
         let lang_result = evaluate_language(lang, &manifest, &pipeline).await?;
         print_language_result(lang, &lang_result);
         measured.insert(lang.clone(), lang_result);
     }
     let asr_model_label = format!(
-        "{en_model} (en) / {ja_model} (ja) / ggml-tiny (zh)",
+        "{en_model} (en) / {ja_model} (ja) / {zh_model} (zh)",
         en_model = if used_parakeet_en { "parakeet-tdt-0.6b-v3" } else { "ggml-tiny.en" },
         ja_model = if used_parakeet_ja { "parakeet-tdt_ctc-0.6b-ja" } else { "ggml-tiny" },
+        zh_model = if used_paraformer_zh { "paraformer-large-zh" } else { "ggml-tiny" },
     );
 
     if cli.update_baseline {
@@ -320,6 +336,7 @@ fn build_pipeline(
     lang: &str,
     parakeet_ja_dir: Option<&Path>,
     parakeet_en_dir: Option<&Path>,
+    paraformer_zh_dir: Option<&Path>,
 ) -> Result<Pipeline, String> {
     // Build the post-ASR stack first; ASR is bolted on per-language
     // because its concrete type depends on the model choice.
@@ -369,6 +386,22 @@ fn build_pipeline(
             {
                 return Err(
                     "--parakeet-en-dir requires --features onnx at build time".into(),
+                );
+            }
+        }
+        "zh" if paraformer_zh_dir.is_some() => {
+            #[cfg(feature = "onnx")]
+            {
+                let dir = paraformer_zh_dir.unwrap();
+                let asr = ParaformerAdapter::load(dir).map_err(|e| {
+                    format!("load paraformer zh from {}: {e}", dir.display())
+                })?;
+                builder.asr(asr)
+            }
+            #[cfg(not(feature = "onnx"))]
+            {
+                return Err(
+                    "--paraformer-zh-dir requires --features onnx at build time".into(),
                 );
             }
         }

@@ -199,7 +199,7 @@ Without the `onnx` feature, euhadra uses rule-based implementations with zero ML
     ↕ C ABI / UniFFI
 [euhadra core (Rust)]
     ├── Pipeline runtime (tokio async)
-    ├── ASR adapter trait         → WhisperLocal (whisper.cpp)
+    ├── ASR adapter trait         → WhisperLocal (whisper.cpp), ParakeetAdapter, ParaformerAdapter (zh)
     ├── TextFilter trait          → SimpleFillerFilter, JapaneseFillerFilter, ChineseFillerFilter
     ├── TextProcessor trait       → SelfCorrectionDetector, BasicPunctuationRestorer
     ├── LLM refiner trait         → (optional, pluggable)
@@ -263,6 +263,7 @@ Setup scripts (idempotent, skip-if-present):
 scripts/setup_whisper.sh                   # whisper.cpp + ggml-tiny models (zh L1)
 scripts/setup_parakeet_en.sh               # parakeet-tdt-0.6b-v3 ONNX (en L1, ~2.4 GB)
 scripts/setup_parakeet_ja.sh               # parakeet-tdt_ctc-0.6b-ja ONNX (ja L1, ~2.4 GB)
+scripts/setup_paraformer_zh.sh             # FunASR Paraformer-large ONNX (zh L1, ~240 MB)
 scripts/download_fleurs_subset.py          # L1 FLEURS subset
 scripts/download_l2_data.sh <dataset>      # LibriSpeech / AISHELL-1 / MUSAN / RIR
 scripts/download_l2_data.py reazonspeech-test

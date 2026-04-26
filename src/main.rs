@@ -2,7 +2,9 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 use euhadra::emitters::ClipboardEmitter;
-use euhadra::filter::{EmbeddingFillerFilter, JapaneseFillerFilter, SimpleFillerFilter};
+use euhadra::filter::{
+    ChineseFillerFilter, EmbeddingFillerFilter, JapaneseFillerFilter, SimpleFillerFilter,
+};
 use euhadra::mic::{self, MicConfig};
 use euhadra::mock::{MockContextProvider, MockRefiner, StdoutEmitter};
 use euhadra::pipeline::Pipeline;
@@ -153,16 +155,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(ref script) = filler_script {
                     builder = builder.filter(EmbeddingFillerFilter::new(script));
                 } else {
-                    let is_japanese = language
-                        .as_deref()
-                        .map(|l| l == "ja" || l == "japanese")
-                        .unwrap_or(false);
-
-                    if is_japanese {
-                        builder = builder.filter(JapaneseFillerFilter::new());
-                    } else {
-                        builder = builder.filter(SimpleFillerFilter::english());
-                    }
+                    builder = match language.as_deref() {
+                        Some("ja") | Some("japanese") => {
+                            builder.filter(JapaneseFillerFilter::new())
+                        }
+                        Some("zh") | Some("chinese") => {
+                            builder.filter(ChineseFillerFilter::new())
+                        }
+                        _ => builder.filter(SimpleFillerFilter::english()),
+                    };
                 }
             }
 
@@ -220,16 +221,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // Filter
             if !no_filter {
-                let is_japanese = language
-                    .as_deref()
-                    .map(|l| l == "ja" || l == "japanese")
-                    .unwrap_or(false);
-
-                if is_japanese {
-                    builder = builder.filter(JapaneseFillerFilter::new());
-                } else {
-                    builder = builder.filter(SimpleFillerFilter::english());
-                }
+                builder = match language.as_deref() {
+                    Some("ja") | Some("japanese") => {
+                        builder.filter(JapaneseFillerFilter::new())
+                    }
+                    Some("zh") | Some("chinese") => {
+                        builder.filter(ChineseFillerFilter::new())
+                    }
+                    _ => builder.filter(SimpleFillerFilter::english()),
+                };
             }
 
             // Processors
