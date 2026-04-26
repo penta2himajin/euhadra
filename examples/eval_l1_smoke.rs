@@ -91,6 +91,14 @@ struct Cli {
     /// Requires `--features onnx`.
     #[arg(long, env = "PARAFORMER_ZH_DIR")]
     paraformer_zh_dir: Option<PathBuf>,
+
+    /// Print every utterance's reference / hypothesis / per-utterance
+    /// WER + CER as the smoke runs. Useful when chasing residual
+    /// errors (mismatched normalisation, OOV characters, traditional
+    /// vs simplified Chinese, numeric formatting). Off by default to
+    /// keep CI logs short.
+    #[arg(long, default_value_t = false)]
+    dump_utterances: bool,
 }
 
 #[derive(Debug)]
@@ -173,10 +181,20 @@ async fn run() -> Result<(), String> {
             used_paraformer_zh = true;
         }
 
-        let lang_result = evaluate_language(lang, &manifest, &pipeline).await?;
-        print_language_result(lang, &lang_result);
+        let lang_result = evaluate_language(lang, &manifest, &pipeline, cli.dump_utterances).await?;
         measured.insert(lang.clone(), lang_result);
     }
+
+    // Print all per-language summaries together so they're easy to
+    // find — `--dump-utterances` otherwise scatters them between
+    // hundreds of ref/hyp lines.
+    println!();
+    for lang in &cli.langs {
+        if let Some(r) = measured.get(lang) {
+            print_language_result(lang, r);
+        }
+    }
+
     let asr_model_label = format!(
         "{en_model} (en) / {ja_model} (ja) / {zh_model} (zh)",
         en_model = if used_parakeet_en { "parakeet-tdt-0.6b-v3" } else { "ggml-tiny.en" },
@@ -239,6 +257,7 @@ async fn evaluate_language(
     lang: &str,
     manifest: &Manifest,
     pipeline: &Pipeline,
+    dump_utterances: bool,
 ) -> Result<LanguageBaseline, String> {
     let mut wer_acc = 0.0;
     let mut cer_acc = 0.0;
@@ -291,6 +310,18 @@ async fn evaluate_language(
             cer_acc += c;
         }
         samples_counted += 1;
+
+        if dump_utterances {
+            let primary = match lang {
+                "en" => format!("WER={:.4}", w),
+                _ => format!("CER={:.4}", c),
+            };
+            // Emit on stderr so stdout stays parseable for the
+            // baseline-comparison summary block.
+            eprintln!("  [{lang} {idx:>2}] {primary}", idx = samples_counted);
+            eprintln!("       ref: {}", row.reference);
+            eprintln!("       hyp: {hyp}");
+        }
     }
 
     let mean_wer = if samples_counted > 0 {

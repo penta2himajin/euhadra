@@ -121,6 +121,15 @@ impl Fbank {
             let start = f * frame_shift;
             frame.copy_from_slice(&samples[start..start + frame_len]);
 
+            // Remove DC offset — Kaldi / kaldi_native_fbank's
+            // FrameExtractionOptions::remove_dc_offset defaults to true
+            // and is applied per-frame BEFORE pre-emphasis. Skipping it
+            // produces ~2× CER on Paraformer-large.
+            let mean = frame.iter().sum::<f32>() / frame_len as f32;
+            for s in frame.iter_mut() {
+                *s -= mean;
+            }
+
             // Pre-emphasis: y[t] = x[t] - coeff * x[t-1] (Kaldi uses
             // x[0] - coeff*x[0] = (1-coeff)*x[0] for the first sample).
             let coeff = self.opts.preemph_coeff;
@@ -184,9 +193,6 @@ fn hz_to_mel(hz: f32) -> f32 {
     // Slaney / Kaldi-style mel scale: 1127 * ln(1 + hz/700).
     1127.0 * (1.0 + hz / 700.0).ln()
 }
-fn mel_to_hz(mel: f32) -> f32 {
-    700.0 * ((mel / 1127.0).exp() - 1.0)
-}
 
 fn build_mel_filters(
     sample_rate: f32,
@@ -207,42 +213,59 @@ fn build_mel_filters(
         let left_mel = mel_lo + m as f32 * mel_step;
         let centre_mel = mel_lo + (m + 1) as f32 * mel_step;
         let right_mel = mel_lo + (m + 2) as f32 * mel_step;
-        let left_hz = mel_to_hz(left_mel);
-        let centre_hz = mel_to_hz(centre_mel);
-        let right_hz = mel_to_hz(right_mel);
 
-        let mut start_bin = (left_hz / bin_hz).ceil() as isize;
-        let end_bin = (right_hz / bin_hz).floor() as isize;
-        if start_bin < 0 {
-            start_bin = 0;
-        }
-        let start_bin = start_bin as usize;
-        let end_bin = (end_bin as usize).min(n_bins.saturating_sub(1));
-
-        if end_bin < start_bin {
-            // Degenerate filter — emit a single zero weight so the
-            // index arithmetic stays consistent.
-            filters.push(MelFilter {
-                start_bin,
-                weights: vec![0.0],
-            });
-            continue;
-        }
-
-        let mut weights = vec![0.0_f32; end_bin - start_bin + 1];
-        for (k, w) in weights.iter_mut().enumerate() {
-            let bin = start_bin + k;
-            let f = bin as f32 * bin_hz;
-            *w = if f <= centre_hz {
-                (f - left_hz) / (centre_hz - left_hz).max(1e-10)
+        // Kaldi / kaldi_native_fbank computes triangles in MEL space,
+        // not Hz space — peak weight is at centre_mel and the slopes
+        // are linear in mel. HTK does the opposite (Hz-space triangles)
+        // which produces a different filterbank and hurts CER on
+        // Mandarin-trained models.
+        let mut start_bin: Option<usize> = None;
+        let mut end_bin: usize = 0;
+        let mut weights_full: Vec<f32> = Vec::new();
+        for bin in 0..n_bins {
+            let freq = bin as f32 * bin_hz;
+            let mel = hz_to_mel(freq);
+            if mel <= left_mel || mel >= right_mel {
+                continue;
+            }
+            let w = if mel <= centre_mel {
+                (mel - left_mel) / (centre_mel - left_mel).max(1e-10)
             } else {
-                (right_hz - f) / (right_hz - centre_hz).max(1e-10)
+                (right_mel - mel) / (right_mel - centre_mel).max(1e-10)
             };
-            if !w.is_finite() || *w < 0.0 {
-                *w = 0.0;
+            if !w.is_finite() || w <= 0.0 {
+                continue;
+            }
+            if start_bin.is_none() {
+                start_bin = Some(bin);
+            }
+            end_bin = bin;
+            // Pad zeros for any gap between previously-emitted bins
+            // and this one (extremely narrow filters at low mel).
+            let s = start_bin.unwrap();
+            while weights_full.len() < bin - s {
+                weights_full.push(0.0);
+            }
+            weights_full.push(w);
+        }
+
+        match start_bin {
+            Some(s) => {
+                debug_assert_eq!(weights_full.len(), end_bin - s + 1);
+                filters.push(MelFilter {
+                    start_bin: s,
+                    weights: weights_full,
+                });
+            }
+            None => {
+                // Degenerate filter — emit a single zero weight so the
+                // index arithmetic stays consistent.
+                filters.push(MelFilter {
+                    start_bin: 0,
+                    weights: vec![0.0],
+                });
             }
         }
-        filters.push(MelFilter { start_bin, weights });
     }
     filters
 }
@@ -270,6 +293,26 @@ mod tests {
         let (out, n) = f.compute(&samples);
         assert_eq!(n, 98);
         assert_eq!(out.len(), 98 * 80);
+    }
+
+    #[test]
+    fn fbank_dc_offset_is_removed_per_frame() {
+        // A constant non-zero signal should look identical to silence
+        // once we strip the DC component. Without `remove_dc_offset`
+        // the FBANK of a 0.5 constant blows up by ~30 dB across all
+        // bands — that's the bug we just fixed.
+        let f = Fbank::new(FbankOpts::paraformer_default());
+        let zeros = vec![0.0_f32; 16_000];
+        let constant = vec![0.5_f32; 16_000];
+        let (a, _) = f.compute(&zeros);
+        let (b, _) = f.compute(&constant);
+        assert_eq!(a.len(), b.len());
+        for (x, y) in a.iter().zip(b.iter()) {
+            assert!(
+                (x - y).abs() < 1e-3,
+                "dc removal failed: zeros={x} constant={y}"
+            );
+        }
     }
 
     #[test]
