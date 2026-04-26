@@ -73,12 +73,14 @@ jobs:
       - name: Clippy (onnx)
         run: cargo clippy --features onnx --all-targets --locked -- -D warnings
 
-  # L1 ASR live smoke (§1.1 / §3.8): runs whisper-tiny + parakeet-ja on
-  # a 10-utterance FLEURS subset per language, measures WER/CER and
-  # ASR + E2E latency, and gates against docs/benchmarks/ci_baseline.json.
-  # The whisper.cpp build, GGML models, FLEURS subset, and parakeet-ja
-  # ONNX bundle are all cached so warm runs finish in a couple of minutes.
-  # Parakeet-ja replaced whisper-tiny for `ja` in PR #11 (CER 42.2% → 3.3%).
+  # L1 ASR live smoke (§1.1 / §3.8): runs Parakeet (en + ja) and
+  # whisper-tiny (zh) on a 10-utterance FLEURS subset per language,
+  # measures WER/CER + ASR/E2E latency + RTF, and gates against
+  # docs/benchmarks/ci_baseline.json. All large artefacts (whisper.cpp
+  # build, GGML models, FLEURS subset, parakeet en + ja ONNX bundles)
+  # are cached so warm runs finish in a couple of minutes.
+  # Parakeet-ja replaced whisper-tiny for `ja` in PR #11 (CER 42% → 3.3%).
+  # Parakeet-v3 replaced whisper-tiny.en for `en` in PR #12 (WER 8.4% → 7.5%).
   evaluate-asr:
     name: evaluate (ASR live smoke)
     runs-on: ubuntu-latest
@@ -137,6 +139,19 @@ jobs:
         env:
           PARAKEET_JA_DIR: vendor/parakeet_ja
 
+      - name: Cache parakeet-en ONNX bundle (~2.4 GB)
+        id: parakeet-en-cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/parakeet_en
+          key: parakeet-tdt-0.6b-v3-istupakov-v1
+
+      - name: Download parakeet-en model (cache miss only)
+        if: steps.parakeet-en-cache.outputs.cache-hit != 'true'
+        run: bash scripts/setup_parakeet_en.sh
+        env:
+          PARAKEET_EN_DIR: vendor/parakeet_en
+
       - name: Build eval binary (with onnx for ParakeetAdapter)
         run: cargo build --release --example eval_l1_smoke --features onnx --locked
 
@@ -147,6 +162,7 @@ jobs:
             --model-en vendor/whisper.cpp/models/ggml-tiny.en.bin \
             --model-multi vendor/whisper.cpp/models/ggml-tiny.bin \
             --data-dir data/fleurs_subset \
+            --parakeet-en-dir vendor/parakeet_en \
             --parakeet-ja-dir vendor/parakeet_ja \
             --baseline docs/benchmarks/ci_baseline.json
 
