@@ -73,15 +73,16 @@ jobs:
       - name: Clippy (onnx)
         run: cargo clippy --features onnx --all-targets --locked -- -D warnings
 
-  # L1 ASR live smoke (§1.1 / §3.8): runs whisper-tiny on a 10-utterance
-  # FLEURS subset per language, measures WER/CER and ASR + E2E latency,
-  # and gates against docs/benchmarks/ci_baseline.json. The whisper.cpp
-  # build, GGML models, and FLEURS subset are all cached so warm runs
-  # finish in roughly a minute.
+  # L1 ASR live smoke (§1.1 / §3.8): runs whisper-tiny + parakeet-ja on
+  # a 10-utterance FLEURS subset per language, measures WER/CER and
+  # ASR + E2E latency, and gates against docs/benchmarks/ci_baseline.json.
+  # The whisper.cpp build, GGML models, FLEURS subset, and parakeet-ja
+  # ONNX bundle are all cached so warm runs finish in a couple of minutes.
+  # Parakeet-ja replaced whisper-tiny for `ja` in PR #11 (CER 42.2% → 3.3%).
   evaluate-asr:
     name: evaluate (ASR live smoke)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -123,8 +124,21 @@ jobs:
         if: steps.fleurs-cache.outputs.cache-hit != 'true'
         run: python3 scripts/download_fleurs_subset.py --n 10
 
-      - name: Build eval binary
-        run: cargo build --release --example eval_l1_smoke --locked
+      - name: Cache parakeet-ja ONNX bundle (~2.4 GB)
+        id: parakeet-ja-cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/parakeet_ja
+          key: parakeet-tdt-ctc-0.6b-ja-sunilmahendrakar-v1
+
+      - name: Download parakeet-ja model (cache miss only)
+        if: steps.parakeet-ja-cache.outputs.cache-hit != 'true'
+        run: bash scripts/setup_parakeet_ja.sh
+        env:
+          PARAKEET_JA_DIR: vendor/parakeet_ja
+
+      - name: Build eval binary (with onnx for ParakeetAdapter)
+        run: cargo build --release --example eval_l1_smoke --features onnx --locked
 
       - name: Run L1 smoke evaluation
         run: |
@@ -133,6 +147,7 @@ jobs:
             --model-en vendor/whisper.cpp/models/ggml-tiny.en.bin \
             --model-multi vendor/whisper.cpp/models/ggml-tiny.bin \
             --data-dir data/fleurs_subset \
+            --parakeet-ja-dir vendor/parakeet_ja \
             --baseline docs/benchmarks/ci_baseline.json
 
   # L1 fast layer ablation + per-layer μ-benchmark (§1.1 / §3.8 Phase A-2).

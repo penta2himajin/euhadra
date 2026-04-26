@@ -34,12 +34,39 @@ pub struct ParakeetAdapter {
 }
 
 impl ParakeetAdapter {
-    /// Load from a directory containing encoder/decoder_joint ONNX files + vocab.txt.
+    /// Load with the default 128-mel preprocessor — matches
+    /// `parakeet-tdt-0.6b-v2` and the multilingual European
+    /// `parakeet-tdt-0.6b-v3`.
     pub fn load(model_dir: impl AsRef<Path>) -> Result<Self, AsrError> {
         let model = ParakeetTDT::from_pretrained(model_dir.as_ref(), None)
             .map_err(|e| AsrError {
                 message: format!("failed to load ParakeetTDT model: {e}"),
             })?;
+        Ok(Self {
+            model: Mutex::new(model),
+        })
+    }
+
+    /// Load with an explicit mel-feature size. Use this for variants
+    /// trained with a non-default preprocessor:
+    ///
+    /// - `nvidia/parakeet-tdt_ctc-0.6b-ja` (Japanese, Hybrid TDT-CTC) → **80**
+    /// - `parakeet-tdt-0.6b-v2` / `parakeet-tdt-0.6b-v3` → **128** (same as `load`)
+    ///
+    /// Underlying support requires the fork at
+    /// `penta2himajin/parakeet-rs@feature-size-injection`; see Cargo.toml.
+    pub fn load_with_feature_size(
+        model_dir: impl AsRef<Path>,
+        feature_size: usize,
+    ) -> Result<Self, AsrError> {
+        let model = ParakeetTDT::from_pretrained_with_feature_size(
+            model_dir.as_ref(),
+            None,
+            feature_size,
+        )
+        .map_err(|e| AsrError {
+            message: format!("failed to load ParakeetTDT model (feature_size={feature_size}): {e}"),
+        })?;
         Ok(Self {
             model: Mutex::new(model),
         })

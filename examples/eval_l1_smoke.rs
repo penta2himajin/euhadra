@@ -27,6 +27,8 @@ use euhadra::eval::baseline::{
 };
 use euhadra::eval::latency::Samples;
 use euhadra::eval::metrics::{cer, wer};
+#[cfg(feature = "onnx")]
+use euhadra::parakeet::ParakeetAdapter;
 use euhadra::prelude::*;
 use euhadra::whisper_local::{WhisperLocal, read_wav};
 
@@ -60,6 +62,16 @@ struct Cli {
     /// Write the measured numbers as the new baseline instead of comparing.
     #[arg(long)]
     update_baseline: bool,
+
+    /// Optional path to an `nvidia/parakeet-tdt_ctc-0.6b-ja` ONNX model
+    /// directory (encoder-model.onnx, decoder_joint-model.onnx,
+    /// vocab.txt, *.data). When provided, the `ja` language is run
+    /// through ParakeetAdapter (80-mel) instead of WhisperLocal — gives
+    /// dramatically better CER (~6–9% vs whisper-tiny's ~42%). Requires
+    /// `--features onnx` at build time. When omitted, `ja` falls back
+    /// to whisper.
+    #[arg(long, env = "PARAKEET_JA_DIR")]
+    parakeet_ja_dir: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -109,6 +121,9 @@ async fn run() -> Result<(), String> {
 
     let mut measured: BTreeMap<String, LanguageBaseline> = BTreeMap::new();
 
+    let mut asr_model_label = String::from("ggml-tiny.en (en) / ggml-tiny (ja, zh)");
+    let mut used_parakeet_ja = false;
+
     for lang in &cli.langs {
         let manifest = load_manifest(&cli.data_dir, lang)
             .map_err(|e| format!("loading {lang} manifest: {e}"))?;
@@ -116,17 +131,34 @@ async fn run() -> Result<(), String> {
             return Err(format!("manifest for {lang} is empty — did the download script run?"));
         }
 
+        // Build the pipeline ONCE per language. For ParakeetAdapter
+        // this matters: model load is a multi-second ONNX session
+        // initialisation that we don't want to pay per utterance.
         let model = if lang == "en" { &cli.model_en } else { &cli.model_multi };
-        let lang_result = evaluate_language(lang, &manifest, &cli.whisper_cli, model).await?;
+        let pipeline = build_pipeline(
+            &cli.whisper_cli,
+            model,
+            lang,
+            cli.parakeet_ja_dir.as_deref(),
+        )?;
+        if lang == "ja" && cli.parakeet_ja_dir.is_some() {
+            used_parakeet_ja = true;
+        }
+
+        let lang_result = evaluate_language(lang, &manifest, &pipeline).await?;
         print_language_result(lang, &lang_result);
         measured.insert(lang.clone(), lang_result);
+    }
+    if used_parakeet_ja {
+        asr_model_label =
+            String::from("ggml-tiny.en (en) / parakeet-tdt_ctc-0.6b-ja (ja) / ggml-tiny (zh)");
     }
 
     if cli.update_baseline {
         let baseline = Baseline {
             schema_version: 1,
             generated: chrono_now_iso8601(),
-            asr_model: "ggml-tiny (en) / ggml-tiny (multilingual)".to_string(),
+            asr_model: asr_model_label,
             languages: measured,
             tolerances: Tolerances::default(),
         };
@@ -176,8 +208,7 @@ async fn run() -> Result<(), String> {
 async fn evaluate_language(
     lang: &str,
     manifest: &Manifest,
-    whisper_cli: &Path,
-    model: &Path,
+    pipeline: &Pipeline,
 ) -> Result<LanguageBaseline, String> {
     let mut wer_acc = 0.0;
     let mut cer_acc = 0.0;
@@ -195,8 +226,6 @@ async fn evaluate_language(
             .map_err(|e| format!("read_wav {}: {e}", row.audio_path.display()))?;
         let audio_secs =
             audio.samples.len() as f64 / (audio.sample_rate as f64 * audio.channels as f64);
-
-        let pipeline = build_pipeline(whisper_cli, model, lang)?;
 
         let e2e_start = Instant::now();
         let (audio_tx, _cancel, handle) = pipeline.session();
@@ -275,22 +304,41 @@ fn build_pipeline(
     whisper_cli: &Path,
     model: &Path,
     lang: &str,
+    parakeet_ja_dir: Option<&Path>,
 ) -> Result<Pipeline, String> {
-    let asr = WhisperLocal::new(whisper_cli, model).with_language(lang);
-
+    // Build the post-ASR stack first; ASR is bolted on per-language
+    // because its concrete type depends on the model choice.
     let mut builder = Pipeline::builder()
-        .asr(asr)
         .processor(SelfCorrectionDetector::new())
         .processor(BasicPunctuationRestorer)
         .refiner(MockRefiner::passthrough())
         .context(MockContextProvider::new())
         .emitter(MockEmitter::new());
-
     builder = match lang {
         "en" => builder.filter(SimpleFillerFilter::english()),
         "ja" => builder.filter(JapaneseFillerFilter::new()),
         "zh" => builder.filter(ChineseFillerFilter::new()),
         other => return Err(format!("unsupported language: {other}")),
+    };
+
+    builder = match lang {
+        "ja" if parakeet_ja_dir.is_some() => {
+            #[cfg(feature = "onnx")]
+            {
+                let dir = parakeet_ja_dir.unwrap();
+                let asr = ParakeetAdapter::load_with_feature_size(dir, 80).map_err(|e| {
+                    format!("load parakeet ja from {}: {e}", dir.display())
+                })?;
+                builder.asr(asr)
+            }
+            #[cfg(not(feature = "onnx"))]
+            {
+                return Err(
+                    "--parakeet-ja-dir requires --features onnx at build time".into(),
+                );
+            }
+        }
+        _ => builder.asr(WhisperLocal::new(whisper_cli, model).with_language(lang)),
     };
 
     builder.build().map_err(|e| format!("build pipeline: {e}"))

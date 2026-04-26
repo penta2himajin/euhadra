@@ -21,7 +21,13 @@ cpal = "0.15"
 ort = { version = "2.0.0-rc.12", optional = true }
 ndarray = { version = "0.17", optional = true }
 tokenizers = { version = "0.21", optional = true }
-parakeet-rs = { version = "0.3", optional = true }
+# parakeet-rs is pinned to penta2himajin's fork @ feature-size-injection
+# until upstream exposes a configurable mel feature_size for Hybrid
+# TDT-CTC models such as nvidia/parakeet-tdt_ctc-0.6b-ja (which is
+# trained with 80 mels, not the v2/v3 default of 128). The fork's
+# patch is non-breaking — `from_pretrained` keeps the 128-mel default;
+# we only call the new `from_pretrained_with_feature_size` for ja.
+parakeet-rs = { git = "https://github.com/penta2himajin/parakeet-rs", branch = "feature-size-injection", optional = true }
 
 [features]
 default = []
