@@ -78,22 +78,36 @@ pub struct SelfCorrectionDetector {
 
 impl SelfCorrectionDetector {
     pub fn new() -> Self {
+        // Cues are sorted longest-first because the detector uses
+        // `str::find(cue)` and a shorter cue that is a substring of a
+        // longer one would otherwise win. Concretely: without this
+        // sort, "ていうか" (4 chars) matches before "っていうか" (5 chars)
+        // inside "鈴木課長、っていうか佐藤課長です", causing the detector
+        // to treat just "っ" as the reparandum instead of the full
+        // "鈴木課長" preceding the cue. Same hazard exists for en
+        // ("no" / "no wait", "rather" / "or rather").
+        let mut correction_cues_en: Vec<String> = vec![
+            "no", "wait", "sorry", "i mean", "actually", "rather",
+            "no wait", "or rather",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        correction_cues_en.sort_by_key(|c| std::cmp::Reverse(c.chars().count()));
+
+        let mut correction_cues_ja: Vec<String> = vec![
+            "いや", "じゃなくて", "じゃなく", "ではなく", "ていうか",
+            "っていうか", "じゃない",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        correction_cues_ja.sort_by_key(|c| std::cmp::Reverse(c.chars().count()));
+
         Self {
             min_shared_words: 1,
-            correction_cues_en: vec![
-                "no", "wait", "sorry", "i mean", "actually", "rather",
-                "no wait", "or rather",
-            ]
-            .into_iter()
-            .map(String::from)
-            .collect(),
-            correction_cues_ja: vec![
-                "いや", "じゃなくて", "じゃなく", "ではなく", "ていうか",
-                "っていうか", "じゃない",
-            ]
-            .into_iter()
-            .map(String::from)
-            .collect(),
+            correction_cues_en,
+            correction_cues_ja,
         }
     }
 
@@ -501,5 +515,51 @@ mod tests {
         let result = proc.process("", &empty_context()).await.unwrap();
         assert_eq!(result.text, "");
         assert!(result.corrections.is_empty());
+    }
+
+    /// Regression: when the input contains `っていうか`, the detector
+    /// used to find the shorter `ていうか` substring first (because
+    /// cues were iterated in declared order and `ていうか` precedes
+    /// `っていうか` in the list). That treated just `っ` as the
+    /// reparandum and left the real reparandum (e.g. `鈴木課長`) in
+    /// the output. Sorting cues longest-first at construction time
+    /// fixes this, surfaced by the L3 self-correction direct F1
+    /// evaluation against the committed ja annotations.
+    #[tokio::test]
+    async fn ja_self_correction_with_tte_iu_ka() {
+        let detector = SelfCorrectionDetector::new();
+        let result = detector
+            .process("鈴木課長、っていうか佐藤課長です", &empty_context())
+            .await
+            .unwrap();
+        assert!(
+            !result.text.contains("鈴木課長"),
+            "reparandum should be removed: {}",
+            result.text,
+        );
+        assert!(
+            result.text.contains("佐藤課長"),
+            "repair should be kept: {}",
+            result.text,
+        );
+        assert_eq!(result.text, "佐藤課長です");
+    }
+
+    /// Regression: same shape as `っていうか`/`ていうか` but for English
+    /// (`no wait` containing `no` as a prefix). Without longest-first
+    /// cue sorting, `no` could match first inside `no wait` and the
+    /// detector would skip the full reparandum.
+    #[tokio::test]
+    async fn en_self_correction_no_wait_prefers_long_cue() {
+        let detector = SelfCorrectionDetector::new();
+        let result = detector
+            .process(
+                "I want to go to Boston no wait to Denver",
+                &empty_context(),
+            )
+            .await
+            .unwrap();
+        assert!(!result.text.contains("Boston"), "{}", result.text);
+        assert!(result.text.contains("Denver"), "{}", result.text);
     }
 }

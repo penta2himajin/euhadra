@@ -910,18 +910,17 @@ PR レビューで以下を確認:
 3. edge case (`edge_001`, `edge_002`) の判定が妥当か
 4. クリーン文に違和感がないか
 
-ja annotation v0.1 で `SelfCorrectionDetector` を評価した結果 (現状値):
+ja annotation v0.2 (40 発話) で `SelfCorrectionDetector` を評価した結果:
 
 | 指標 | 値 |
 |---|---|
-| utterance-level F1 | 1.000 (28/28 fire correct, 7/7 silence correct) |
-| span-level F1 (IoU≥0.5) | 0.964 (27/28 boundary match) |
-| span-level F1 (strict) | 0.964 |
+| utterance-level F1 | 1.000 (33/33 fire correct, 7/7 silence correct) |
+| span-level F1 (IoU≥0.5) | **1.000** (33/33 boundary match) |
+| span-level F1 (strict) | **1.000** |
 
-**1 件の miss**: 「鈴木課長、っていうか佐藤課長です」で detector が cue だけ除去し reparandum を残す現象 ←
-`っていうか` cue 処理の限界。改修は別 PR。L3 評価が detector の真のロジックエッジを surface してくれる例。
+v0.1 (35 発話) 当時は span-level F1 が 0.964 で、「鈴木課長、っていうか佐藤課長です」で `っていうか` cue が cue 一覧上の `ていうか` (substring) に取られて reparandum が残る現象を surface していた。**この PR で `SelfCorrectionDetector` 側を cue 長さ降順でマッチさせるよう修正**し、annotation も `じゃない` 正用例 + 長文文脈例で 5 件拡張した結果、現在の F1 = 1.000 に到達。L3 評価が detector の真のロジックエッジを surface し、修正後にも同じ評価で確認できる流れの最初の実例となった。
 
-5h × 2 名 × 言語数 で **¥200–400k** または社内 4–6 人週 (フル運用時)。現状は v0.1 の 35 発話 (Claude 下書き) を起点とし、人手レビューで silver-standard へ昇格、規模を必要に応じて拡張する。
+5h × 2 名 × 言語数 で **¥200–400k** または社内 4–6 人週 (フル運用時)。現状は v0.2 の 40 発話 (Claude 下書き) を起点とし、人手レビューで silver-standard へ昇格、規模を必要に応じて拡張する。
 
 ### Phase D — 商用ライセンスデータ (任意、Cochlis 商用化フェーズ)
 
