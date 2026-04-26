@@ -1,0 +1,35 @@
+{"utterance_id": "ja_self_corr_time_001", "text": "明日、いや明後日に会議があります", "repairs": [{"reparandum": {"start": 0, "end": 2}, "interregnum": {"start": 3, "end": 5}, "repair": {"start": 5, "end": 8}, "type": "substitution"}]}
+{"utterance_id": "ja_self_corr_time_002", "text": "木曜日、じゃなく金曜日に提出します", "repairs": [{"reparandum": {"start": 0, "end": 3}, "interregnum": {"start": 4, "end": 8}, "repair": {"start": 8, "end": 11}, "type": "substitution"}]}
+{"utterance_id": "ja_self_corr_time_003", "text": "五時、ではなく四時に終わります", "repairs": [{"reparandum": {"start": 0, "end": 2}, "interregnum": {"start": 3, "end": 7}, "repair": {"start": 7, "end": 9}, "type": "substitution"}]}
+{"utterance_id": "ja_self_corr_time_004", "text": "来週、いや再来週に出張です", "repairs": [{"reparandum": {"start": 0, "end": 2}, "interregnum": {"start": 3, "end": 5}, "repair": {"start": 5, "end": 8}, "type": "substitution"}]}
+{"utterance_id": "ja_self_corr_time_005", "text": "三月、じゃなくて四月に異動します", "repairs": [{"reparandum": {"start": 0, "end": 2}, "interregnum": {"start": 3, "end": 8}, "repair": {"start": 8, "end": 10}, "type": "substitution"}]}
+{"utterance_id": "ja_self_corr_place_001", "text": "東京駅、じゃなくて品川駅で待ち合わせ", "repairs": [{"reparandum": {"start": 0, "end": 3}, "interregnum": {"start": 4, "end": 9}, "repair": {"start": 9, "end": 12}, "type": "substitution"}]}
+{"utterance_id": "ja_self_corr_place_002", "text": "京都、いや大阪に行きます", "repairs": [{"reparandum": {"start": 0, "end": 2}, "interregnum": {"start": 3, "end": 5}, "repair": {"start": 5, "end": 7}, "type": "substitution"}]}
+{"utterance_id": "ja_self_corr_place_003", "text": "渋谷、ではなく原宿で集合", "repairs": [{"reparandum": {"start": 0, "end": 2}, "interregnum": {"start": 3, "end": 7}, "repair": {"start": 7, "end": 9}, "type": "substitution"}]}
+{"utterance_id": "ja_self_corr_place_004", "text": "北海道、じゃなく沖縄に行きたい", "repairs": [{"reparandum": {"start": 0, "end": 3}, "interregnum": {"start": 4, "end": 8}, "repair": {"start": 8, "end": 10}, "type": "substitution"}]}
+{"utterance_id": "ja_self_corr_place_005", "text": "銀座、ていうか丸の内のオフィスです", "repairs": [{"reparandum": {"start": 0, "end": 2}, "interregnum": {"start": 3, "end": 7}, "repair": {"start": 7, "end": 10}, "type": "substitution"}]}
+{"utterance_id": "ja_self_corr_person_001", "text": "田中さん、いや鈴木さんに連絡してください", "repairs": [{"reparandum": {"start": 0, "end": 4}, "interregnum": {"start": 5, "end": 7}, "repair": {"start": 7, "end": 11}, "type": "substitution"}]}
+{"utterance_id": "ja_self_corr_person_002", "text": "部長、じゃなくて課長に確認します", "repairs": [{"reparandum": {"start": 0, "end": 2}, "interregnum": {"start": 3, "end": 8}, "repair": {"start": 8, "end": 10}, "type": "substitution"}]}
+{"utterance_id": "ja_self_corr_person_003", "text": "佐藤くん、ではなく高橋くんが担当です", "repairs": [{"reparandum": {"start": 0, "end": 4}, "interregnum": {"start": 5, "end": 9}, "repair": {"start": 9, "end": 13}, "type": "substitution"}]}
+{"utterance_id": "ja_self_corr_person_004", "text": "山田、いや中村が来週入社します", "repairs": [{"reparandum": {"start": 0, "end": 2}, "interregnum": {"start": 3, "end": 5}, "repair": {"start": 5, "end": 7}, "type": "substitution"}]}
+{"utterance_id": "ja_self_corr_person_005", "text": "鈴木課長、っていうか佐藤課長です", "repairs": [{"reparandum": {"start": 0, "end": 4}, "interregnum": {"start": 5, "end": 10}, "repair": {"start": 10, "end": 14}, "type": "substitution"}]}
+{"utterance_id": "ja_self_corr_num_001", "text": "三個、いや五個ください", "repairs": [{"reparandum": {"start": 0, "end": 2}, "interregnum": {"start": 3, "end": 5}, "repair": {"start": 5, "end": 7}, "type": "substitution"}]}
+{"utterance_id": "ja_self_corr_num_002", "text": "二時間、じゃなくて三時間かかります", "repairs": [{"reparandum": {"start": 0, "end": 3}, "interregnum": {"start": 4, "end": 9}, "repair": {"start": 9, "end": 12}, "type": "substitution"}]}
+{"utterance_id": "ja_self_corr_num_003", "text": "千円、ではなく二千円です", "repairs": [{"reparandum": {"start": 0, "end": 2}, "interregnum": {"start": 3, "end": 7}, "repair": {"start": 7, "end": 10}, "type": "substitution"}]}
+{"utterance_id": "ja_self_corr_num_004", "text": "一日、じゃなく二日かかる", "repairs": [{"reparandum": {"start": 0, "end": 2}, "interregnum": {"start": 3, "end": 7}, "repair": {"start": 7, "end": 9}, "type": "substitution"}]}
+{"utterance_id": "ja_self_corr_num_005", "text": "五人、いや六人で行きます", "repairs": [{"reparandum": {"start": 0, "end": 2}, "interregnum": {"start": 3, "end": 5}, "repair": {"start": 5, "end": 7}, "type": "substitution"}]}
+{"utterance_id": "ja_self_corr_verb_001", "text": "行きます、いや行きません", "repairs": [{"reparandum": {"start": 0, "end": 4}, "interregnum": {"start": 5, "end": 7}, "repair": {"start": 7, "end": 12}, "type": "substitution"}]}
+{"utterance_id": "ja_self_corr_verb_002", "text": "完了しました、じゃなくて開始しました", "repairs": [{"reparandum": {"start": 0, "end": 6}, "interregnum": {"start": 7, "end": 12}, "repair": {"start": 12, "end": 18}, "type": "substitution"}]}
+{"utterance_id": "ja_self_corr_verb_003", "text": "賛成、いや反対です", "repairs": [{"reparandum": {"start": 0, "end": 2}, "interregnum": {"start": 3, "end": 5}, "repair": {"start": 5, "end": 9}, "type": "substitution"}]}
+{"utterance_id": "ja_self_corr_verb_004", "text": "オープンに、ていうかクローズに変更", "repairs": [{"reparandum": {"start": 0, "end": 5}, "interregnum": {"start": 6, "end": 10}, "repair": {"start": 10, "end": 15}, "type": "substitution"}]}
+{"utterance_id": "ja_self_corr_verb_005", "text": "成功です、ではなく失敗です", "repairs": [{"reparandum": {"start": 0, "end": 4}, "interregnum": {"start": 5, "end": 9}, "repair": {"start": 9, "end": 13}, "type": "substitution"}]}
+{"utterance_id": "ja_self_corr_phrase_001", "text": "会議は中止、じゃなくて延期になりました", "repairs": [{"reparandum": {"start": 0, "end": 5}, "interregnum": {"start": 6, "end": 11}, "repair": {"start": 11, "end": 13}, "type": "substitution"}]}
+{"utterance_id": "ja_self_corr_phrase_002", "text": "プロジェクト完了、いや一時停止です", "repairs": [{"reparandum": {"start": 0, "end": 8}, "interregnum": {"start": 9, "end": 11}, "repair": {"start": 11, "end": 15}, "type": "substitution"}]}
+{"utterance_id": "ja_self_corr_phrase_003", "text": "全部成功、ではなく半分失敗です", "repairs": [{"reparandum": {"start": 0, "end": 4}, "interregnum": {"start": 5, "end": 9}, "repair": {"start": 9, "end": 13}, "type": "substitution"}]}
+{"utterance_id": "ja_self_corr_clean_001", "text": "明日の会議は十時からです", "repairs": []}
+{"utterance_id": "ja_self_corr_clean_002", "text": "プロジェクトは順調に進んでいます", "repairs": []}
+{"utterance_id": "ja_self_corr_clean_003", "text": "データベースの更新が完了しました", "repairs": []}
+{"utterance_id": "ja_self_corr_clean_004", "text": "テストが全部パスしました", "repairs": []}
+{"utterance_id": "ja_self_corr_clean_005", "text": "お疲れ様でした、また明日", "repairs": []}
+{"utterance_id": "ja_self_corr_edge_001", "text": "いや、それは違います", "repairs": []}
+{"utterance_id": "ja_self_corr_edge_002", "text": "それは赤いリンゴじゃない", "repairs": []}
