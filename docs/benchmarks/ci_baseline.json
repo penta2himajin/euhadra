@@ -1,59 +1,59 @@
 {
   "schema_version": 1,
-  "generated": "epoch:1777108893",
+  "generated": "epoch:1777177337",
   "asr_model": "ggml-tiny (en) / ggml-tiny (multilingual)",
   "languages": {
     "en": {
       "samples": 10,
       "wer": 0.0837,
       "asr_latency_ms": {
-        "p50": 780.92,
-        "p95": 981.93
+        "p50": 828.88,
+        "p95": 4408.06
       },
       "e2e_latency_ms": {
-        "p50": 780.93,
-        "p95": 981.94
+        "p50": 828.89,
+        "p95": 4408.06
       },
-      "rtf": 0.0893
+      "rtf": 0.1644
     },
     "ja": {
       "samples": 10,
       "cer": 0.4224,
       "asr_latency_ms": {
-        "p50": 1013.1,
-        "p95": 1399.99
+        "p50": 1051.64,
+        "p95": 3776.57
       },
       "e2e_latency_ms": {
-        "p50": 1013.1,
-        "p95": 1400.0
+        "p50": 1051.65,
+        "p95": 3776.57
       },
-      "rtf": 0.0944
+      "rtf": 0.1401
     },
     "zh": {
       "samples": 10,
       "cer": 0.3231,
       "asr_latency_ms": {
-        "p50": 913.05,
-        "p95": 1186.5
+        "p50": 908.53,
+        "p95": 1237.68
       },
       "e2e_latency_ms": {
-        "p50": 913.06,
-        "p95": 1186.51
+        "p50": 908.54,
+        "p95": 1237.68
       },
-      "rtf": 0.078
+      "rtf": 0.0802
     }
   },
   "tolerances": {
-    "wer_absolute_warn": 0.05,
-    "wer_absolute_fail": 0.1,
-    "wer_relative_warn": 0.2,
-    "wer_relative_fail": 0.5,
-    "latency_p50_relative_warn": 1.0,
-    "latency_p50_relative_fail": 2.0,
-    "e2e_latency_p50_relative_warn": 0.5,
-    "e2e_latency_p50_relative_fail": 1.5,
-    "rtf_relative_warn": 1.0,
-    "rtf_relative_fail": 2.0,
+    "wer_absolute_warn": 0.03,
+    "wer_absolute_fail": 0.07,
+    "wer_relative_warn": 0.1,
+    "wer_relative_fail": 0.3,
+    "latency_p50_relative_warn": 0.5,
+    "latency_p50_relative_fail": 1.5,
+    "e2e_latency_p50_relative_warn": 0.3,
+    "e2e_latency_p50_relative_fail": 1.0,
+    "rtf_relative_warn": 0.5,
+    "rtf_relative_fail": 1.5,
     "rtf_absolute_warn": 1.0,
     "asr_latency_absolute_warn_ms": 1000.0,
     "e2e_latency_absolute_warn_ms": 1000.0

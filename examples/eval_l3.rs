@@ -282,35 +282,54 @@ fn diff_removed_span(input: &str, output: &str) -> Option<Span> {
     }
 }
 
-/// Trim `cue` (and an immediately preceding 、) from the end of a
-/// detected span so it represents the reparandum only, not
-/// reparandum + cue. Cues are tried longest-first so that
-/// `っていうか` matches before `ていうか`, which matches before `いや`,
-/// etc. — otherwise a shorter prefix steals the match and leaves a
-/// cue fragment in the predicted reparandum.
+/// Trim trailing 、 + cue from a detected span so it represents the
+/// reparandum only.
+///
+/// The detector's diff captures everything between input and output
+/// that disappeared. For ja that includes both the cue itself and any
+/// 、 separator immediately before *or after* the cue, depending on
+/// the source (e.g. "鈴木課長、じゃない、佐藤課長です" → diff is
+/// "鈴木課長、じゃない、" with both an inner and a trailing 、). We:
+///
+/// 1. strip any trailing 、 (handles cues followed by a 、 separator,
+///    e.g. `じゃない、`),
+/// 2. strip the longest matching cue suffix (longest-first so that
+///    `っていうか` outranks the substring `ていうか`),
+/// 3. strip a trailing 、 again (handles the inner separator, e.g.
+///    after stripping the cue from `鈴木課長、じゃない` we land at
+///    `鈴木課長、` and want `鈴木課長`).
 fn trim_trailing_cue(input: &str, raw: Span, cues: &[&str]) -> Span {
     let chars: Vec<char> = input.chars().collect();
     if raw.start >= raw.end || raw.end > chars.len() {
         return raw;
     }
-    let span_text: String = chars[raw.start..raw.end].iter().collect();
+
+    // Step 1: strip trailing 、 separators.
+    let mut end = raw.end;
+    while end > raw.start && chars[end - 1] == '、' {
+        end -= 1;
+    }
+
+    // Step 2: strip the longest matching cue suffix.
+    let span_text: String = chars[raw.start..end].iter().collect();
     let mut sorted_cues: Vec<&&str> = cues.iter().collect();
     sorted_cues.sort_by_key(|c| std::cmp::Reverse(c.chars().count()));
     for cue in sorted_cues {
         if span_text.ends_with(*cue) {
             let cue_chars = cue.chars().count();
-            let mut new_end = raw.end - cue_chars;
-            // Drop a trailing 、 separator if present.
-            if new_end > raw.start && chars[new_end - 1] == '、' {
-                new_end -= 1;
+            end -= cue_chars;
+            // Step 3: strip trailing 、 again, now between reparandum
+            // and the (just-removed) cue.
+            while end > raw.start && chars[end - 1] == '、' {
+                end -= 1;
             }
-            return Span {
-                start: raw.start,
-                end: new_end,
-            };
+            break;
         }
     }
-    raw
+    Span {
+        start: raw.start,
+        end,
+    }
 }
 
 fn fmt_pct(x: f64) -> String {

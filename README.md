@@ -240,3 +240,30 @@ cargo test                  # run unit + integration tests
 cargo run -- --help         # CLI usage
 cargo build --features onnx # with ONNX inference (requires ort)
 ```
+
+## Evaluation
+
+Quality is tracked across three layers (full policy in [`docs/evaluation.md`](docs/evaluation.md)):
+
+| Layer | What it measures | How to run | Where it runs |
+|---|---|---|---|
+| **L1 ASR live smoke** | FLEURS WER/CER + RTF + ASR/E2E latency | `cargo eval-l1 -- ...` | Every PR (CI: `evaluate-asr`) |
+| **L1 layer fast** | Tier 1+2 ablation ΔWER + per-layer μ-bench latency | `cargo eval-l1-fast` | Every PR (CI: `evaluate-fast`) |
+| **L2 standard + Robust** | LibriSpeech / AISHELL-1 / ReazonSpeech WER + MUSAN/RIR SNR sweep | `cargo eval-l2 -- --dataset … --condition …` | Manual / release-time |
+| **L3 direct F1 + ablation** | Layer-isolated F1 against annotated data; ΔWER on natural-speech fixtures | `cargo eval-l3 -- --task {self-correction,ablation} …` | Manual / research |
+
+Regression detection lives in `docs/benchmarks/ci_baseline*.json` — both the WER/CER + latency snapshot and the tolerance policy travel with the file. Two axes:
+
+- **Relative**: `+regression%` against the committed baseline (catches drift)
+- **Absolute**: hard floors tied to user-perceived dictation quality (RTF ≥ 1.0, latency p50 ≥ 1 s, etc.) that don't move with the baseline
+
+Setup scripts (idempotent, skip-if-present):
+
+```bash
+scripts/setup_whisper.sh                   # whisper.cpp + ggml-tiny models
+scripts/download_fleurs_subset.py          # L1 FLEURS subset
+scripts/download_l2_data.sh <dataset>      # LibriSpeech / AISHELL-1 / MUSAN / RIR
+scripts/download_l2_data.py reazonspeech-test
+scripts/download_l3_data.sh <dataset>      # CS2W / TED-LIUM 3
+scripts/build_l3_natural_fixtures.py manifest --manifest <path>
+```

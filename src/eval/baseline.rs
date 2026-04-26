@@ -103,10 +103,10 @@ pub struct Tolerances {
 }
 
 fn default_rtf_warn() -> f64 {
-    1.00
+    0.50
 }
 fn default_rtf_fail() -> f64 {
-    2.00
+    1.50
 }
 fn default_rtf_absolute_warn() -> f64 {
     1.00
@@ -117,22 +117,23 @@ fn default_latency_absolute_warn_ms() -> f64 {
 
 impl Default for Tolerances {
     fn default() -> Self {
-        // Tuned for GitHub-hosted Linux runners on the L1 smoke workload
-        // (10 utterances × 3 languages, whisper-tiny). WER/CER are
-        // deterministic given fixed model + audio, so we keep those
-        // tight. Latency varies more across runners (~1.5–2× spread
-        // even on the same hardware family), so initial latency
-        // tolerances are intentionally generous; tighten in a follow-up
-        // PR once we have a few CI runs of empirical data.
+        // Tightened post-launch (PR #9) after four successful CI runs
+        // confirmed the original (very generous) tolerances always
+        // landed comfortably inside the warning band. The new values
+        // halve the relative ranges while keeping enough headroom for
+        // expected runner-vs-sandbox variance (1.5–3× on whisper-tiny
+        // ASR latency). Absolute thresholds are unchanged because
+        // those are anchored to user-perceived dictation quality, not
+        // the per-runner baseline.
         Self {
-            wer_absolute_warn: 0.05,
-            wer_absolute_fail: 0.10,
-            wer_relative_warn: 0.20,
-            wer_relative_fail: 0.50,
-            latency_p50_relative_warn: 1.00, // 2× slower → warn
-            latency_p50_relative_fail: 2.00, // 3× slower → fail
-            e2e_latency_p50_relative_warn: 0.50,
-            e2e_latency_p50_relative_fail: 1.50,
+            wer_absolute_warn: 0.03,
+            wer_absolute_fail: 0.07,
+            wer_relative_warn: 0.10,
+            wer_relative_fail: 0.30,
+            latency_p50_relative_warn: 0.50, // was 1.00 (2×); now 1.5× → warn
+            latency_p50_relative_fail: 1.50, // was 2.00 (3×); now 2.5× → fail
+            e2e_latency_p50_relative_warn: 0.30,
+            e2e_latency_p50_relative_fail: 1.00,
             rtf_relative_warn: default_rtf_warn(),
             rtf_relative_fail: default_rtf_fail(),
             rtf_absolute_warn: default_rtf_absolute_warn(),
@@ -380,16 +381,16 @@ fn default_layer_latency_absolute_warn_us() -> f64 {
 
 impl Default for LayerTolerances {
     fn default() -> Self {
-        // Ablation values are derived from the same fixture set every
-        // run, so they are nearly deterministic. Layer μ-benchmark
-        // latency on shared CI runners is noisy though; defaults are
-        // generous on the first revision and can be tightened once we
-        // have empirical CI data.
+        // Ablation is fixture-deterministic, so absolute drift is the
+        // operative gate (already tight at ±2%/±5%). Layer μ-benchmark
+        // p50 is sub-microsecond and noisy on shared CI runners; we
+        // tightened from 2×/4× to 1.5×/3.5× after PR #6/#8 confirmed
+        // measurements stay in a narrow band across runs.
         Self {
             ablation_absolute_warn: 0.02,
             ablation_absolute_fail: 0.05,
-            layer_latency_p50_relative_warn: 2.00,
-            layer_latency_p50_relative_fail: 4.00,
+            layer_latency_p50_relative_warn: 1.50,
+            layer_latency_p50_relative_fail: 3.50,
             layer_latency_absolute_warn_us: default_layer_latency_absolute_warn_us(),
         }
     }
@@ -494,13 +495,14 @@ mod tests {
         let baseline = bl(Some(0.20), None);
         let mut measured = baseline.clone();
         let tol = Tolerances::default();
+        // Defaults: warn ≥ +0.03 abs OR ≥ +10% rel; fail ≥ +0.07 abs OR ≥ +30% rel.
 
-        measured.wer = Some(0.26); // +6 abs, +30% rel → warn (rel)
+        measured.wer = Some(0.24); // +0.04 abs, +20% rel → warn (rel)
         let results = check_language(&measured, &baseline, &tol);
         let wer_v = &results.iter().find(|(k, _)| k == "wer").unwrap().1;
         assert!(matches!(wer_v, Verdict::Warn(_)), "got {wer_v:?}");
 
-        measured.wer = Some(0.31); // +11 abs (>=10) → fail
+        measured.wer = Some(0.28); // +0.08 abs (≥ 0.07) → fail
         let results = check_language(&measured, &baseline, &tol);
         let wer_v = &results.iter().find(|(k, _)| k == "wer").unwrap().1;
         assert!(matches!(wer_v, Verdict::Fail(_)), "got {wer_v:?}");
@@ -522,13 +524,13 @@ mod tests {
         let baseline = bl(Some(0.20), None);
         let mut measured = baseline.clone();
         let tol = Tolerances::default();
-        // Defaults: warn at +100% (2x), fail at +200% (3x)
-        measured.asr_latency_ms.p50 = 250.0; // +150% → warn
+        // Defaults: warn at +50% (1.5×), fail at +150% (2.5×).
+        measured.asr_latency_ms.p50 = 200.0; // +100% → warn
         let results = check_language(&measured, &baseline, &tol);
         let v = &results.iter().find(|(k, _)| k == "asr_latency_p50_ms").unwrap().1;
         assert!(matches!(v, Verdict::Warn(_)), "got {v:?}");
 
-        measured.asr_latency_ms.p50 = 350.0; // +250% → fail
+        measured.asr_latency_ms.p50 = 280.0; // +180% → fail
         let results = check_language(&measured, &baseline, &tol);
         let v = &results.iter().find(|(k, _)| k == "asr_latency_p50_ms").unwrap().1;
         assert!(matches!(v, Verdict::Fail(_)), "got {v:?}");

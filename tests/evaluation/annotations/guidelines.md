@@ -96,9 +96,12 @@ v0.1 では収録していない (1 発話 1 repair)。
 ## 4. 現状の v0.1 内容
 
 `ja_self_correction.jsonl`:
-- **35 発話** (28 自己訂正 + 5 クリーン + 2 否定 edge case)
+- **40 発話** (33 自己訂正 + 5 クリーン + 2 否定 edge case)
 - カバー: time/date (5)、place names (5)、people (5)、numbers/counters (5)、
-  verbs/states (5)、phrase-level (3)、clean controls (5)、edge cases (2)
+  verbs/states (5)、phrase-level (3)、`じゃない` を訂正 cue として用いる例 (3)、
+  長文文脈 (2)、clean controls (5)、edge cases (2)
+- cue 別: `いや` (10)、`じゃなくて` (5)、`ではなく` (5+1 long)、`じゃなく` (3)、
+  `じゃない` (3 訂正 + 1 否定 edge case)、`ていうか` (2)、`っていうか` (1)
 - 全エントリ `substitution` 型のみ
 
 すべて Claude が下書き、ネイティブ話者の人手レビュー **未実施**。

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated": "epoch:1777108893",
+  "generated": "epoch:1777177337",
   "languages": {
     "en": {
       "fixtures": 27,
@@ -12,16 +12,16 @@
       },
       "layer_latency_us": {
         "filler": {
-          "p50": 3.64,
-          "p95": 6.67
+          "p50": 4.23,
+          "p95": 9.14
         },
         "punctuation": {
-          "p50": 0.38,
-          "p95": 0.48
+          "p50": 0.34,
+          "p95": 0.42
         },
         "self_correction": {
-          "p50": 0.65,
-          "p95": 1.61
+          "p50": 0.6,
+          "p95": 1.04
         }
       }
     },
@@ -35,16 +35,16 @@
       },
       "layer_latency_us": {
         "filler": {
-          "p50": 0.33,
-          "p95": 0.41
+          "p50": 0.34,
+          "p95": 0.42
         },
         "punctuation": {
           "p50": 0.24,
           "p95": 0.3
         },
         "self_correction": {
-          "p50": 0.79,
-          "p95": 0.94
+          "p50": 0.75,
+          "p95": 1.11
         }
       }
     },
@@ -55,12 +55,12 @@
       },
       "layer_latency_us": {
         "punctuation": {
-          "p50": 0.17,
-          "p95": 0.2
+          "p50": 0.18,
+          "p95": 0.21
         },
         "self_correction": {
-          "p50": 0.69,
-          "p95": 0.74
+          "p50": 0.65,
+          "p95": 0.7
         }
       }
     }
@@ -68,8 +68,8 @@
   "tolerances": {
     "ablation_absolute_warn": 0.02,
     "ablation_absolute_fail": 0.05,
-    "layer_latency_p50_relative_warn": 2.0,
-    "layer_latency_p50_relative_fail": 4.0,
+    "layer_latency_p50_relative_warn": 1.5,
+    "layer_latency_p50_relative_fail": 3.5,
     "layer_latency_absolute_warn_us": 1000000.0
   }
 }
