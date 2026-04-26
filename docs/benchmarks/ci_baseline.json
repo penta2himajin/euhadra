@@ -1,46 +1,46 @@
 {
   "schema_version": 1,
-  "generated": "epoch:1777195246",
+  "generated": "epoch:1777196100",
   "asr_model": "parakeet-tdt-0.6b-v3 (en) / parakeet-tdt_ctc-0.6b-ja (ja) / ggml-tiny (zh)",
   "languages": {
     "en": {
       "samples": 10,
       "wer": 0.0753,
       "asr_latency_ms": {
-        "p50": 533.58,
-        "p95": 13894.44
+        "p50": 1127.3,
+        "p95": 1285.0
       },
       "e2e_latency_ms": {
-        "p50": 533.59,
-        "p95": 13894.46
+        "p50": 1127.3,
+        "p95": 1285.0
       },
-      "rtf": 0.3197
+      "rtf": 0.111
     },
     "ja": {
       "samples": 10,
       "cer": 0.0331,
       "asr_latency_ms": {
-        "p50": 607.13,
-        "p95": 14358.57
+        "p50": 1194.3,
+        "p95": 1454.0
       },
       "e2e_latency_ms": {
-        "p50": 607.14,
-        "p95": 14358.59
+        "p50": 1194.3,
+        "p95": 1454.0
       },
-      "rtf": 0.279
+      "rtf": 0.106
     },
     "zh": {
       "samples": 10,
-      "cer": 0.3231,
+      "cer": 0.3714,
       "asr_latency_ms": {
-        "p50": 1006.26,
-        "p95": 4936.94
+        "p50": 1376.8,
+        "p95": 1716.0
       },
       "e2e_latency_ms": {
-        "p50": 1006.27,
-        "p95": 4936.96
+        "p50": 1376.8,
+        "p95": 1716.0
       },
-      "rtf": 0.1444
+      "rtf": 0.117
     }
   },
   "tolerances": {
