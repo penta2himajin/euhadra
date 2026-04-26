@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated": "epoch:1777196100",
-  "asr_model": "parakeet-tdt-0.6b-v3 (en) / parakeet-tdt_ctc-0.6b-ja (ja) / ggml-tiny (zh)",
+  "asr_model": "parakeet-tdt-0.6b-v3 (en) / parakeet-tdt_ctc-0.6b-ja (ja) / paraformer-large-zh (zh)",
   "languages": {
     "en": {
       "samples": 10,
