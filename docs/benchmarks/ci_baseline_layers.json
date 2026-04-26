@@ -51,10 +51,10 @@
     "zh": {
       "fixtures": 27,
       "ablation": {
-        "full": 0.0165,
-        "without_filler": 0.148,
-        "without_punctuation": 0.0165,
-        "without_self_correction": 0.0165
+        "full": 0.0123,
+        "without_filler": 0.0918,
+        "without_punctuation": 0.0123,
+        "without_self_correction": 0.0123
       },
       "layer_latency_us": {
         "filler": {
