@@ -260,7 +260,8 @@ Regression detection lives in `docs/benchmarks/ci_baseline*.json` — both the W
 Setup scripts (idempotent, skip-if-present):
 
 ```bash
-scripts/setup_whisper.sh                   # whisper.cpp + ggml-tiny models
+scripts/setup_whisper.sh                   # whisper.cpp + ggml-tiny models (en/zh L1)
+scripts/setup_parakeet_ja.sh               # parakeet-tdt_ctc-0.6b-ja ONNX (ja L1, ~2.4 GB)
 scripts/download_fleurs_subset.py          # L1 FLEURS subset
 scripts/download_l2_data.sh <dataset>      # LibriSpeech / AISHELL-1 / MUSAN / RIR
 scripts/download_l2_data.py reazonspeech-test

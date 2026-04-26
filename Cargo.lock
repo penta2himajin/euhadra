@@ -1468,9 +1468,8 @@ dependencies = [
 
 [[package]]
 name = "parakeet-rs"
-version = "0.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac2c29bb70e3b63ddfa9af7cbb66f87a200550a5f6a5ac82fabf527b270c6615"
+version = "0.3.5"
+source = "git+https://github.com/penta2himajin/parakeet-rs?branch=feature-size-injection#8fb1497a886e2afc7c94476ea5500d9f847b60af"
 dependencies = [
  "eyre",
  "hound",
