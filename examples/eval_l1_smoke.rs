@@ -72,6 +72,15 @@ struct Cli {
     /// to whisper.
     #[arg(long, env = "PARAKEET_JA_DIR")]
     parakeet_ja_dir: Option<PathBuf>,
+
+    /// Optional path to a `parakeet-tdt-0.6b-v3` ONNX model directory
+    /// (encoder-model.onnx, decoder_joint-model.onnx, vocab.txt,
+    /// *.data). When provided, the `en` language is run through
+    /// ParakeetAdapter (default 128-mel) instead of whisper-tiny.en.
+    /// Smaller WER (~7.5% vs ~8.4%) and roughly 1.5× faster. Requires
+    /// `--features onnx`.
+    #[arg(long, env = "PARAKEET_EN_DIR")]
+    parakeet_en_dir: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -121,8 +130,8 @@ async fn run() -> Result<(), String> {
 
     let mut measured: BTreeMap<String, LanguageBaseline> = BTreeMap::new();
 
-    let mut asr_model_label = String::from("ggml-tiny.en (en) / ggml-tiny (ja, zh)");
     let mut used_parakeet_ja = false;
+    let mut used_parakeet_en = false;
 
     for lang in &cli.langs {
         let manifest = load_manifest(&cli.data_dir, lang)
@@ -140,19 +149,24 @@ async fn run() -> Result<(), String> {
             model,
             lang,
             cli.parakeet_ja_dir.as_deref(),
+            cli.parakeet_en_dir.as_deref(),
         )?;
         if lang == "ja" && cli.parakeet_ja_dir.is_some() {
             used_parakeet_ja = true;
+        }
+        if lang == "en" && cli.parakeet_en_dir.is_some() {
+            used_parakeet_en = true;
         }
 
         let lang_result = evaluate_language(lang, &manifest, &pipeline).await?;
         print_language_result(lang, &lang_result);
         measured.insert(lang.clone(), lang_result);
     }
-    if used_parakeet_ja {
-        asr_model_label =
-            String::from("ggml-tiny.en (en) / parakeet-tdt_ctc-0.6b-ja (ja) / ggml-tiny (zh)");
-    }
+    let asr_model_label = format!(
+        "{en_model} (en) / {ja_model} (ja) / ggml-tiny (zh)",
+        en_model = if used_parakeet_en { "parakeet-tdt-0.6b-v3" } else { "ggml-tiny.en" },
+        ja_model = if used_parakeet_ja { "parakeet-tdt_ctc-0.6b-ja" } else { "ggml-tiny" },
+    );
 
     if cli.update_baseline {
         let baseline = Baseline {
@@ -305,6 +319,7 @@ fn build_pipeline(
     model: &Path,
     lang: &str,
     parakeet_ja_dir: Option<&Path>,
+    parakeet_en_dir: Option<&Path>,
 ) -> Result<Pipeline, String> {
     // Build the post-ASR stack first; ASR is bolted on per-language
     // because its concrete type depends on the model choice.
@@ -335,6 +350,25 @@ fn build_pipeline(
             {
                 return Err(
                     "--parakeet-ja-dir requires --features onnx at build time".into(),
+                );
+            }
+        }
+        "en" if parakeet_en_dir.is_some() => {
+            #[cfg(feature = "onnx")]
+            {
+                let dir = parakeet_en_dir.unwrap();
+                // parakeet-tdt-0.6b-v3 (multilingual European, en included)
+                // ships with the default 128-mel preprocessor — no
+                // feature_size override needed; `load(dir)` does it.
+                let asr = ParakeetAdapter::load(dir).map_err(|e| {
+                    format!("load parakeet en from {}: {e}", dir.display())
+                })?;
+                builder.asr(asr)
+            }
+            #[cfg(not(feature = "onnx"))]
+            {
+                return Err(
+                    "--parakeet-en-dir requires --features onnx at build time".into(),
                 );
             }
         }

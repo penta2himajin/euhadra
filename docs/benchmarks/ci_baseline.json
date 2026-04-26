@@ -1,46 +1,46 @@
 {
   "schema_version": 1,
-  "generated": "epoch:1777192236",
-  "asr_model": "ggml-tiny.en (en) / parakeet-tdt_ctc-0.6b-ja (ja) / ggml-tiny (zh)",
+  "generated": "epoch:1777196100",
+  "asr_model": "parakeet-tdt-0.6b-v3 (en) / parakeet-tdt_ctc-0.6b-ja (ja) / ggml-tiny (zh)",
   "languages": {
     "en": {
       "samples": 10,
-      "wer": 0.0837,
+      "wer": 0.0753,
       "asr_latency_ms": {
-        "p50": 834.91,
-        "p95": 1034.07
+        "p50": 1127.3,
+        "p95": 1285.0
       },
       "e2e_latency_ms": {
-        "p50": 834.92,
-        "p95": 1034.08
+        "p50": 1127.3,
+        "p95": 1285.0
       },
-      "rtf": 0.0944
+      "rtf": 0.111
     },
     "ja": {
       "samples": 10,
       "cer": 0.0331,
       "asr_latency_ms": {
-        "p50": 600.28,
-        "p95": 697.66
+        "p50": 1194.3,
+        "p95": 1454.0
       },
       "e2e_latency_ms": {
-        "p50": 600.29,
-        "p95": 697.67
+        "p50": 1194.3,
+        "p95": 1454.0
       },
-      "rtf": 0.0516
+      "rtf": 0.106
     },
     "zh": {
       "samples": 10,
-      "cer": 0.3231,
+      "cer": 0.3714,
       "asr_latency_ms": {
-        "p50": 982.51,
-        "p95": 4190.32
+        "p50": 1376.8,
+        "p95": 1716.0
       },
       "e2e_latency_ms": {
-        "p50": 982.53,
-        "p95": 4190.35
+        "p50": 1376.8,
+        "p95": 1716.0
       },
-      "rtf": 0.1306
+      "rtf": 0.117
     }
   },
   "tolerances": {
