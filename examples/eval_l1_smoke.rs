@@ -182,9 +182,19 @@ async fn run() -> Result<(), String> {
         }
 
         let lang_result = evaluate_language(lang, &manifest, &pipeline, cli.dump_utterances).await?;
-        print_language_result(lang, &lang_result);
         measured.insert(lang.clone(), lang_result);
     }
+
+    // Print all per-language summaries together so they're easy to
+    // find — `--dump-utterances` otherwise scatters them between
+    // hundreds of ref/hyp lines.
+    println!();
+    for lang in &cli.langs {
+        if let Some(r) = measured.get(lang) {
+            print_language_result(lang, r);
+        }
+    }
+
     let asr_model_label = format!(
         "{en_model} (en) / {ja_model} (ja) / {zh_model} (zh)",
         en_model = if used_parakeet_en { "parakeet-tdt-0.6b-v3" } else { "ggml-tiny.en" },
