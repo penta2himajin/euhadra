@@ -13,3 +13,15 @@
 {"id":"zh_clean_013","category":"clean","reference":"准备发布候选版本","asr_hypothesis":"准备发布候选版本"}
 {"id":"zh_clean_014","category":"clean","reference":"等待管道任务完成","asr_hypothesis":"等待管道任务完成"}
 {"id":"zh_clean_015","category":"clean","reference":"需要轮换证书","asr_hypothesis":"需要轮换证书"}
+{"id":"zh_pure_filler_001","category":"pure_filler","reference":"我们需要更新数据库","asr_hypothesis":"嗯，我们需要更新数据库"}
+{"id":"zh_pure_filler_002","category":"pure_filler","reference":"明天发布新版本","asr_hypothesis":"呃，明天发布新版本"}
+{"id":"zh_pure_filler_003","category":"pure_filler","reference":"测试全部通过了","asr_hypothesis":"嗯，测试全部通过了，哦"}
+{"id":"zh_pure_filler_004","category":"pure_filler","reference":"请检查日志文件","asr_hypothesis":"呃，请检查日志文件"}
+{"id":"zh_pure_filler_005","category":"pure_filler","reference":"代码评审之后再合并","asr_hypothesis":"嗯，代码评审之后再合并"}
+{"id":"zh_contextual_filler_001","category":"contextual_filler","reference":"测试全部通过了","asr_hypothesis":"那个，测试全部通过了"}
+{"id":"zh_contextual_filler_002","category":"contextual_filler","reference":"我们今天部署到生产环境","asr_hypothesis":"这个，我们今天部署到生产环境"}
+{"id":"zh_contextual_filler_003","category":"contextual_filler","reference":"先把日志收集好","asr_hypothesis":"就是，先把日志收集好"}
+{"id":"zh_contextual_filler_004","category":"contextual_filler","reference":"我们需要更新数据库","asr_hypothesis":"我觉得，那个，我们需要更新数据库"}
+{"id":"zh_contextual_filler_005","category":"contextual_filler","reference":"加一个索引就行了","asr_hypothesis":"怎么说，加一个索引就行了"}
+{"id":"zh_demonstrative_001","category":"clean","reference":"那个人是新来的同事","asr_hypothesis":"那个人是新来的同事"}
+{"id":"zh_demonstrative_002","category":"clean","reference":"这个项目下个月上线","asr_hypothesis":"这个项目下个月上线"}

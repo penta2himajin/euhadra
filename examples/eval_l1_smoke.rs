@@ -289,7 +289,7 @@ fn build_pipeline(
     builder = match lang {
         "en" => builder.filter(SimpleFillerFilter::english()),
         "ja" => builder.filter(JapaneseFillerFilter::new()),
-        "zh" => builder, // no zh filler filter implemented yet
+        "zh" => builder.filter(ChineseFillerFilter::new()),
         other => return Err(format!("unsupported language: {other}")),
     };
 

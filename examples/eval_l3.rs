@@ -415,8 +415,7 @@ async fn evaluate_ablation_for_lang(
     fixtures: &[Fixture],
 ) -> Result<LanguageLayerBaseline, String> {
     let configs: Vec<LayerConfig> = match lang {
-        "en" | "ja" => vec![FULL, WITHOUT_FILLER, WITHOUT_SC, WITHOUT_PUNCT],
-        "zh" => vec![FULL],
+        "en" | "ja" | "zh" => vec![FULL, WITHOUT_FILLER, WITHOUT_SC, WITHOUT_PUNCT],
         other => return Err(format!("unsupported lang {other}")),
     };
 
@@ -486,7 +485,7 @@ fn build_pipeline(lang: &str, cfg: &LayerConfig, hypothesis: &str) -> Result<Pip
         builder = match lang {
             "en" => builder.filter(SimpleFillerFilter::english()),
             "ja" => builder.filter(JapaneseFillerFilter::new()),
-            "zh" => builder,
+            "zh" => builder.filter(ChineseFillerFilter::new()),
             other => return Err(format!("unsupported lang {other}")),
         };
     }
@@ -506,18 +505,29 @@ async fn bench_layer_latency(
     iters: usize,
 ) -> BTreeMap<String, LatencyMicrosRecord> {
     let mut out = BTreeMap::new();
-    if lang == "en" {
-        let f = SimpleFillerFilter::english();
-        out.insert(
-            "filler".to_string(),
-            bench_filter(&f, fixtures, warmup, iters).await,
-        );
-    } else if lang == "ja" {
-        let f = JapaneseFillerFilter::new();
-        out.insert(
-            "filler".to_string(),
-            bench_filter(&f, fixtures, warmup, iters).await,
-        );
+    match lang {
+        "en" => {
+            let f = SimpleFillerFilter::english();
+            out.insert(
+                "filler".to_string(),
+                bench_filter(&f, fixtures, warmup, iters).await,
+            );
+        }
+        "ja" => {
+            let f = JapaneseFillerFilter::new();
+            out.insert(
+                "filler".to_string(),
+                bench_filter(&f, fixtures, warmup, iters).await,
+            );
+        }
+        "zh" => {
+            let f = ChineseFillerFilter::new();
+            out.insert(
+                "filler".to_string(),
+                bench_filter(&f, fixtures, warmup, iters).await,
+            );
+        }
+        _ => {}
     }
     let sc = SelfCorrectionDetector::new();
     out.insert(

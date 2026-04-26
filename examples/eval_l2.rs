@@ -680,7 +680,7 @@ fn build_pipeline(whisper_cli: &Path, model: &Path, lang: &str) -> Result<Pipeli
     builder = match lang {
         "en" => builder.filter(SimpleFillerFilter::english()),
         "ja" => builder.filter(JapaneseFillerFilter::new()),
-        "zh" => builder, // no zh filter today
+        "zh" => builder.filter(ChineseFillerFilter::new()),
         other => return Err(format!("unsupported lang {other}")),
     };
     builder.build().map_err(|e| format!("build pipeline: {e}"))
