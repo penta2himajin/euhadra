@@ -49,14 +49,24 @@ pub fn cer(reference: &str, hypothesis: &str) -> f64 {
 /// Light normalisation shared by WER and CER:
 /// - lowercase ASCII letters (does not touch CJK)
 /// - strip a fixed set of punctuation (ASCII + fullwidth)
+/// - replace ASCII hyphens / fullwidth dashes with whitespace so
+///   `whole-number` matches `whole number` and `25-30` aligns with
+///   `25 30` (FLEURS-en references frequently spell hyphenated
+///   compounds with a space, ASR output frequently glues them)
 /// - collapse runs of whitespace into single spaces
 /// - convert Chinese numerals to Arabic digits (digit-by-digit and
 ///   positional 十/百/千/万/亿 forms)
+/// - replace English number words with their Arabic-numeral form
+///   (`twelve` → `12`, `twentieth` → `20th`) so ASR output that
+///   transcribes digits doesn't lose against word-form references
 pub fn normalize(text: &str) -> String {
-    const PUNCT: &[char] = &[
+    const DROP_PUNCT: &[char] = &[
         '.', ',', '?', '!', ':', ';', '"', '\'', '(', ')', '[', ']', '{', '}',
         '。', '、', '?', '!', ':', ';', '「', '」', '『', '』', '(', ')', '・',
     ];
+    // Hyphens / dashes always behave as word separators, never as
+    // skip-and-glue. Fullwidth `−` and en/em dashes map the same way.
+    const SPLIT_PUNCT: &[char] = &['-', '–', '—', '−'];
 
     // Numerals first so the punctuation/case/whitespace pass below
     // operates on the canonical digit form.
@@ -65,10 +75,10 @@ pub fn normalize(text: &str) -> String {
     let mut out = String::with_capacity(digits_normalised.len());
     let mut last_space = true; // suppress leading whitespace
     for c in digits_normalised.chars() {
-        if PUNCT.contains(&c) {
+        if DROP_PUNCT.contains(&c) {
             continue;
         }
-        if c.is_whitespace() {
+        if SPLIT_PUNCT.contains(&c) || c.is_whitespace() {
             if !last_space {
                 out.push(' ');
                 last_space = true;
@@ -83,7 +93,11 @@ pub fn normalize(text: &str) -> String {
     if out.ends_with(' ') {
         out.pop();
     }
-    out
+
+    // English number-word replacement runs last so it sees lower-cased,
+    // punctuation-free tokens — `Twelfth,` after the strip pass becomes
+    // `twelfth`, which the table maps to `12th`.
+    normalize_english_number_words(&out)
 }
 
 /// Walks `text` and replaces every maximal run of Chinese numeral
@@ -229,6 +243,97 @@ fn levenshtein<T: Eq>(a: &[T], b: &[T]) -> usize {
         std::mem::swap(&mut prev, &mut curr);
     }
     prev[b.len()]
+}
+
+/// Token-level replacement of common English cardinals and ordinals
+/// with their Arabic-numeral form. FLEURS-en references freely mix
+/// `twelve`/`12`, `twentieth`/`20th`; without this pass each pair
+/// reads as an unrelated substitution and inflates WER.
+///
+/// The table is intentionally limited to single-token forms (0-19,
+/// the 20–90 multiples of ten, and `hundred`/`thousand`/`million`
+/// plus their ordinal counterparts). Compound numbers like
+/// `twenty-three` are split by the SPLIT_PUNCT pass above into two
+/// tokens and each is normalised independently — imperfect for
+/// pure compound handling but ample for the FLEURS smoke set.
+fn normalize_english_number_words(text: &str) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+    text.split(' ')
+        .map(|tok| english_number_replacement(tok).unwrap_or(tok))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn english_number_replacement(tok: &str) -> Option<&'static str> {
+    match tok {
+        // Cardinals
+        "zero" => Some("0"),
+        "one" => Some("1"),
+        "two" => Some("2"),
+        "three" => Some("3"),
+        "four" => Some("4"),
+        "five" => Some("5"),
+        "six" => Some("6"),
+        "seven" => Some("7"),
+        "eight" => Some("8"),
+        "nine" => Some("9"),
+        "ten" => Some("10"),
+        "eleven" => Some("11"),
+        "twelve" => Some("12"),
+        "thirteen" => Some("13"),
+        "fourteen" => Some("14"),
+        "fifteen" => Some("15"),
+        "sixteen" => Some("16"),
+        "seventeen" => Some("17"),
+        "eighteen" => Some("18"),
+        "nineteen" => Some("19"),
+        "twenty" => Some("20"),
+        "thirty" => Some("30"),
+        "forty" => Some("40"),
+        "fifty" => Some("50"),
+        "sixty" => Some("60"),
+        "seventy" => Some("70"),
+        "eighty" => Some("80"),
+        "ninety" => Some("90"),
+        "hundred" => Some("100"),
+        "thousand" => Some("1000"),
+        "million" => Some("1000000"),
+        // Ordinals — preserve the suffix so `20th` (Arabic) and
+        // `twentieth` (word) collapse to a common form.
+        "first" => Some("1st"),
+        "second" => Some("2nd"),
+        "third" => Some("3rd"),
+        "fourth" => Some("4th"),
+        "fifth" => Some("5th"),
+        "sixth" => Some("6th"),
+        "seventh" => Some("7th"),
+        "eighth" => Some("8th"),
+        "ninth" => Some("9th"),
+        "tenth" => Some("10th"),
+        "eleventh" => Some("11th"),
+        "twelfth" => Some("12th"),
+        "thirteenth" => Some("13th"),
+        "fourteenth" => Some("14th"),
+        "fifteenth" => Some("15th"),
+        "sixteenth" => Some("16th"),
+        "seventeenth" => Some("17th"),
+        "eighteenth" => Some("18th"),
+        "nineteenth" => Some("19th"),
+        "twentieth" => Some("20th"),
+        "thirtieth" => Some("30th"),
+        "fortieth" => Some("40th"),
+        "fiftieth" => Some("50th"),
+        "sixtieth" => Some("60th"),
+        "seventieth" => Some("70th"),
+        "eightieth" => Some("80th"),
+        "ninetieth" => Some("90th"),
+        "hundredth" => Some("100th"),
+        "thousandth" => Some("1000th"),
+        "millionth" => Some("1000000th"),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -395,5 +500,92 @@ mod tests {
         let r = "这 并 不 是 告 别";
         let h = "这并不是告别";
         assert_eq!(cer(r, h), 0.0);
+    }
+
+    // -----------------------------------------------------------------
+    // English numeral + hyphen normalisation — covers the FLEURS-en
+    // pairs the smoke run flagged: `twentieth`/`20th`, `twelve`/`12`,
+    // `whole-number`/`whole number`, `25-30`/`25 30`.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn en_cardinals_round_trip_to_arabic() {
+        assert_eq!(wer("twelve", "12"), 0.0);
+        assert_eq!(wer("twenty", "20"), 0.0);
+        assert_eq!(wer("hundred", "100"), 0.0);
+        assert_eq!(wer("thousand", "1000"), 0.0);
+    }
+
+    #[test]
+    fn en_ordinals_round_trip_to_th_form() {
+        assert_eq!(wer("twentieth century", "20th century"), 0.0);
+        assert_eq!(wer("first place", "1st place"), 0.0);
+        assert_eq!(wer("twelfth night", "12th night"), 0.0);
+        assert_eq!(wer("third time's the charm", "3rd time's the charm"), 0.0);
+    }
+
+    #[test]
+    fn en_hyphen_splits_compound_words() {
+        // FLEURS-en [en 9] failure: `whole-number ratio` vs
+        // `whole number ratio` should be a no-op.
+        assert_eq!(wer("whole-number ratio", "whole number ratio"), 0.0);
+    }
+
+    #[test]
+    fn en_hyphen_splits_numeric_ranges() {
+        // [en 1] partial fix: `25-30` and `25 30` align after the
+        // hyphen pass. The remaining `to` between is a real model-vs-
+        // reference difference and stays as a single edit.
+        let r = "25 to 30 years";
+        let h = "25-30 years";
+        // r tokens: 25 to 30 years
+        // h tokens (after hyphen→space, lowercase): 25 30 years
+        // edit distance = 1 (delete `to`) → WER 1/4 = 0.25
+        let w = wer(r, h);
+        assert!((w - 0.25).abs() < 1e-9, "expected 0.25, got {w}");
+    }
+
+    #[test]
+    fn en_dump_regressions_align_after_normalisation() {
+        // [en 8] verbatim from the CI dump.
+        let r = "twentieth century research has shown that there are two pools of genetic variation hidden and expressed";
+        let h = "20th century research has shown that there are two pools of genetic variation hidden and expressed";
+        // After numeral normalisation both sides start with `20th
+        // century`, so the only remaining edits are zero.
+        assert_eq!(wer(r, h), 0.0);
+    }
+
+    #[test]
+    fn en_compound_separator_does_not_glue_tokens() {
+        // Hyphens must produce a word boundary, not delete-and-glue.
+        // `25-30` would otherwise normalise to `2530` (single token)
+        // and never align against `25 30` (two tokens).
+        let normalized = normalize("25-30");
+        assert_eq!(normalized, "25 30");
+    }
+
+    #[test]
+    fn en_em_and_en_dash_treated_as_split() {
+        assert_eq!(normalize("alpha\u{2014}beta"), "alpha beta"); // em-dash
+        assert_eq!(normalize("alpha\u{2013}beta"), "alpha beta"); // en-dash
+    }
+
+    #[test]
+    fn en_number_words_only_replace_whole_tokens() {
+        // `oneness` must NOT become `1ness`; the replacement is
+        // token-level, not substring-level.
+        assert_eq!(normalize("oneness"), "oneness");
+        assert_eq!(normalize("twenties"), "twenties");
+        assert_eq!(normalize("hundreds"), "hundreds");
+    }
+
+    #[test]
+    fn en_normalisation_preserves_non_number_tokens() {
+        // Spot-check that we don't accidentally trip over English
+        // function words that look number-adjacent.
+        assert_eq!(
+            normalize("the quick brown fox"),
+            "the quick brown fox"
+        );
     }
 }
