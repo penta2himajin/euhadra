@@ -73,14 +73,17 @@ jobs:
       - name: Clippy (onnx)
         run: cargo clippy --features onnx --all-targets --locked -- -D warnings
 
-  # L1 ASR live smoke (§1.1 / §3.8): runs Parakeet (en + ja) and
-  # whisper-tiny (zh) on a 10-utterance FLEURS subset per language,
-  # measures WER/CER + ASR/E2E latency + RTF, and gates against
-  # docs/benchmarks/ci_baseline.json. All large artefacts (whisper.cpp
-  # build, GGML models, FLEURS subset, parakeet en + ja ONNX bundles)
-  # are cached so warm runs finish in a couple of minutes.
+  # L1 ASR live smoke (§1.1 / §3.8): runs Parakeet (en + ja),
+  # Paraformer-large (zh), and whisper-tiny (fallback) on a 10-utterance
+  # FLEURS subset per language, measures WER/CER + ASR/E2E latency + RTF,
+  # and gates against docs/benchmarks/ci_baseline.json. All large
+  # artefacts (whisper.cpp build, GGML models, FLEURS subset, parakeet
+  # en + ja ONNX bundles, paraformer-zh ONNX bundle) are cached so warm
+  # runs finish in a couple of minutes.
   # Parakeet-ja replaced whisper-tiny for `ja` in PR #11 (CER 42% → 3.3%).
   # Parakeet-v3 replaced whisper-tiny.en for `en` in PR #12 (WER 8.4% → 7.5%).
+  # Paraformer-large replaced whisper-tiny for `zh` in PR #14
+  # (CER 37% → ~5%; baseline numbers recalibrated in a follow-up commit).
   evaluate-asr:
     name: evaluate (ASR live smoke)
     runs-on: ubuntu-latest
@@ -152,7 +155,20 @@ jobs:
         env:
           PARAKEET_EN_DIR: vendor/parakeet_en
 
-      - name: Build eval binary (with onnx for ParakeetAdapter)
+      - name: Cache paraformer-zh ONNX bundle (~240 MB)
+        id: paraformer-zh-cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/paraformer_zh
+          key: paraformer-large-zh-funasr-quant-v1
+
+      - name: Download paraformer-zh model (cache miss only)
+        if: steps.paraformer-zh-cache.outputs.cache-hit != 'true'
+        run: bash scripts/setup_paraformer_zh.sh
+        env:
+          PARAFORMER_ZH_DIR: vendor/paraformer_zh
+
+      - name: Build eval binary (with onnx for ParakeetAdapter + ParaformerAdapter)
         run: cargo build --release --example eval_l1_smoke --features onnx --locked
 
       - name: Run L1 smoke evaluation
@@ -164,6 +180,7 @@ jobs:
             --data-dir data/fleurs_subset \
             --parakeet-en-dir vendor/parakeet_en \
             --parakeet-ja-dir vendor/parakeet_ja \
+            --paraformer-zh-dir vendor/paraformer_zh \
             --baseline docs/benchmarks/ci_baseline.json
 
   # L1 fast layer ablation + per-layer μ-benchmark (§1.1 / §3.8 Phase A-2).

@@ -28,10 +28,13 @@ tokenizers = { version = "0.21", optional = true }
 # patch is non-breaking — `from_pretrained` keeps the 128-mel default;
 # we only call the new `from_pretrained_with_feature_size` for ja.
 parakeet-rs = { git = "https://github.com/penta2himajin/parakeet-rs", branch = "feature-size-injection", optional = true }
+# FFT for the Kaldi-style FBANK front-end used by Paraformer-large.
+# Optional + onnx-gated so the default build stays lean.
+rustfft = { version = "6", optional = true }
 
 [features]
 default = []
-onnx = ["dep:ort", "dep:ndarray", "dep:tokenizers", "dep:parakeet-rs"]
+onnx = ["dep:ort", "dep:ndarray", "dep:tokenizers", "dep:parakeet-rs", "dep:rustfft"]
 
 [[bin]]
 name = "euhadra"

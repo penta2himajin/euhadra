@@ -18,3 +18,6 @@ pub mod onnx_processing;
 
 #[cfg(feature = "onnx")]
 pub mod parakeet;
+
+#[cfg(feature = "onnx")]
+pub mod paraformer;
