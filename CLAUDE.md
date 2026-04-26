@@ -42,3 +42,11 @@ Mic/WAV → AsrBackend → TextFilter → TextProcessor → [LlmRefiner] → Out
 
 - テスト全パス + warning ゼロを確認してからコミット
 - コミットメッセージ末尾に `Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>`
+
+## 長文出力（Stream idle timeout 対策）
+
+Claude Code cloud session で `Stream idle timeout - partial response received` が発生する場合の予防策:
+
+1. **段階的 Write/Edit**: 長いドキュメントやコードファイルを生成する際は、骨子（見出し・関数シグネチャ等）を先に Write し、各セクションを後続 Edit で埋める。一度に 200 行を超えるブロックを書こうとしない
+2. **tool_use 直後の長文書き出し回避**: Read/Bash/Grep の直後に長文を生成するパターンで発火しやすい。ツール呼び出しと長文生成の間に短い説明を挟むか、ターンを分ける
+3. **失敗時の挙動**: タイムアウトしてもファイル書き込み自体は完了している場合がある（git status で確認）。再実行前に状態を確認し、重複書き込みを避ける
