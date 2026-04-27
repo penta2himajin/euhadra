@@ -1,73 +1,73 @@
 {
   "schema_version": 1,
-  "generated": "epoch:1777180973",
+  "generated": "epoch:1777250661",
   "languages": {
     "en": {
       "fixtures": 27,
       "ablation": {
-        "full": 0.0401,
-        "without_filler": 0.2037,
+        "full": 0.4198,
+        "without_filler": 0.5377,
         "without_punctuation": 0.0401,
-        "without_self_correction": 0.2031
+        "without_self_correction": 0.5827
       },
       "layer_latency_us": {
         "filler": {
-          "p50": 3.49,
-          "p95": 5.72
+          "p50": 21.26,
+          "p95": 37.41
         },
         "punctuation": {
-          "p50": 0.3,
-          "p95": 0.36
+          "p50": 1.4,
+          "p95": 1.78
         },
         "self_correction": {
-          "p50": 0.5,
-          "p95": 0.76
+          "p50": 1.37,
+          "p95": 4.48
         }
       }
     },
     "ja": {
       "fixtures": 23,
       "ablation": {
-        "full": 0.0,
-        "without_filler": 0.1131,
+        "full": 0.0033,
+        "without_filler": 0.1618,
         "without_punctuation": 0.0,
-        "without_self_correction": 0.1409
+        "without_self_correction": 0.1667
       },
       "layer_latency_us": {
         "filler": {
-          "p50": 0.28,
-          "p95": 0.34
+          "p50": 2.41,
+          "p95": 3.71
         },
         "punctuation": {
-          "p50": 0.21,
-          "p95": 0.25
+          "p50": 1.28,
+          "p95": 1.67
         },
         "self_correction": {
-          "p50": 0.62,
-          "p95": 0.85
+          "p50": 1.44,
+          "p95": 2.76
         }
       }
     },
     "zh": {
       "fixtures": 27,
       "ablation": {
-        "full": 0.0123,
-        "without_filler": 0.0918,
-        "without_punctuation": 0.0123,
-        "without_self_correction": 0.0123
+        "full": 0.0165,
+        "without_filler": 0.148,
+        "without_punctuation": 0.0165,
+        "without_self_correction": 0.0165
       },
       "layer_latency_us": {
         "filler": {
-          "p50": 0.2,
-          "p95": 0.32
+          "p50": 2.04,
+          "p95": 3.79
         },
         "punctuation": {
-          "p50": 0.17,
-          "p95": 0.2
+          "p50": 1.02,
+          "p95": 1.36
         },
         "self_correction": {
-          "p50": 0.55,
-          "p95": 0.63
+          "p50": 1.29,
+          "p95": 1.55
         }
       }
     }
