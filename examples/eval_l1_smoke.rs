@@ -26,7 +26,7 @@ use euhadra::eval::baseline::{
     Baseline, LanguageBaseline, LatencyRecord, Tolerances, Verdict, check_language,
 };
 use euhadra::eval::latency::Samples;
-use euhadra::eval::metrics::{cer, wer};
+use euhadra::eval::metrics::{cer_lenient, wer_lenient};
 #[cfg(feature = "onnx")]
 use euhadra::parakeet::ParakeetAdapter;
 #[cfg(feature = "onnx")]
@@ -301,8 +301,12 @@ async fn evaluate_language(
         total_audio_secs += audio_secs;
 
         let hyp = &result.raw_text;
-        let w = wer(&row.reference, hyp);
-        let c = cer(&row.reference, hyp);
+        // Live-ASR comparison: format-only differences between Whisper /
+        // Parakeet / Paraformer output and the FLEURS gold transcript
+        // (smart quotes, Chinese clause-comma, Arabic vs spelled
+        // numerals) are noise here, not signal — use the lenient pass.
+        let w = wer_lenient(&row.reference, hyp);
+        let c = cer_lenient(&row.reference, hyp);
         if !w.is_nan() {
             wer_acc += w;
         }

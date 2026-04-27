@@ -31,7 +31,7 @@ use std::process::Command;
 use std::time::Instant;
 
 use clap::{Parser, ValueEnum};
-use euhadra::eval::metrics::{cer, wer};
+use euhadra::eval::metrics::{cer_lenient, wer_lenient};
 use euhadra::prelude::*;
 use euhadra::whisper_local::{WhisperLocal, read_wav};
 
@@ -624,8 +624,12 @@ async fn evaluate(
         total_audio_secs += audio_secs;
 
         let hyp = &result.raw_text;
-        let w = wer(&row.reference, hyp);
-        let c = cer(&row.reference, hyp);
+        // L2 noise-robustness: comparing degraded ASR output to clean
+        // FLEURS reference. Surface-form differences (case, punct,
+        // numerals) are noise, not the noise-robustness signal we
+        // care about — use the lenient pass.
+        let w = wer_lenient(&row.reference, hyp);
+        let c = cer_lenient(&row.reference, hyp);
         if !w.is_nan() {
             wer_sum += w;
         }
