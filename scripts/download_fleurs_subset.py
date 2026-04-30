@@ -22,7 +22,6 @@ WAVs.
 from __future__ import annotations
 
 import argparse
-import itertools
 import os
 import sys
 from pathlib import Path
@@ -75,9 +74,20 @@ def download_one(lang: str, n: int, out_dir: Path) -> None:
         trust_remote_code=True,
     )
 
+    # FLEURS shares one `id` across multiple speakers reading the same
+    # sentence. Saving by `id` would overwrite the WAV with the last
+    # speaker and emit duplicate manifest rows that double-count those
+    # utterances at evaluation time. Dedup by id while we stream so we
+    # collect `n` distinct sentences regardless of speaker overlap.
     rows = []
-    for sample in itertools.islice(ds, n):
+    seen: set[str] = set()
+    for sample in ds:
+        if len(rows) >= n:
+            break
         sid = str(sample["id"])
+        if sid in seen:
+            continue
+        seen.add(sid)
         wav_path = audio_dir / f"{sid}.wav"
         if not wav_path.exists():
             arr = np.array(sample["audio"]["array"], dtype=np.float32)

@@ -129,56 +129,120 @@ strand the whole effort.
 
 ## End-to-end validation (2026-04-30)
 
-First live run against the real istupakov bundle on a FLEURS-es
-10-utterance subset (`scripts/setup_canary_es.sh` + `--canary-es-dir`):
+### v1 — 10-utt smoke (initial integration check)
+
+First live run against the istupakov bundle on a FLEURS-es 10-utterance
+subset (`scripts/setup_canary_es.sh` + `--canary-es-dir`, INT8):
 
 ```
 [es] n=10  CER=0.0975  RTF=0.091
 asr p50=801ms p95=2098ms
 ```
 
-Per-utterance CER spread:
+8/10 utterances within model-card range (0–7 % CER). Two outliers
+(utt 8 CER 24.75 %, utt 9 CER 56.64 %) dropped multi-word chunks —
+same failure mode in both, suggesting an autoregressive coverage
+issue rather than frontend/encoder.
 
-| # | CER | Notes |
-|---|---|---|
-| 1 | 0.0142 | minor article diff (`del clima` vs `de clima`) |
-| 2 | 0.0672 | drops `«` punctuation, "Orabek dos mil dos" instead of "oravec 2002" |
-| 3 | 0.0000 | perfect |
-| 4 | 0.0149 | drops `¿` `?` |
-| 5 | 0.0112 | "Carpaneo" vs "carpanedo" + extra commas |
-| 6 | 0.0252 | "sacar puntas" vs "sacapuntas" |
-| 7 | 0.0000 | perfect |
-| 8 | **0.2475** | drops a chunk: `tiene dos hijos adultos no causó` |
-| 9 | **0.5664** | drops a chunk: `fenómenos climáticos regionales y estacionales extremos encontramos` |
-| 10 | 0.0286 | minor preposition diff (`que forma parte de` vs `que forma parte`) |
+### v2 — 100-utt run with WER as primary (2026-04-30)
 
-**Assessment**: 8/10 utterances are within model-card range (0–7 % CER).
-The two outliers (8, 9) drop multi-word chunks of audio — same failure
-mode in both, suggesting an autoregressive coverage issue rather than
-a frontend/encoder problem (frontend output is finite and shape is
-correct; the problem is the decoder skipping ahead).
+Widened to 100 unique utterances (`download_fleurs_subset.py --lang
+es --n 100` after the dedup-by-id fix that removes FLEURS multi-
+speaker duplicates) and switched primary metric to WER (matches
+Canary's published numbers).
 
-The MLS-Spanish reference is **WER 3.17 %**, not CER, so the headline
-9.75 % CER is not directly comparable. CER is roughly 0.7× of WER for
-Spanish, so the equivalent WER would be ~14 % — above the model-card
-number. Without the two outliers the 8-sample mean CER is **1.7 %**
-(equiv. WER ~2.5 %), which IS within model-card range.
+**FP32 weights** (deterministic, identical results across 3 reruns):
+
+```
+[es] n=100  WER=0.3537  RTF=0.150
+asr p50=1138ms p95=2958ms
+median(WER)=0.083
+```
+
+WER bucket distribution (n=99 reportable, 1 hard failure
+counted as 1.0 in the mean):
+
+| WER range | count |
+|---|---|
+| 0–5 % | 41 |
+| 5–10 % | 14 |
+| 10–20 % | 19 |
+| 20–50 % | 20 |
+| 50–100 % | 3 |
+| **> 100 % (repetition loop)** | **2** |
+| Hard fail (no output) | 1 |
+
+**INT8 weights** (non-deterministic across 3 reruns: 34.5 % / 36.4 %
+/ 94.4 %, 7 hard failures vs FP32's 1):
+
+```
+[es] n=100  WER=~0.4 (mean of 3 runs, σ ≈ 0.27)  RTF=0.060
+```
+
+INT8 introduces additional non-determinism on top of the
+greedy-decoding repetition issue, with the failure mode amplified
+(7 hard failures + worst-case 94 % WER). FP32 is the right baseline
+for evaluating model fidelity; INT8 quality is a separate question
+once the underlying decoding is stabilised.
+
+### Failure-mode inventory (FP32, n=100)
+
+Three distinct decoder failure patterns observed:
+
+1. **Hard fail (1 utt)** — decoder emits only the prefix, returns
+   empty text. Pipeline raises "no speech detected".
+2. **Chunk dropout (mid-WER)** — decoder skips a multi-word region
+   in the middle of a long sentence, emitting only the head + tail.
+   Same failure mode as v1 utterances 8 and 9.
+3. **Repetition loop (utt 62, 63)** — decoder gets stuck repeating
+   a single token until `max_sequence_length=1024` is hit. Examples:
+   - `"Asus E E E E E E E …"` (~500 repeats of "E") for an audio
+     containing the acronym "ASUS".
+   - `"boda boda boda boda …"` (~500 repeats of "boda") for an
+     audio containing "boda-boda mototaxi".
+
+   These are the WER > 100 % outliers (12.6×, 8.6× the reference
+   length).
+
+All three are classic greedy-decode failure modes — production
+autoregressive ASR systems mitigate them with **repetition penalty**,
+**length penalty**, and/or **beam search**. None of those is
+implemented in `src/canary/decoder.rs` yet.
 
 ### Fallback-trigger status
 
 | Trigger | Status |
 |---|---|
-| > 1 pp WER regression vs model card | **Inconclusive** — sample too small + outliers dominate. Need a wider FLEURS-es subset (≥100 utterances) and a WER metric to call. |
+| > 1 pp WER regression vs model card | **TRIGGERED** — 35.37 % WER vs MLS model-card 3.17 % WER (Δ ≈ 32 pp) on FP32, and 99-utt mean drops to 16.6 % when the two repetition-loop outliers are removed (still Δ ≈ 13 pp). Note: MLS test ≠ FLEURS test, so the headline numbers aren't strictly apples-to-apples; FLEURS is generally harder for Spanish than MLS LibriVox audio. The Canary-1B-v2 (not 180M) FLEURS-es WER is 2.90 %; the 180M model's FLEURS WER isn't published, so a 13–32 pp gap is the right order-of-magnitude flag regardless. |
 | Decoder loop > 2 weeks of work | **Cleared** — frontend → vocab → encoder → decoder → adapter delivered in 5 PRs over a single session. |
 | License clarification trouble | **Cleared** — istupakov bundle is upstream CC-BY-4.0 unchanged. |
 
+The first trigger fired but in a way that suggests **fixable
+decoding problems rather than fundamental model unsuitability**:
+
+- Median WER 8.3 % is within reasonable distance from the model card.
+- 41/100 utterances achieve WER < 5 % (matching model-card quality).
+- The catastrophic outliers all share the same root cause (greedy
+  decode without repetition penalty / length control).
+
+So the **soft-fallback decision is: invest in fixing the decoder
+before triggering a hard fallback to Parakeet-v3-multi**.
+
 ### Next investigation steps (in order)
 
-1. Diff the two outliers' encoder outputs vs `onnx-asr`'s Python
-   reference on the same WAV to isolate whether the regression comes
-   from our Rust pipeline or is intrinsic to the istupakov export.
-2. Widen the FLEURS-es subset to 100 utterances and switch metric to
-   WER to compare with the model card directly.
-3. If the outliers remain, profile the decoder's argmax stream to see
-   whether `<|endoftext|>` is being emitted prematurely (the most
-   likely root cause of mid-utterance dropouts).
+1. **Implement repetition penalty in `src/canary/decoder.rs`** —
+   discount the logit of any token already emitted in the current
+   utterance, with a tunable `repetition_penalty` parameter
+   (typically 1.1–1.3 in the literature). Would fix utt 62 / 63.
+2. **Implement minimum-length / EOS-confidence gate** — only accept
+   `<|endoftext|>` if its logit dominates by some margin AND the
+   total emitted length is plausible relative to encoder frames.
+   Would address the hard-fail (1 utt) and chunk-dropout cases.
+3. Re-run the 100-utt FP32 smoke and confirm WER drops below the
+   1-pp-vs-model-card trigger (target: WER ≤ 5 % on FP32).
+4. After (1)–(3), reassess INT8: with deterministic decoding, the
+   INT8 quality question becomes "is INT8 within X pp of FP32?"
+   rather than "is INT8 broken?".
+5. If (1)–(3) don't move the needle below ~10 % WER, **execute the
+   Parakeet-TDT-0.6B-v3-multi hard fallback** per the migration plan
+   already documented in this file.
