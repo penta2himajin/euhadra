@@ -64,6 +64,7 @@ struct Cli {
 enum Task {
     SelfCorrection,
     Ablation,
+    Filler,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -79,6 +80,7 @@ async fn run() -> Result<(), String> {
     match cli.task {
         Task::SelfCorrection => run_self_correction(&cli).await,
         Task::Ablation => run_ablation(&cli).await,
+        Task::Filler => run_filler(&cli).await,
     }
 }
 
@@ -338,6 +340,139 @@ fn fmt_pct(x: f64) -> String {
     } else {
         format!("{:.3}", x)
     }
+}
+
+// ---------------------------------------------------------------------------
+// Task: filler — Tier 1 direct F1 against a token-span gold standard.
+//
+// Spanish only in v1 — driven by the CIEMPIESS Test transcripts that
+// `scripts/build_es_filler_annotations.py` lifts into a structured
+// JSONL (see PR for license posture). Other languages ship rule-based
+// filters (`SimpleFillerFilter`, `JapaneseFillerFilter`,
+// `ChineseFillerFilter`) but no codepoint-span emitter yet, so the
+// strict-F1 evaluator can't compare against a gold annotation. Wire
+// them up case-by-case as filter span emitters land.
+// ---------------------------------------------------------------------------
+
+async fn run_filler(cli: &Cli) -> Result<(), String> {
+    type SpanDetector = Box<dyn Fn(&str) -> Vec<Span>>;
+    let lang = cli.lang.as_str();
+    let detect_spans: SpanDetector = match lang {
+        "es" | "spanish" => {
+            let filter = SpanishFillerFilter::new();
+            Box::new(move |t| filter.detect_spans(t))
+        }
+        other => {
+            return Err(format!(
+                "filler task: --lang {other} not wired (es only in v1; \
+                 other filters lack a codepoint span emitter)"
+            ));
+        }
+    };
+
+    let annotations = load_annotations(&cli.input)
+        .map_err(|e| format!("loading {}: {e}", cli.input.display()))?;
+    if annotations.is_empty() {
+        return Err(format!("annotation file {} is empty", cli.input.display()));
+    }
+
+    let mut utt_tp = 0usize;
+    let mut utt_fp = 0usize;
+    let mut utt_fn = 0usize;
+    let mut utt_tn = 0usize;
+    let mut span_stats: Vec<F1Stats> = Vec::new();
+
+    for anno in &annotations {
+        let predicted = detect_spans(&anno.text);
+        let gold: Vec<Span> = anno.fillers.iter().map(|f| f.span()).collect();
+
+        // Utterance-level fire / no-fire (ignores positions): a single
+        // predicted span counts as a fire regardless of how many gold
+        // spans the utterance actually has.
+        match (predicted.is_empty(), gold.is_empty()) {
+            (false, false) => utt_tp += 1,
+            (false, true) => utt_fp += 1,
+            (true, false) => utt_fn += 1,
+            (true, true) => utt_tn += 1,
+        }
+
+        // Span-level strict F1: closed-class lexicons make boundaries
+        // unambiguous, so IoU-based scoring is unnecessary here.
+        if !predicted.is_empty() || !gold.is_empty() {
+            let stats = strict_f1(&predicted, &gold);
+            span_stats.push(stats);
+
+            if cli.verbose && (stats.fp > 0 || stats.fn_ > 0) {
+                let chars: Vec<char> = anno.text.chars().collect();
+                let span_text = |s: &Span| -> String {
+                    chars
+                        .get(s.start..s.end.min(chars.len()))
+                        .map(|s| s.iter().collect::<String>())
+                        .unwrap_or_default()
+                };
+                let pred_str: Vec<String> = predicted
+                    .iter()
+                    .map(|s| format!("{:?}={:?}", (s.start, s.end), span_text(s)))
+                    .collect();
+                let gold_str: Vec<String> = gold
+                    .iter()
+                    .map(|s| format!("{:?}={:?}", (s.start, s.end), span_text(s)))
+                    .collect();
+                println!(
+                    "  [diff] {} text={:?}\n         predicted={:?}\n         gold={:?}",
+                    anno.utterance_id, anno.text, pred_str, gold_str,
+                );
+            }
+        }
+    }
+
+    let utt_f1 = F1Stats::from_counts(utt_tp, utt_fp, utt_fn);
+    let span_agg = aggregate(&span_stats);
+
+    println!("=== L3 filler direct F1 ({}) ===", cli.lang);
+    println!("annotations: {}", annotations.len());
+    println!(
+        "utterance-level   tp={} fp={} fn={} tn={}",
+        utt_tp, utt_fp, utt_fn, utt_tn
+    );
+    println!(
+        "  precision={}  recall={}  F1={}",
+        fmt_pct(utt_f1.precision),
+        fmt_pct(utt_f1.recall),
+        fmt_pct(utt_f1.f1),
+    );
+    println!(
+        "span-level (strict)    tp={} fp={} fn={}  precision={} recall={} F1={}",
+        span_agg.tp,
+        span_agg.fp,
+        span_agg.fn_,
+        fmt_pct(span_agg.precision),
+        fmt_pct(span_agg.recall),
+        fmt_pct(span_agg.f1),
+    );
+
+    if let Some(out) = &cli.output {
+        let report = serde_json::json!({
+            "task": "filler",
+            "lang": cli.lang,
+            "annotations": annotations.len(),
+            "utterance_level": {
+                "tp": utt_tp, "fp": utt_fp, "fn": utt_fn, "tn": utt_tn,
+                "precision": utt_f1.precision, "recall": utt_f1.recall, "f1": utt_f1.f1,
+            },
+            "span_level_strict": {
+                "tp": span_agg.tp, "fp": span_agg.fp, "fn": span_agg.fn_,
+                "precision": span_agg.precision, "recall": span_agg.recall, "f1": span_agg.f1,
+            },
+        });
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        std::fs::write(out, serde_json::to_string_pretty(&report).unwrap())
+            .map_err(|e| format!("write {}: {e}", out.display()))?;
+        eprintln!("report written to {}", out.display());
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
