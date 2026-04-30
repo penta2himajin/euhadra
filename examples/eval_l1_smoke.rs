@@ -28,6 +28,8 @@ use euhadra::eval::baseline::{
 use euhadra::eval::latency::Samples;
 use euhadra::eval::metrics::{cer_lenient, wer_lenient};
 #[cfg(feature = "onnx")]
+use euhadra::canary::CanaryAdapter;
+#[cfg(feature = "onnx")]
 use euhadra::parakeet::ParakeetAdapter;
 #[cfg(feature = "onnx")]
 use euhadra::paraformer::ParaformerAdapter;
@@ -91,6 +93,18 @@ struct Cli {
     /// Requires `--features onnx`.
     #[arg(long, env = "PARAFORMER_ZH_DIR")]
     paraformer_zh_dir: Option<PathBuf>,
+
+    /// Optional path to an `istupakov/canary-180m-flash-onnx` bundle
+    /// (`encoder-model.onnx`, `decoder-model.onnx`, `vocab.txt`; INT8
+    /// pair `encoder-model.int8.onnx` / `decoder-model.int8.onnx`
+    /// also accepted via the `with_int8_weights` config). When
+    /// provided, the `es` language is run through `CanaryAdapter`
+    /// — Canary-180M-Flash reports MLS-Spanish WER 3.17 % on the
+    /// official model card, vs. whisper-tiny in the ~50 % range.
+    /// Requires `--features onnx` at build time. Populate via
+    /// `scripts/setup_canary_es.sh`.
+    #[arg(long, env = "CANARY_ES_DIR")]
+    canary_es_dir: Option<PathBuf>,
 
     /// Print every utterance's reference / hypothesis / per-utterance
     /// WER + CER as the smoke runs. Useful when chasing residual
@@ -170,6 +184,7 @@ async fn run() -> Result<(), String> {
             cli.parakeet_ja_dir.as_deref(),
             cli.parakeet_en_dir.as_deref(),
             cli.paraformer_zh_dir.as_deref(),
+            cli.canary_es_dir.as_deref(),
         )?;
         if lang == "ja" && cli.parakeet_ja_dir.is_some() {
             used_parakeet_ja = true;
@@ -372,6 +387,7 @@ fn build_pipeline(
     parakeet_ja_dir: Option<&Path>,
     parakeet_en_dir: Option<&Path>,
     paraformer_zh_dir: Option<&Path>,
+    canary_es_dir: Option<&Path>,
 ) -> Result<Pipeline, String> {
     // Build the post-ASR stack first; ASR is bolted on per-language
     // because its concrete type depends on the model choice.
@@ -385,6 +401,7 @@ fn build_pipeline(
         "en" => builder.filter(SimpleFillerFilter::english()),
         "ja" => builder.filter(JapaneseFillerFilter::new()),
         "zh" => builder.filter(ChineseFillerFilter::new()),
+        "es" => builder.filter(SpanishFillerFilter::new()),
         other => return Err(format!("unsupported language: {other}")),
     };
 
@@ -437,6 +454,22 @@ fn build_pipeline(
             {
                 return Err(
                     "--paraformer-zh-dir requires --features onnx at build time".into(),
+                );
+            }
+        }
+        "es" if canary_es_dir.is_some() => {
+            #[cfg(feature = "onnx")]
+            {
+                let dir = canary_es_dir.unwrap();
+                let asr = CanaryAdapter::load(dir)
+                    .map_err(|e| format!("load canary es from {}: {e}", dir.display()))?
+                    .with_language("es");
+                builder.asr(asr)
+            }
+            #[cfg(not(feature = "onnx"))]
+            {
+                return Err(
+                    "--canary-es-dir requires --features onnx at build time".into(),
                 );
             }
         }

@@ -24,3 +24,6 @@ pub mod frontend;
 pub mod vocab;
 pub mod encoder;
 pub mod decoder;
+pub mod adapter;
+
+pub use adapter::{CanaryAdapter, CanaryConfig};
