@@ -697,15 +697,65 @@ impl Default for SpanishFillerFilter {
     }
 }
 
-#[async_trait]
-impl TextFilter for SpanishFillerFilter {
-    async fn filter(&self, text: &str) -> Result<FilterResult, FilterError> {
-        let words: Vec<&str> = text.split_whitespace().collect();
-        let n = words.len();
-        let lower: Vec<String> = words.iter().map(|w| w.to_lowercase()).collect();
-        let lower_chars: Vec<usize> = lower.iter().map(|w| w.chars().count()).collect();
+/// Internal token shape carrying both lowercase form and char-offset
+/// span. We track codepoint offsets explicitly so the F1 evaluator
+/// can compare against the codepoint-indexed annotation schema in
+/// `tests/evaluation/annotations/`.
+struct EsToken {
+    surface: String,
+    lower: String,
+    char_count: usize,
+    char_start: usize,
+    char_end: usize,
+}
+
+fn tokenize_es(text: &str) -> Vec<EsToken> {
+    let chars: Vec<char> = text.chars().collect();
+    let n = chars.len();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < n {
+        while i < n && chars[i].is_whitespace() {
+            i += 1;
+        }
+        if i >= n {
+            break;
+        }
+        let start = i;
+        while i < n && !chars[i].is_whitespace() {
+            i += 1;
+        }
+        let surface: String = chars[start..i].iter().collect();
+        let lower = surface.to_lowercase();
+        let char_count = lower.chars().count();
+        out.push(EsToken {
+            surface,
+            lower,
+            char_count,
+            char_start: start,
+            char_end: i,
+        });
+    }
+    out
+}
+
+/// One filler detection: an inclusive token range `[start_token,
+/// end_token]`. Multi-token detections (multi-word filler "o sea",
+/// 2-token rep "a la") have `end_token > start_token`; single-token
+/// detections have `start_token == end_token`.
+struct EsDetection {
+    start_token: usize,
+    end_token: usize,
+}
+
+impl SpanishFillerFilter {
+    /// Run the 5-pass detector. Returns `(removed_flags, detections)`.
+    /// Detections are emitted at most once per pattern so `detect_spans`
+    /// and `filter().removed` can both be derived without re-merging.
+    fn run_passes(&self, tokens: &[EsToken]) -> (Vec<bool>, Vec<EsDetection>) {
+        let n = tokens.len();
         let mut removed = vec![false; n];
-        let mut removed_labels: Vec<String> = Vec::new();
+        let mut detections: Vec<EsDetection> = Vec::new();
 
         // Pass 1: multi-word fillers (e.g. "o sea").
         for mf in &self.multi_fillers {
@@ -715,13 +765,12 @@ impl TextFilter for SpanishFillerFilter {
             }
             let mut i = 0;
             while i + plen <= n {
-                let matches = (0..plen).all(|k| !removed[i + k] && lower[i + k] == mf[k]);
+                let matches = (0..plen).all(|k| !removed[i + k] && tokens[i + k].lower == mf[k]);
                 if matches {
-                    let surface = (0..plen)
-                        .map(|k| words[i + k])
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    removed_labels.push(surface);
+                    detections.push(EsDetection {
+                        start_token: i,
+                        end_token: i + plen - 1,
+                    });
                     for k in 0..plen {
                         removed[i + k] = true;
                     }
@@ -740,11 +789,14 @@ impl TextFilter for SpanishFillerFilter {
             while i + 4 <= n {
                 let any_covered = (0..4).any(|k| removed[i + k]);
                 if !any_covered
-                    && lower[i] == lower[i + 2]
-                    && lower[i + 1] == lower[i + 3]
-                    && lower_chars[i] + lower_chars[i + 1] >= 3
+                    && tokens[i].lower == tokens[i + 2].lower
+                    && tokens[i + 1].lower == tokens[i + 3].lower
+                    && tokens[i].char_count + tokens[i + 1].char_count >= 3
                 {
-                    removed_labels.push(format!("{} {}", words[i], words[i + 1]));
+                    detections.push(EsDetection {
+                        start_token: i,
+                        end_token: i + 1,
+                    });
                     removed[i] = true;
                     removed[i + 1] = true;
                     // skip the kept pair; further matches start after it
@@ -761,9 +813,12 @@ impl TextFilter for SpanishFillerFilter {
             if removed[j] || removed[j - 1] {
                 continue;
             }
-            if lower[j] == lower[j - 1] && lower_chars[j] >= 2 {
+            if tokens[j].lower == tokens[j - 1].lower && tokens[j].char_count >= 2 {
                 removed[j - 1] = true;
-                removed_labels.push(words[j - 1].to_string());
+                detections.push(EsDetection {
+                    start_token: j - 1,
+                    end_token: j - 1,
+                });
             }
         }
 
@@ -777,15 +832,18 @@ impl TextFilter for SpanishFillerFilter {
                 if removed[j] || removed[j + 1] {
                     continue;
                 }
-                let a = &lower[j];
-                let b = &lower[j + 1];
-                if lower_chars[j] >= 2
-                    && lower_chars[j + 1] >= lower_chars[j] + 2
+                let a = &tokens[j].lower;
+                let b = &tokens[j + 1].lower;
+                if tokens[j].char_count >= 2
+                    && tokens[j + 1].char_count >= tokens[j].char_count + 2
                     && b.starts_with(a.as_str())
                     && !self.partial_stoplist.contains(a)
                 {
                     removed[j] = true;
-                    removed_labels.push(words[j].to_string());
+                    detections.push(EsDetection {
+                        start_token: j,
+                        end_token: j,
+                    });
                 }
             }
         }
@@ -795,17 +853,65 @@ impl TextFilter for SpanishFillerFilter {
             if removed[j] {
                 continue;
             }
-            if self.pure_fillers.contains(&lower[j]) {
+            if self.pure_fillers.contains(&tokens[j].lower) {
                 removed[j] = true;
-                removed_labels.push(words[j].to_string());
+                detections.push(EsDetection {
+                    start_token: j,
+                    end_token: j,
+                });
             }
         }
 
-        let kept: Vec<&str> = words
+        (removed, detections)
+    }
+
+    /// Detect filler spans without rewriting the text. Returns
+    /// **codepoint-offset** half-open `[start, end)` ranges, sorted by
+    /// `start`, suitable for direct comparison against
+    /// `tests/evaluation/annotations/*.jsonl` filler entries.
+    pub fn detect_spans(&self, text: &str) -> Vec<crate::eval::f1::Span> {
+        let tokens = tokenize_es(text);
+        let (_removed, detections) = self.run_passes(&tokens);
+        let mut spans: Vec<crate::eval::f1::Span> = detections
+            .iter()
+            .map(|d| crate::eval::f1::Span {
+                start: tokens[d.start_token].char_start,
+                end: tokens[d.end_token].char_end,
+            })
+            .collect();
+        spans.sort_by_key(|s| s.start);
+        spans
+    }
+
+    fn detection_label(&self, tokens: &[EsToken], d: &EsDetection) -> String {
+        if d.start_token == d.end_token {
+            tokens[d.start_token].surface.clone()
+        } else {
+            (d.start_token..=d.end_token)
+                .map(|i| tokens[i].surface.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        }
+    }
+}
+
+#[async_trait]
+impl TextFilter for SpanishFillerFilter {
+    async fn filter(&self, text: &str) -> Result<FilterResult, FilterError> {
+        let tokens = tokenize_es(text);
+        let (removed, mut detections) = self.run_passes(&tokens);
+        // emit labels in text order so callers see them left-to-right
+        detections.sort_by_key(|d| d.start_token);
+        let removed_labels: Vec<String> = detections
+            .iter()
+            .map(|d| self.detection_label(&tokens, d))
+            .collect();
+
+        let kept: Vec<&str> = tokens
             .iter()
             .enumerate()
             .filter(|(i, _)| !removed[*i])
-            .map(|(_, w)| *w)
+            .map(|(_, t)| t.surface.as_str())
             .collect();
 
         Ok(FilterResult {
@@ -1250,5 +1356,131 @@ mod tests {
         let result = filter.filter("").await.unwrap();
         assert_eq!(result.text, "");
         assert!(result.removed.is_empty());
+    }
+
+    // --- detect_spans (char-offset span emission for Tier 1 F1) ---
+
+    fn span(start: usize, end: usize) -> crate::eval::f1::Span {
+        crate::eval::f1::Span { start, end }
+    }
+
+    #[test]
+    fn spanish_detect_spans_pure_filler_at_start() {
+        let filter = SpanishFillerFilter::new();
+        // "e fuera" → span [0, 1) for "e"
+        assert_eq!(
+            filter.detect_spans("e fuera del aire"),
+            vec![span(0, 1)]
+        );
+    }
+
+    #[test]
+    fn spanish_detect_spans_token_repetition() {
+        let filter = SpanishFillerFilter::new();
+        // "e fuera del del aire" → spans for "e" (0-1) and the first "del" (8-11)
+        assert_eq!(
+            filter.detect_spans("e fuera del del aire"),
+            vec![span(0, 1), span(8, 11)]
+        );
+    }
+
+    #[test]
+    fn spanish_detect_spans_two_token_repetition() {
+        let filter = SpanishFillerFilter::new();
+        // "a la a la casa" → span [0, 4) covering the first "a la"
+        assert_eq!(
+            filter.detect_spans("a la a la casa"),
+            vec![span(0, 4)]
+        );
+    }
+
+    #[test]
+    fn spanish_detect_spans_partial_word() {
+        let filter = SpanishFillerFilter::new();
+        // "sie siempre estuvo" → span [0, 3) for "sie"
+        assert_eq!(
+            filter.detect_spans("sie siempre estuvo"),
+            vec![span(0, 3)]
+        );
+    }
+
+    #[test]
+    fn spanish_detect_spans_multi_word_filler() {
+        let filter = SpanishFillerFilter::new();
+        // "o sea ahora" → span [0, 5) covering "o sea"
+        assert_eq!(
+            filter.detect_spans("o sea ahora las mujeres"),
+            vec![span(0, 5)]
+        );
+    }
+
+    #[test]
+    fn spanish_detect_spans_uses_codepoint_offsets() {
+        // Accented codepoints would shift byte offsets but NOT char
+        // offsets. Spans must be expressed in chars to match the
+        // annotation schema in `tests/evaluation/annotations/`.
+        let filter = SpanishFillerFilter::new();
+        // "e canción mañana" — "e" at codepoint [0,1), then space at 1,
+        // "canción" at [2, 9). Two ñ/ó codepoints encoded as 2 bytes
+        // each in UTF-8 — verify we still get char offsets.
+        assert_eq!(
+            filter.detect_spans("e canción mañana"),
+            vec![span(0, 1)]
+        );
+    }
+
+    #[test]
+    fn spanish_detect_spans_combined() {
+        let filter = SpanishFillerFilter::new();
+        // "e a la a la sie siempre estuvo"
+        // codepoints:
+        //   "e"        [0, 1)
+        //   "a la a la" → first pair = "a la" [2, 6)
+        //   "sie"      [12, 15)
+        let spans = filter.detect_spans("e a la a la sie siempre estuvo");
+        assert_eq!(spans, vec![span(0, 1), span(2, 6), span(12, 15)]);
+    }
+
+    #[test]
+    fn spanish_detect_spans_clean_text_yields_empty() {
+        let filter = SpanishFillerFilter::new();
+        assert!(filter.detect_spans("este libro es interesante").is_empty());
+    }
+
+    #[test]
+    fn spanish_detect_spans_empty_input() {
+        let filter = SpanishFillerFilter::new();
+        assert!(filter.detect_spans("").is_empty());
+        assert!(filter.detect_spans("   ").is_empty());
+    }
+
+    #[test]
+    fn spanish_detect_spans_match_filter_results() {
+        // Invariant: spans returned by detect_spans should correspond
+        // exactly to the surface tokens that filter() removes. Drives
+        // alignment between filter and Tier 1 F1 evaluator.
+        let filter = SpanishFillerFilter::new();
+        let text = "e fuera del del a la a la casa";
+        let spans = filter.detect_spans(text);
+
+        let chars: Vec<char> = text.chars().collect();
+        let removed_surfaces: Vec<String> = spans
+            .iter()
+            .map(|s| chars[s.start..s.end].iter().collect())
+            .collect();
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let result = rt.block_on(filter.filter(text)).unwrap();
+
+        // detect_spans returns surface ranges; filter().removed lists
+        // surface tokens. Same set, possibly different order.
+        let mut a = removed_surfaces.clone();
+        let mut b = result.removed.clone();
+        a.sort();
+        b.sort();
+        assert_eq!(a, b);
     }
 }
