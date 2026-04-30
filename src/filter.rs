@@ -623,6 +623,198 @@ impl TextFilter for ChineseFillerFilter {
     }
 }
 
+// ---------------------------------------------------------------------------
+// SpanishFillerFilter — token-level rule-based filter for Spanish
+// ---------------------------------------------------------------------------
+
+/// Rule-based filler removal for Spanish text from ASR output.
+///
+/// Spanish uses whitespace tokenization (unlike `JapaneseFillerFilter` /
+/// `ChineseFillerFilter` which segment on `、` / `，`) so the token-pass
+/// structure mirrors `SimpleFillerFilter`. Three Spanish-specific
+/// patterns drive the design beyond the en `pure / contextual / multi`
+/// schema:
+///
+/// 1. **Token repetitions** — `del del`, `que que`. Removed by flagging
+///    the earlier occurrence so the canonical surface form survives.
+/// 2. **2-token bigram repetitions** — `a la a la`. Take precedence over
+///    the 1-token pass so `a la` doesn't degenerate into per-token
+///    flags that miss the pattern.
+/// 3. **Partial / abandoned words** — `sie siempre`, `est este`: a
+///    truncated start-of-word that the speaker abandons and re-starts.
+///    Detected by strict-prefix relation between adjacent tokens with a
+///    minimum-length guard. Common Spanish function words (`de`, `la`,
+///    `el`, …) are stoplisted to keep precision high without POS tags.
+///
+/// Closed-class lexicons mirror `scripts/build_es_filler_annotations.py`
+/// so that the filter's deletions align span-for-span with the F1
+/// gold standard built from CIEMPIESS Test transcripts.
+pub struct SpanishFillerFilter {
+    /// Always removed regardless of position.
+    pure_fillers: Vec<String>,
+    /// Multi-word fillers (lowercased token sequences).
+    multi_fillers: Vec<Vec<String>>,
+    /// Tokens excluded from the partial-word pass — common short
+    /// Spanish words that legitimately precede longer words.
+    partial_stoplist: Vec<String>,
+}
+
+impl SpanishFillerFilter {
+    pub fn new() -> Self {
+        Self {
+            pure_fillers: vec![
+                // vowel-only hesitations (lone "e" is the dominant
+                // CIEMPIESS hesitation form)
+                "e", "eh", "ehh", "ehhh", "eee", "eeh", "eeeh", "ehm",
+                // nasal hesitations
+                "mm", "mmm", "hmm",
+                // "ah" / "oh" family
+                "ah", "aah", "ahh", "oh",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
+            multi_fillers: vec![vec!["o".into(), "sea".into()]],
+            partial_stoplist: vec![
+                "y", "a", "o", "u", "e",
+                "de", "en", "el", "la", "lo", "los", "las", "le", "les",
+                "un", "una", "uno", "unos", "unas",
+                "se", "te", "me", "nos", "os",
+                "no", "ni", "es", "ya", "si", "sí",
+                "por", "con", "para", "del", "al", "que", "qué",
+                "su", "sus", "mi", "mis", "tu", "tus",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
+        }
+    }
+}
+
+impl Default for SpanishFillerFilter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl TextFilter for SpanishFillerFilter {
+    async fn filter(&self, text: &str) -> Result<FilterResult, FilterError> {
+        let words: Vec<&str> = text.split_whitespace().collect();
+        let n = words.len();
+        let lower: Vec<String> = words.iter().map(|w| w.to_lowercase()).collect();
+        let lower_chars: Vec<usize> = lower.iter().map(|w| w.chars().count()).collect();
+        let mut removed = vec![false; n];
+        let mut removed_labels: Vec<String> = Vec::new();
+
+        // Pass 1: multi-word fillers (e.g. "o sea").
+        for mf in &self.multi_fillers {
+            let plen = mf.len();
+            if plen == 0 || plen > n {
+                continue;
+            }
+            let mut i = 0;
+            while i + plen <= n {
+                let matches = (0..plen).all(|k| !removed[i + k] && lower[i + k] == mf[k]);
+                if matches {
+                    let surface = (0..plen)
+                        .map(|k| words[i + k])
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    removed_labels.push(surface);
+                    for k in 0..plen {
+                        removed[i + k] = true;
+                    }
+                    i += plen;
+                } else {
+                    i += 1;
+                }
+            }
+        }
+
+        // Pass 2: 2-token bigram repetitions ("a la a la"). Take this
+        // before the 1-token pass so a bigram pattern is recognised
+        // as a single unit and the surviving copy stays intact.
+        if n >= 4 {
+            let mut i = 0;
+            while i + 4 <= n {
+                let any_covered = (0..4).any(|k| removed[i + k]);
+                if !any_covered
+                    && lower[i] == lower[i + 2]
+                    && lower[i + 1] == lower[i + 3]
+                    && lower_chars[i] + lower_chars[i + 1] >= 3
+                {
+                    removed_labels.push(format!("{} {}", words[i], words[i + 1]));
+                    removed[i] = true;
+                    removed[i + 1] = true;
+                    // skip the kept pair; further matches start after it
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+        }
+
+        // Pass 3: 1-token immediate repetitions. Flag the EARLIER
+        // occurrence so the canonical surface form survives.
+        for j in 1..n {
+            if removed[j] || removed[j - 1] {
+                continue;
+            }
+            if lower[j] == lower[j - 1] && lower_chars[j] >= 2 {
+                removed[j - 1] = true;
+                removed_labels.push(words[j - 1].to_string());
+            }
+        }
+
+        // Pass 4: partial / abandoned words. Flag a token when the
+        // following token has it as a strict prefix with a length gap
+        // of ≥ 2 chars (so legitimate plural / inflected pairs like
+        // `mes / meses` aren't caught), and the prefix isn't on the
+        // function-word stoplist.
+        if n >= 2 {
+            for j in 0..n - 1 {
+                if removed[j] || removed[j + 1] {
+                    continue;
+                }
+                let a = &lower[j];
+                let b = &lower[j + 1];
+                if lower_chars[j] >= 2
+                    && lower_chars[j + 1] >= lower_chars[j] + 2
+                    && b.starts_with(a.as_str())
+                    && !self.partial_stoplist.contains(a)
+                {
+                    removed[j] = true;
+                    removed_labels.push(words[j].to_string());
+                }
+            }
+        }
+
+        // Pass 5: pure fillers (closed lex).
+        for j in 0..n {
+            if removed[j] {
+                continue;
+            }
+            if self.pure_fillers.contains(&lower[j]) {
+                removed[j] = true;
+                removed_labels.push(words[j].to_string());
+            }
+        }
+
+        let kept: Vec<&str> = words
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !removed[*i])
+            .map(|(_, w)| *w)
+            .collect();
+
+        Ok(FilterResult {
+            text: kept.join(" "),
+            removed: removed_labels,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -888,5 +1080,175 @@ mod tests {
             .unwrap();
         assert!(!result.text.contains("然后"), "{}", result.text);
         assert!(result.text.contains("开始第二个"));
+    }
+
+    // -----------------------------------------------------------------
+    // SpanishFillerFilter
+    // -----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn spanish_pure_filler_removed_at_start() {
+        // Lone "e" is the dominant CIEMPIESS hesitation form.
+        let filter = SpanishFillerFilter::new();
+        let result = filter.filter("e fuera del aire").await.unwrap();
+        assert_eq!(result.text, "fuera del aire");
+        assert!(result.removed.contains(&"e".to_string()));
+    }
+
+    #[tokio::test]
+    async fn spanish_pure_filler_mid_utterance() {
+        let filter = SpanishFillerFilter::new();
+        let result = filter
+            .filter("hace rato comentaba e fuera del aire")
+            .await
+            .unwrap();
+        assert!(!result.text.split_whitespace().any(|t| t == "e"), "{}", result.text);
+        assert!(result.text.contains("comentaba"));
+        assert!(result.text.contains("fuera del aire"));
+    }
+
+    #[tokio::test]
+    async fn spanish_multi_pure_fillers() {
+        let filter = SpanishFillerFilter::new();
+        let result = filter.filter("eh hola eee mañana").await.unwrap();
+        assert_eq!(result.text, "hola mañana");
+    }
+
+    #[tokio::test]
+    async fn spanish_pure_filler_case_insensitive() {
+        let filter = SpanishFillerFilter::new();
+        let result = filter.filter("Eh hola").await.unwrap();
+        assert_eq!(result.text, "hola");
+        assert!(result.removed.contains(&"Eh".to_string()));
+    }
+
+    #[tokio::test]
+    async fn spanish_multi_word_filler_o_sea() {
+        let filter = SpanishFillerFilter::new();
+        let result = filter
+            .filter("o sea ahora las mujeres")
+            .await
+            .unwrap();
+        assert_eq!(result.text, "ahora las mujeres");
+        assert!(result.removed.contains(&"o sea".to_string()));
+    }
+
+    #[tokio::test]
+    async fn spanish_token_repetition_drops_first() {
+        // "del del" — flag the EARLIER occurrence so the canonical
+        // surface form survives.
+        let filter = SpanishFillerFilter::new();
+        let result = filter.filter("e fuera del del aire").await.unwrap();
+        assert_eq!(result.text, "fuera del aire");
+        assert!(result.removed.contains(&"e".to_string()));
+        assert!(result.removed.contains(&"del".to_string()));
+    }
+
+    #[tokio::test]
+    async fn spanish_three_fold_repetition_keeps_last() {
+        // "muy muy muy" — first two are disfluency, last one is the
+        // canonical form.
+        let filter = SpanishFillerFilter::new();
+        let result = filter.filter("muy muy muy ligada con").await.unwrap();
+        assert_eq!(result.text, "muy ligada con");
+    }
+
+    #[tokio::test]
+    async fn spanish_two_token_repetition_drops_first_pair() {
+        let filter = SpanishFillerFilter::new();
+        let result = filter
+            .filter("a la a la casa de mi abuela")
+            .await
+            .unwrap();
+        assert_eq!(result.text, "a la casa de mi abuela");
+        assert!(result.removed.contains(&"a la".to_string()));
+    }
+
+    #[tokio::test]
+    async fn spanish_partial_word_dropped() {
+        // "sie" is a strict prefix of "siempre" with len ≥ 2 and a
+        // gap of ≥ 2 chars → flagged as an abandoned-word disfluency.
+        let filter = SpanishFillerFilter::new();
+        let result = filter
+            .filter("sie siempre estuvo leyendo")
+            .await
+            .unwrap();
+        assert_eq!(result.text, "siempre estuvo leyendo");
+        assert!(result.removed.contains(&"sie".to_string()));
+    }
+
+    #[tokio::test]
+    async fn spanish_partial_stoplist_protects_function_words() {
+        // "se" is a stoplisted function word — even though "se" is a
+        // strict prefix of "sevir" we must not flag it.
+        let filter = SpanishFillerFilter::new();
+        let result = filter.filter("se sevir mañana").await.unwrap();
+        assert_eq!(result.text, "se sevir mañana");
+        assert!(result.removed.is_empty());
+    }
+
+    #[tokio::test]
+    async fn spanish_repetition_of_contextual_word_dropped() {
+        // "este este libro" — repetition pass fires; the bare phrase
+        // "este libro" stays clean (covered by the next test).
+        let filter = SpanishFillerFilter::new();
+        let result = filter.filter("este este libro").await.unwrap();
+        assert_eq!(result.text, "este libro");
+        assert!(result.removed.contains(&"este".to_string()));
+    }
+
+    #[tokio::test]
+    async fn spanish_clean_demonstrative_preserved() {
+        // Bare "este libro" must not be flagged — this is the false-
+        // positive guard that motivates leaving "este" out of the
+        // pure-filler set in v1.
+        let filter = SpanishFillerFilter::new();
+        let result = filter.filter("este libro es interesante").await.unwrap();
+        assert_eq!(result.text, "este libro es interesante");
+        assert!(result.removed.is_empty());
+    }
+
+    #[tokio::test]
+    async fn spanish_clean_text_preserved() {
+        let filter = SpanishFillerFilter::new();
+        let result = filter
+            .filter("como una de las partes importantes es el capitulado")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.text,
+            "como una de las partes importantes es el capitulado"
+        );
+        assert!(result.removed.is_empty());
+    }
+
+    #[tokio::test]
+    async fn spanish_accented_characters_preserved() {
+        // Spans / tokens must align correctly when the sentence
+        // contains multi-byte UTF-8 codepoints.
+        let filter = SpanishFillerFilter::new();
+        let result = filter.filter("e canción mañana").await.unwrap();
+        assert_eq!(result.text, "canción mañana");
+        assert!(result.removed.contains(&"e".to_string()));
+    }
+
+    #[tokio::test]
+    async fn spanish_combined_pure_repetition_partial() {
+        // CIEMPIESS-style multi-pattern utterance: pure filler at
+        // start, repetition, partial word.
+        let filter = SpanishFillerFilter::new();
+        let result = filter
+            .filter("e a la a la sie siempre estuvo")
+            .await
+            .unwrap();
+        assert_eq!(result.text, "a la siempre estuvo");
+    }
+
+    #[tokio::test]
+    async fn spanish_empty_text() {
+        let filter = SpanishFillerFilter::new();
+        let result = filter.filter("").await.unwrap();
+        assert_eq!(result.text, "");
+        assert!(result.removed.is_empty());
     }
 }
