@@ -127,6 +127,22 @@ impl Vocab {
         self.id_to_piece.get(id as usize).map(String::as_str)
     }
 
+    /// `piece → id` lookup, returning the **last** id when a piece
+    /// appears more than once. Mirrors onnx-asr's `_tokens` dict
+    /// comprehension semantics — needed by the decoder to resolve
+    /// the literal-space slot in its prefix to the last-occurring
+    /// `▁` token (the istupakov vocab repeats `▁` at ids 1151 and
+    /// 5072; the decoder wants the latter).
+    pub fn last_id(&self, piece: &str) -> Option<u32> {
+        let mut last = None;
+        for (i, p) in self.id_to_piece.iter().enumerate() {
+            if p == piece {
+                last = Some(i as u32);
+            }
+        }
+        last
+    }
+
     /// `piece → id` lookup. Used to resolve special tokens by name.
     pub fn id(&self, piece: &str) -> Option<u32> {
         self.piece_to_id.get(piece).copied()
@@ -380,6 +396,21 @@ mod tests {
     fn decode_empty_input_returns_empty_string() {
         let v = Vocab::from_text(&mini_vocab_text()).unwrap();
         assert_eq!(v.decode(&[]), "");
+    }
+
+    #[test]
+    fn last_id_returns_last_occurrence() {
+        // Two `▁` tokens like the real istupakov vocab. `id` returns
+        // the first; `last_id` returns the second.
+        let mut text = String::new();
+        text.push_str("<unk> 0\n");
+        text.push_str("\u{2581} 1\n");
+        text.push_str("a 2\n");
+        text.push_str("\u{2581} 3\n");
+        let v = Vocab::from_text(&text).unwrap();
+        assert_eq!(v.id("\u{2581}"), Some(1));
+        assert_eq!(v.last_id("\u{2581}"), Some(3));
+        assert_eq!(v.last_id("missing"), None);
     }
 
     #[test]
