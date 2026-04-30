@@ -51,6 +51,9 @@ pub struct CanaryConfig {
     pub default_pnc: bool,
     /// Hard cap on the autoregressive decoder, clamped per-utterance.
     pub max_sequence_length: usize,
+    /// Greedy-decode repetition penalty. See
+    /// `decoder::DEFAULT_REPETITION_PENALTY`. `1.0` disables.
+    pub repetition_penalty: f32,
 }
 
 impl CanaryConfig {
@@ -63,6 +66,7 @@ impl CanaryConfig {
             default_language: "en".to_string(),
             default_pnc: true,
             max_sequence_length: super::decoder::DEFAULT_MAX_SEQUENCE_LENGTH,
+            repetition_penalty: super::decoder::DEFAULT_REPETITION_PENALTY,
         }
     }
 
@@ -183,6 +187,7 @@ impl CanaryAdapter {
             target_language: self.language.clone(),
             pnc: self.cfg.default_pnc,
             max_sequence_length: self.cfg.max_sequence_length,
+            repetition_penalty: self.cfg.repetition_penalty,
         };
         let decoded = self.decoder.decode(&enc.embeddings, &enc.mask, &self.vocab, &opts)?;
 

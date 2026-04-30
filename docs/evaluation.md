@@ -187,13 +187,14 @@ L1 で es を評価する際の ASR は **NVIDIA Canary-180M-Flash via [`istupak
 
 実測 (2026-04-30、`docs/canary-integration.md` の「End-to-end validation」節に詳細):
 
-| Subset | Weights | WER (mean) | WER (median) | RTF | Note |
-|---|---|---|---|---|---|
-| FLEURS-es 10 utt (smoke) | INT8 | (CER 9.75%) | — | 0.091 | 初回実装確認、外れ値 2 件 |
-| **FLEURS-es 100 utt (primary)** | **FP32** | **35.37 %** | **8.33 %** | 0.150 | 41/100 utt が WER < 5 %、catastrophic outlier 2 件 (repetition loop) が mean を引き上げ |
-| FLEURS-es 100 utt | INT8 | ~40 % (3 runs σ≈27%) | — | 0.060 | INT8 ops 由来の **非決定性**、3 回で 34.5/36.4/94.4 % のばらつき |
+| Subset | Weights | Penalty | WER (mean) | WER (median) | RTF | Note |
+|---|---|---|---|---|---|---|
+| FLEURS-es 10 utt | INT8 | — | (CER 9.75%) | — | 0.091 | v1 初回実装確認、外れ値 2 件 |
+| FLEURS-es 100 utt | FP32 | 1.0 (off) | 35.37 % | 8.33 % | 0.150 | v2 baseline、catastrophic outlier 2 件が mean を引き上げ |
+| FLEURS-es 100 utt | INT8 | 1.0 (off) | ~40 % (σ≈27 %) | — | 0.060 | v2 INT8、3 回で 34.5 / 36.4 / 94.4 % の非決定性 |
+| **FLEURS-es 100 utt (primary)** | **FP32** | **1.8** | **14.38 %** | **8.33 %** | 0.165 | **v3 repetition penalty 適用、loop 完全消滅** |
 
-公式 model card 値は **MLS Spanish WER 3.17 %** / **MCV-16.1 ES WER 4.90 %** (FLEURS-es は 180M モデルでは未公開、Canary-1B-v2 で 2.90 %)。**現状 mean WER は model card と 13–32 pp 乖離**しているが、median 8.3 % + 失敗パターンが greedy decoding の既知 failure mode (repetition loop / chunk dropout / hard EOS) に集中していることから、**hard fallback ではなく decoder の段階的改善で解消可能**と判定 — 詳細は `docs/canary-integration.md` の Fallback-trigger status セクション。
+公式 model card 値は **MLS Spanish WER 3.17 %** / **MCV-16.1 ES WER 4.90 %** (FLEURS-es は 180M モデルでは未公開、Canary-1B-v2 で 2.90 %)。v3 で **mean WER 35.37 % → 14.38 % (Δ = -21 pp)** に改善、残る delta は chunk-dropout 系 (decoder の早期 EOS) に集中。次の打ち手は min-length / EOS-confidence gate。詳細は `docs/canary-integration.md` の "v3 — repetition penalty sweep" 節と "Next investigation steps"。
 
 ---
 

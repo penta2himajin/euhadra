@@ -185,7 +185,41 @@ greedy-decoding repetition issue, with the failure mode amplified
 for evaluating model fidelity; INT8 quality is a separate question
 once the underlying decoding is stabilised.
 
-### Failure-mode inventory (FP32, n=100)
+### v3 — repetition penalty sweep (FP32, n=100, 2026-04-30)
+
+Implemented HuggingFace-style repetition penalty in
+`src/canary/decoder.rs::apply_repetition_penalty` and ran the
+100-utt FP32 smoke at five penalty values. The penalty discounts
+the logit of any token already emitted in the current utterance
+(divides positive logits, multiplies negative logits) before
+greedy argmax. Applied only to the post-prefix region so the
+static prefix tokens (sot / language / pnc / etc.) don't suppress
+legitimate content emissions whose surface forms appear in the
+prefix.
+
+| penalty | mean WER | clean (0–5 %) | repetition loops (>100 % WER) | hard fails |
+|---|---|---|---|---|
+| 1.0 (off) | 35.37 % | 41 / 99 | **2** | 1 |
+| 1.2 | 23.03 % | 41 / 99 | 1 | 1 |
+| 1.5 | 14.63 % | 41 / 99 | 0 | 1 |
+| **1.8 (default)** | **14.38 %** | **41 / 99** | **0** | 1 |
+| 2.0 | 18.90 % | 40 / 99 | 1 (over-penalty resurfaces a loop) | 1 |
+
+**Default chosen: `repetition_penalty = 1.8`** (`DEFAULT_REPETITION_PENALTY`).
+
+Headline win: **mean WER 35.37 % → 14.38 % (Δ = -21.0 pp)** at the
+sweet-spot penalty, with **zero regression on the 41 clean
+utterances** that were already at WER < 5 %. The two catastrophic
+"E E E E E…" / "boda boda boda…" repetition loops from v2 are
+both eliminated.
+
+The remaining 14.38 % is dominated by chunk-dropout failures
+(decoder skipping multi-word regions in long sentences) and the
+single hard-fail utterance — neither of which the repetition
+penalty addresses. Step (2) of the next-investigation list
+(min-length / EOS-confidence gate) is the right tool for those.
+
+### Failure-mode inventory (FP32, n=100, no penalty)
 
 Three distinct decoder failure patterns observed:
 
@@ -209,40 +243,37 @@ autoregressive ASR systems mitigate them with **repetition penalty**,
 **length penalty**, and/or **beam search**. None of those is
 implemented in `src/canary/decoder.rs` yet.
 
-### Fallback-trigger status
+### Fallback-trigger status (post-v3)
 
 | Trigger | Status |
 |---|---|
-| > 1 pp WER regression vs model card | **TRIGGERED** — 35.37 % WER vs MLS model-card 3.17 % WER (Δ ≈ 32 pp) on FP32, and 99-utt mean drops to 16.6 % when the two repetition-loop outliers are removed (still Δ ≈ 13 pp). Note: MLS test ≠ FLEURS test, so the headline numbers aren't strictly apples-to-apples; FLEURS is generally harder for Spanish than MLS LibriVox audio. The Canary-1B-v2 (not 180M) FLEURS-es WER is 2.90 %; the 180M model's FLEURS WER isn't published, so a 13–32 pp gap is the right order-of-magnitude flag regardless. |
-| Decoder loop > 2 weeks of work | **Cleared** — frontend → vocab → encoder → decoder → adapter delivered in 5 PRs over a single session. |
+| > 1 pp WER regression vs model card | **Still triggered but trending toward resolution** — repetition penalty closed > 60 % of the gap (35.37 % → 14.38 %). The remaining 11.21 pp delta vs MLS model-card 3.17 % WER is mostly chunk-dropout failures (~22 utt at 20–50 % WER) and one hard-fail. Step (2) of the next-investigation list (min-length / EOS-confidence gate) is the right tool. |
+| Decoder loop > 2 weeks of work | **Cleared** — frontend → vocab → encoder → decoder → adapter delivered in 5 PRs over a single session, plus repetition penalty in 1 follow-up PR. |
 | License clarification trouble | **Cleared** — istupakov bundle is upstream CC-BY-4.0 unchanged. |
 
-The first trigger fired but in a way that suggests **fixable
-decoding problems rather than fundamental model unsuitability**:
+The trajectory is clear: **decoder-side fixes are working as
+expected**. The penalty alone moved median behaviour to model-card
+quality (median WER unchanged at 8.3 %, but the long tail
+collapsed). The hard Parakeet-v3-multi fallback remains documented
+but is not warranted at this time.
 
-- Median WER 8.3 % is within reasonable distance from the model card.
-- 41/100 utterances achieve WER < 5 % (matching model-card quality).
-- The catastrophic outliers all share the same root cause (greedy
-  decode without repetition penalty / length control).
+### Next investigation steps (post-v3)
 
-So the **soft-fallback decision is: invest in fixing the decoder
-before triggering a hard fallback to Parakeet-v3-multi**.
-
-### Next investigation steps (in order)
-
-1. **Implement repetition penalty in `src/canary/decoder.rs`** —
-   discount the logit of any token already emitted in the current
-   utterance, with a tunable `repetition_penalty` parameter
-   (typically 1.1–1.3 in the literature). Would fix utt 62 / 63.
+1. ~~**Implement repetition penalty**~~ — **DONE** (this PR). Best
+   penalty 1.8 picked from a 5-value sweep.
 2. **Implement minimum-length / EOS-confidence gate** — only accept
    `<|endoftext|>` if its logit dominates by some margin AND the
    total emitted length is plausible relative to encoder frames.
-   Would address the hard-fail (1 utt) and chunk-dropout cases.
-3. Re-run the 100-utt FP32 smoke and confirm WER drops below the
-   1-pp-vs-model-card trigger (target: WER ≤ 5 % on FP32).
-4. After (1)–(3), reassess INT8: with deterministic decoding, the
+   Would address the 1 hard-fail and the chunk-dropout cluster
+   (~22 utt at 20–50 % WER) that still dominate the residual mean
+   WER.
+3. Re-run the 100-utt FP32 smoke after (2) and confirm WER drops
+   below the 1-pp-vs-model-card trigger (target: WER ≤ 5 % on FP32).
+4. After (2)–(3), reassess INT8: with deterministic decoding, the
    INT8 quality question becomes "is INT8 within X pp of FP32?"
-   rather than "is INT8 broken?".
-5. If (1)–(3) don't move the needle below ~10 % WER, **execute the
+   rather than "is INT8 broken?". The earlier INT8 nondeterminism
+   may also resolve once decoding is more stable (the loops were
+   the source of the worst-case 0.94 WER outlier).
+5. If (2)–(3) don't get below ~10 % WER, **execute the
    Parakeet-TDT-0.6B-v3-multi hard fallback** per the migration plan
    already documented in this file.

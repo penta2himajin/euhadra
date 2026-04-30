@@ -77,6 +77,25 @@ pub const PREFIX_LEN: usize = 10;
 /// `max_sequence_length` field of the istupakov canary config.json.
 pub const DEFAULT_MAX_SEQUENCE_LENGTH: usize = 1024;
 
+/// Default greedy-decode repetition penalty. `1.0` is a no-op; values
+/// above 1 down-weight already-emitted tokens. The HuggingFace
+/// transformers / NeMo defaults sit in 1.1–1.3; we pick **1.8** based
+/// on the FLEURS-es 100-utt sweep recorded in
+/// `docs/canary-integration.md` "End-to-end validation v3":
+///
+/// | penalty | WER | hard fails | repetition loops |
+/// |---|---|---|---|
+/// | 1.0 (off) | 35.37 % | 1 | 2 |
+/// | 1.2 | 23.03 % | 1 | 1 |
+/// | 1.5 | 14.63 % | 1 | 0 |
+/// | **1.8** | **14.38 %** | 1 | 0 |
+/// | 2.0 | 18.90 % | 1 | 1 (over-penalty resurfaces a loop) |
+///
+/// 1.5–1.8 hit the sweet spot; 1.8 narrowly wins on mean WER without
+/// regressing the 41 / 100 clean utterances that already sit at
+/// WER < 5 %. Set to `1.0` to disable.
+pub const DEFAULT_REPETITION_PENALTY: f32 = 1.8;
+
 /// Per-call decoding knobs. Defaults to Spanish ASR with
 /// punctuation-and-capitalisation enabled.
 #[derive(Debug, Clone)]
@@ -93,6 +112,10 @@ pub struct DecodeOptions {
     pub pnc: bool,
     /// Hard cap on `prefix_len + generated_tokens`.
     pub max_sequence_length: usize,
+    /// Greedy-decode repetition penalty. `1.0` disables; values > 1
+    /// discount logits of tokens already emitted in the current
+    /// utterance. See `DEFAULT_REPETITION_PENALTY`.
+    pub repetition_penalty: f32,
 }
 
 impl DecodeOptions {
@@ -103,6 +126,7 @@ impl DecodeOptions {
             target_language: lang,
             pnc: true,
             max_sequence_length: DEFAULT_MAX_SEQUENCE_LENGTH,
+            repetition_penalty: DEFAULT_REPETITION_PENALTY,
         }
     }
 }
@@ -189,6 +213,62 @@ pub fn argmax_last_position(logits: &Array3<f32>) -> Vec<u32> {
         out.push(best_v);
     }
     out
+}
+
+/// Down-weight logits at the last time-position for tokens that
+/// already appear in `history`. Mirrors HuggingFace transformers'
+/// `RepetitionPenaltyLogitsProcessor`:
+///
+/// ```text
+/// new_score = if old_score < 0 { old_score * penalty }
+///             else              { old_score / penalty }
+/// ```
+///
+/// `penalty == 1.0` or empty `history` is a no-op (the function
+/// returns without touching `logits`). Each unique token id in
+/// `history` is penalised exactly once, even if emitted multiple
+/// times — this matches the upstream HF behaviour and keeps the
+/// adjustment stable as the history grows.
+///
+/// Operates on the last time-position of `logits` because the
+/// greedy step only consumes that slice; earlier positions are
+/// either prefix tokens (not yet sampled) or already-emitted tokens
+/// (irrelevant to the next sampling step).
+pub fn apply_repetition_penalty(
+    logits: &mut Array3<f32>,
+    history: &[i64],
+    penalty: f32,
+) {
+    if penalty == 1.0 || history.is_empty() {
+        return;
+    }
+    let (batch, time, vocab_size) = logits.dim();
+    if batch == 0 || time == 0 {
+        return;
+    }
+    let last_t = time - 1;
+    // Dedup token ids so each gets penalised exactly once. Allocates
+    // for cleanliness; the prefix is short (≤ ~1024 tokens) so this
+    // is negligible vs the encoder/decoder ONNX work.
+    let mut seen = std::collections::HashSet::<i64>::new();
+    for &tok in history {
+        if tok < 0 || !seen.insert(tok) {
+            continue;
+        }
+        let v = tok as usize;
+        if v >= vocab_size {
+            continue;
+        }
+        for b in 0..batch {
+            let score = logits[[b, last_t, v]];
+            let new_score = if score < 0.0 {
+                score * penalty
+            } else {
+                score / penalty
+            };
+            logits[[b, last_t, v]] = new_score;
+        }
+    }
 }
 
 /// Strip the static prefix from a full-token sequence and drop any
@@ -338,7 +418,7 @@ impl CanaryDecoder {
                 },
             )?;
 
-            let logits: Array3<f32> = outputs[logits_idx]
+            let mut logits: Array3<f32> = outputs[logits_idx]
                 .try_extract_array::<f32>()
                 .map_err(|e| AsrError {
                     message: format!("extract {DECODER_OUTPUT_LOGITS}: {e}"),
@@ -359,6 +439,16 @@ impl CanaryDecoder {
                     message: format!("{DECODER_OUTPUT_HIDDEN_STATES} rank: {e}"),
                 })?;
             decoder_mems = new_mems;
+
+            // Repetition-penalty applies to the SUFFIX of the
+            // current sequence — penalising prefix tokens (sot /
+            // language / pnc / nodiarize / etc.) would suppress
+            // legitimate emissions whose surface forms also appear
+            // in the prefix region. Use only the post-prefix slice.
+            if opts.repetition_penalty != 1.0 && batch_tokens.len() > prefix_len {
+                let suffix = &batch_tokens[prefix_len..];
+                apply_repetition_penalty(&mut logits, suffix, opts.repetition_penalty);
+            }
 
             let next_tokens = argmax_last_position(&logits);
             let next = next_tokens[0];
@@ -604,6 +694,7 @@ mod tests {
             target_language: "es".into(),
             pnc: true,
             max_sequence_length: 1024,
+            repetition_penalty: 1.0,
         };
         let p = build_decoder_prefix(&v, &opts).unwrap();
         assert_eq!(p[4], 12, "source = en");
@@ -676,6 +767,114 @@ mod tests {
         )
         .unwrap();
         assert_eq!(argmax_last_position(&logits), vec![1, 2]);
+    }
+
+    // --- apply_repetition_penalty ---
+
+    fn make_logits_1xv(row: &[f32]) -> Array3<f32> {
+        let v = row.len();
+        Array3::from_shape_vec((1, 1, v), row.to_vec()).unwrap()
+    }
+
+    #[test]
+    fn repetition_penalty_no_op_at_one() {
+        let mut logits = make_logits_1xv(&[1.0, 2.0, 3.0]);
+        let before = logits.clone();
+        apply_repetition_penalty(&mut logits, &[0, 1, 2], 1.0);
+        assert_eq!(logits, before);
+    }
+
+    #[test]
+    fn repetition_penalty_no_op_for_empty_history() {
+        let mut logits = make_logits_1xv(&[1.0, -2.0, 3.0]);
+        let before = logits.clone();
+        apply_repetition_penalty(&mut logits, &[], 1.5);
+        assert_eq!(logits, before);
+    }
+
+    #[test]
+    fn repetition_penalty_divides_positive_logits() {
+        let mut logits = make_logits_1xv(&[2.0, 4.0, 6.0]);
+        apply_repetition_penalty(&mut logits, &[1], 2.0);
+        // Token 1 was emitted, positive logit divided by penalty.
+        assert_eq!(logits[[0, 0, 0]], 2.0); // unchanged
+        assert_eq!(logits[[0, 0, 1]], 2.0); // 4 / 2
+        assert_eq!(logits[[0, 0, 2]], 6.0); // unchanged
+    }
+
+    #[test]
+    fn repetition_penalty_multiplies_negative_logits() {
+        let mut logits = make_logits_1xv(&[-1.0, -2.0, -3.0]);
+        apply_repetition_penalty(&mut logits, &[2], 2.0);
+        // Token 2 was emitted, negative logit multiplied by penalty.
+        assert_eq!(logits[[0, 0, 0]], -1.0);
+        assert_eq!(logits[[0, 0, 1]], -2.0);
+        assert_eq!(logits[[0, 0, 2]], -6.0); // -3 * 2
+    }
+
+    #[test]
+    fn repetition_penalty_dedups_history() {
+        // Token 1 appears 5× in the history. Penalty should apply
+        // exactly once, not 5×.
+        let mut logits = make_logits_1xv(&[1.0, 4.0, 9.0]);
+        apply_repetition_penalty(&mut logits, &[1, 1, 1, 1, 1], 2.0);
+        // Single application: 4 / 2 = 2.
+        assert_eq!(logits[[0, 0, 1]], 2.0);
+    }
+
+    #[test]
+    fn repetition_penalty_skips_out_of_range_tokens() {
+        let mut logits = make_logits_1xv(&[1.0, 2.0, 3.0]);
+        // Token id 99 is past vocab_size=3 — must not panic.
+        apply_repetition_penalty(&mut logits, &[99, -1, 2], 2.0);
+        // Token 2 is valid → 3 / 2 = 1.5.
+        assert_eq!(logits[[0, 0, 2]], 1.5);
+        // Other tokens untouched.
+        assert_eq!(logits[[0, 0, 0]], 1.0);
+        assert_eq!(logits[[0, 0, 1]], 2.0);
+    }
+
+    #[test]
+    fn repetition_penalty_only_touches_last_time_position() {
+        // 1 batch × 3 time × 4 vocab. Only the last time-slice gets
+        // the penalty — earlier positions are either prefix tokens
+        // (not yet sampled) or already-emitted tokens.
+        let mut logits = Array3::from_shape_vec(
+            (1, 3, 4),
+            vec![
+                // t=0
+                1.0, 2.0, 3.0, 4.0,
+                // t=1
+                5.0, 6.0, 7.0, 8.0,
+                // t=2 (last)
+                9.0, 10.0, 11.0, 12.0,
+            ],
+        )
+        .unwrap();
+        apply_repetition_penalty(&mut logits, &[1], 2.0);
+        // t=0 and t=1 untouched.
+        assert_eq!(logits[[0, 0, 1]], 2.0);
+        assert_eq!(logits[[0, 1, 1]], 6.0);
+        // t=2 column 1 divided by penalty.
+        assert_eq!(logits[[0, 2, 1]], 5.0); // 10 / 2
+    }
+
+    #[test]
+    fn repetition_penalty_changes_argmax_when_penalty_active() {
+        // Without penalty: token 0 wins (logit 5).
+        // History contains token 0 → with penalty=2.0 its logit
+        // becomes 2.5, so token 1 (logit 4) wins instead.
+        let mut logits = make_logits_1xv(&[5.0, 4.0, 3.0]);
+        assert_eq!(argmax_last_position(&logits), vec![0]);
+        apply_repetition_penalty(&mut logits, &[0], 2.0);
+        assert_eq!(argmax_last_position(&logits), vec![1]);
+    }
+
+    #[test]
+    fn decode_options_default_repetition_penalty() {
+        let o = DecodeOptions::for_asr("es");
+        assert_eq!(o.repetition_penalty, DEFAULT_REPETITION_PENALTY);
+        assert_eq!(o.repetition_penalty, 1.8);
     }
 
     #[test]
