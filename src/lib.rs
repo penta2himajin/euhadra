@@ -21,3 +21,6 @@ pub mod parakeet;
 
 #[cfg(feature = "onnx")]
 pub mod paraformer;
+
+#[cfg(feature = "onnx")]
+pub mod canary;
