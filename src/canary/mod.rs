@@ -21,3 +21,4 @@
 //! Upstream license is CC-BY-4.0.
 
 pub mod frontend;
+pub mod vocab;
