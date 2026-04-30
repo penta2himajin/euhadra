@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use euhadra::emitters::ClipboardEmitter;
 use euhadra::filter::{
     ChineseFillerFilter, EmbeddingFillerFilter, JapaneseFillerFilter, SimpleFillerFilter,
+    SpanishFillerFilter,
 };
 use euhadra::mic::{self, MicConfig};
 use euhadra::mock::{MockContextProvider, MockRefiner, StdoutEmitter};
@@ -162,6 +163,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         Some("zh") | Some("chinese") => {
                             builder.filter(ChineseFillerFilter::new())
                         }
+                        Some("es") | Some("spanish") => {
+                            builder.filter(SpanishFillerFilter::new())
+                        }
                         _ => builder.filter(SimpleFillerFilter::english()),
                     };
                 }
@@ -227,6 +231,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     Some("zh") | Some("chinese") => {
                         builder.filter(ChineseFillerFilter::new())
+                    }
+                    Some("es") | Some("spanish") => {
+                        builder.filter(SpanishFillerFilter::new())
                     }
                     _ => builder.filter(SimpleFillerFilter::english()),
                 };
