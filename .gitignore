@@ -1,1 +1,9 @@
 /target
+
+# Derived evaluation artifacts: gold-standard JSONL produced from
+# CC-BY-SA datasets (e.g. CIEMPIESS Test) is treated as a derivative
+# work and must not be committed. CI regenerates these on demand from
+# the locally-cached source via `scripts/build_es_filler_annotations.py`
+# and friends. F1 scores derived from a run remain factual data and
+# are committed under `docs/benchmarks/`.
+/data/cache/
