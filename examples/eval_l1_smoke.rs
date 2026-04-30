@@ -305,16 +305,37 @@ async fn evaluate_language(
             .map_err(|e| format!("send audio: {e}"))?;
         drop(audio_tx);
 
-        let result = handle
+        // Per-utterance pipeline failures must not abort the whole
+        // smoke run — ASR adapters legitimately produce zero text on
+        // some inputs (e.g. autoregressive decoders that hit
+        // max_sequence_length without emitting non-special tokens),
+        // and treating that as fatal hides the per-utterance failure
+        // mode behind a top-level error. Count empty hypotheses as
+        // 100 % WER/CER (the reference is non-trivially missed) and
+        // keep going.
+        let result_or_err = handle
             .await
-            .map_err(|e| format!("join: {e}"))?
-            .map_err(|e| format!("pipeline: {e}"))?;
+            .map_err(|e| format!("join: {e}"))?;
         let asr_elapsed = asr_start.elapsed();
         asr_latency.record(asr_elapsed);
         e2e_latency.record(e2e_start.elapsed());
         total_asr_secs += asr_elapsed.as_secs_f64();
         total_audio_secs += audio_secs;
 
+        let result = match result_or_err {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!(
+                    "  [{lang} {idx:>2}] WARN pipeline returned no text \
+                     ({e}); counting as 100 % error",
+                    idx = samples_counted + 1
+                );
+                wer_acc += 1.0;
+                cer_acc += 1.0;
+                samples_counted += 1;
+                continue;
+            }
+        };
         let hyp = &result.raw_text;
         // Live-ASR comparison: format-only differences between Whisper /
         // Parakeet / Paraformer output and the FLEURS gold transcript
@@ -331,8 +352,12 @@ async fn evaluate_language(
         samples_counted += 1;
 
         if dump_utterances {
+            // Whitespace-segmented languages (en, es) report WER as
+            // primary; logographic / non-segmented (ja, zh) report
+            // CER. Spanish matches the Canary model card convention
+            // (MLS WER 3.17 %, MCV WER 4.90 %).
             let primary = match lang {
-                "en" => format!("WER={:.4}", w),
+                "en" | "es" => format!("WER={:.4}", w),
                 _ => format!("CER={:.4}", c),
             };
             // Emit on stderr so stdout stays parseable for the
@@ -357,10 +382,13 @@ async fn evaluate_language(
     let asr_summary = asr_latency.summary().ok_or("no asr samples")?;
     let e2e_summary = e2e_latency.summary().ok_or("no e2e samples")?;
 
-    // For en we report WER, for ja/zh we report CER. Both are computed
-    // either way; only the "primary" metric is stored in the baseline.
+    // For en / es we report WER, for ja / zh we report CER. Both
+    // are computed either way; only the "primary" metric is stored
+    // in the baseline. Spanish is whitespace-segmented and the
+    // Canary model card publishes WER (MLS 3.17 %, MCV-16.1 4.90 %),
+    // so WER is the right axis to compare against.
     let (wer_field, cer_field) = match lang {
-        "en" => (Some(round4(mean_wer)), None),
+        "en" | "es" => (Some(round4(mean_wer)), None),
         _ => (None, Some(round4(mean_cer))),
     };
 
@@ -481,7 +509,7 @@ fn build_pipeline(
 
 fn print_language_result(lang: &str, r: &LanguageBaseline) {
     let primary = match lang {
-        "en" => format!("WER={:.4}", r.wer.unwrap_or(f64::NAN)),
+        "en" | "es" => format!("WER={:.4}", r.wer.unwrap_or(f64::NAN)),
         _ => format!("CER={:.4}", r.cer.unwrap_or(f64::NAN)),
     };
     let rtf_str = match r.rtf {
