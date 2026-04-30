@@ -7,3 +7,20 @@
 # and friends. F1 scores derived from a run remain factual data and
 # are committed under `docs/benchmarks/`.
 /data/cache/
+
+# Downloaded evaluation datasets — staged on demand by
+# `scripts/download_fleurs_subset.py` and friends. Audio + manifests
+# are reproducible per the upstream license, so the repo never ships
+# them.
+/data/fleurs_subset/
+/data/l3/
+
+# Downloaded ASR model weights — populated by
+# `scripts/setup_*.sh`. The weights belong to their upstream
+# distributors (NVIDIA, FunASR, etc.) under the licenses recorded
+# in those scripts; redistribution via the euhadra repo is
+# explicitly avoided.
+/models/canary-180m-flash-onnx/
+/models/parakeet-*/
+/models/paraformer-*/
+/vendor/

@@ -5,7 +5,7 @@
 //! bundle and exposes a single inference call:
 //!
 //! ```text
-//! [B=1, n_mels=80, T] f32 audio_signal
+//! [B=1, n_mels=128, T] f32 audio_signal
 //! [B=1] i64 length          ──▶  encoder_embeddings  [B=1, T_sub, D] f32
 //!                                encoder_mask        [B=1, T_sub]    i64
 //! ```
@@ -108,9 +108,10 @@ impl CanaryEncoder {
     }
 
     /// Run the encoder on `(mel, n_frames)` produced by
-    /// `frontend::MelFrontend::compute`. `n_mels` defaults to 80 for
-    /// Canary-180M-Flash but is taken as a parameter so a non-default
-    /// preprocessor doesn't quietly produce wrong-shaped tensors.
+    /// `frontend::MelFrontend::compute`. `n_mels` is 128 for
+    /// Canary-180M-Flash (config.json features_size=128) but is
+    /// taken as a parameter so a non-default preprocessor doesn't
+    /// quietly produce wrong-shaped tensors.
     pub fn encode(
         &self,
         mel_row_major: &[f32],
@@ -262,14 +263,15 @@ mod tests {
 
     #[test]
     fn pack_mel_canary_default_shape() {
-        // Canary's preprocessor produces 80 mels per frame. Pack a
-        // 1-second utterance (~98 frames after framing) and verify
-        // the encoder-input shape matches `audio_signal`.
+        // Canary-180M-Flash's preprocessor produces 128 mels per
+        // frame (config.json features_size=128). Pack a 1-second
+        // utterance (~98 frames after framing) and verify the
+        // encoder-input shape matches `audio_signal`.
         let n_frames = 98;
-        let n_mels = 80;
+        let n_mels = 128;
         let mel = vec![0.0_f32; n_frames * n_mels];
         let (packed, length) = pack_mel_for_encoder(&mel, n_mels, n_frames).unwrap();
-        assert_eq!(packed.dim(), (1, 80, 98));
+        assert_eq!(packed.dim(), (1, 128, 98));
         assert_eq!(length[0], 98);
     }
 
