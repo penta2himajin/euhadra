@@ -10,7 +10,7 @@
 //! n_fft           = 512
 //! win_length      = 400      # 25 ms
 //! hop_length      = 160      # 10 ms
-//! n_mels          = 80
+//! n_mels          = 128       # see config.json features_size
 //! preemph         = 0.97
 //! window          = hann
 //! mel scale       = Slaney  (librosa filters.mel htk=False)
@@ -49,14 +49,18 @@ pub struct MelOpts {
 
 impl MelOpts {
     /// Defaults that match `nvidia/canary-180m-flash` and the
-    /// `onnx-asr` numpy reference.
+    /// `onnx-asr` numpy reference. **128 mels** — the istupakov
+    /// `config.json` ships `features_size: 128`. The unrelated
+    /// `nemo80` preprocessor (used by Parakeet-TDT-0.6B-ja) is
+    /// not what Canary-180M-Flash expects; the encoder fails with
+    /// `Got: 80 Expected: 128` when an 80-mel buffer is fed in.
     pub fn canary_default() -> Self {
         Self {
             sample_rate: 16_000,
             n_fft: 512,
             win_length: 400,
             hop_length: 160,
-            n_mels: 80,
+            n_mels: 128,
             preemph: 0.97,
             log_zero_guard: 2.0_f32.powi(-24),
             low_freq: 0.0,
@@ -404,11 +408,12 @@ mod tests {
     fn frontend_output_shape_matches_n_mels_x_frames() {
         let fe = MelFrontend::new(MelOpts::canary_default());
         // 1 second of audio at 16 kHz → expect floor((16000 - 400) /
-        // 160) + 1 = 98 frames.
+        // 160) + 1 = 98 frames. Canary's preprocessor produces 128
+        // mels per frame.
         let samples = vec![0.0_f32; 16_000];
         let (feats, n_frames) = fe.compute(&samples);
         assert_eq!(n_frames, 98);
-        assert_eq!(feats.len(), n_frames * 80);
+        assert_eq!(feats.len(), n_frames * 128);
     }
 
     #[test]
@@ -447,8 +452,9 @@ mod tests {
         // approximately zero mean across time. With wideband input
         // the std-guard contribution is small, so the residual is
         // float-rounding only.
-        for m in 0..80 {
-            let sum: f32 = (0..n_frames).map(|f| feats[f * 80 + m]).sum();
+        let n_mels = fe.n_mels();
+        for m in 0..n_mels {
+            let sum: f32 = (0..n_frames).map(|f| feats[f * n_mels + m]).sum();
             let mean = sum / n_frames as f32;
             assert!(
                 mean.abs() < 1e-3,
@@ -466,7 +472,7 @@ mod tests {
         assert_eq!(o.n_fft, 512);
         assert_eq!(o.win_length, 400);
         assert_eq!(o.hop_length, 160);
-        assert_eq!(o.n_mels, 80);
+        assert_eq!(o.n_mels, 128);
         assert!(approx_eq(o.preemph, 0.97, 1e-9));
         assert!(approx_eq(o.log_zero_guard, 2.0_f32.powi(-24), 1e-30));
     }

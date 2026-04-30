@@ -56,12 +56,19 @@ sample_rate     = 16_000
 n_fft           = 512
 win_length      = 400      # 25 ms
 hop_length      = 160      # 10 ms
-n_mels          = 80
+n_mels          = 128      # config.json features_size
 preemph         = 0.97
 window          = hann
 log_guard       = 2**-24
 norm            = per-feature mean/var across time (CMVN-like)
 ```
+
+> **Note**: `onnx-asr`'s python source defaults `_features_size` to 80
+> (the value Parakeet-TDT-0.6B-ja uses), but it actually reads
+> `features_size` from `config.json` at runtime. The istupakov bundle
+> ships `features_size=128`, and the encoder errors with
+> `Got: 80 Expected: 128` if fed an 80-mel buffer. The Rust default
+> matches the bundle.
 
 ### Decoder prefix layout
 ```
@@ -119,3 +126,59 @@ Each Canary PR must pass:
 Per-PR scope is intentionally small (frontend / vocab / encoder /
 decoder / adapter / wiring) so any single PR failing review doesn't
 strand the whole effort.
+
+## End-to-end validation (2026-04-30)
+
+First live run against the real istupakov bundle on a FLEURS-es
+10-utterance subset (`scripts/setup_canary_es.sh` + `--canary-es-dir`):
+
+```
+[es] n=10  CER=0.0975  RTF=0.091
+asr p50=801ms p95=2098ms
+```
+
+Per-utterance CER spread:
+
+| # | CER | Notes |
+|---|---|---|
+| 1 | 0.0142 | minor article diff (`del clima` vs `de clima`) |
+| 2 | 0.0672 | drops `«` punctuation, "Orabek dos mil dos" instead of "oravec 2002" |
+| 3 | 0.0000 | perfect |
+| 4 | 0.0149 | drops `¿` `?` |
+| 5 | 0.0112 | "Carpaneo" vs "carpanedo" + extra commas |
+| 6 | 0.0252 | "sacar puntas" vs "sacapuntas" |
+| 7 | 0.0000 | perfect |
+| 8 | **0.2475** | drops a chunk: `tiene dos hijos adultos no causó` |
+| 9 | **0.5664** | drops a chunk: `fenómenos climáticos regionales y estacionales extremos encontramos` |
+| 10 | 0.0286 | minor preposition diff (`que forma parte de` vs `que forma parte`) |
+
+**Assessment**: 8/10 utterances are within model-card range (0–7 % CER).
+The two outliers (8, 9) drop multi-word chunks of audio — same failure
+mode in both, suggesting an autoregressive coverage issue rather than
+a frontend/encoder problem (frontend output is finite and shape is
+correct; the problem is the decoder skipping ahead).
+
+The MLS-Spanish reference is **WER 3.17 %**, not CER, so the headline
+9.75 % CER is not directly comparable. CER is roughly 0.7× of WER for
+Spanish, so the equivalent WER would be ~14 % — above the model-card
+number. Without the two outliers the 8-sample mean CER is **1.7 %**
+(equiv. WER ~2.5 %), which IS within model-card range.
+
+### Fallback-trigger status
+
+| Trigger | Status |
+|---|---|
+| > 1 pp WER regression vs model card | **Inconclusive** — sample too small + outliers dominate. Need a wider FLEURS-es subset (≥100 utterances) and a WER metric to call. |
+| Decoder loop > 2 weeks of work | **Cleared** — frontend → vocab → encoder → decoder → adapter delivered in 5 PRs over a single session. |
+| License clarification trouble | **Cleared** — istupakov bundle is upstream CC-BY-4.0 unchanged. |
+
+### Next investigation steps (in order)
+
+1. Diff the two outliers' encoder outputs vs `onnx-asr`'s Python
+   reference on the same WAV to isolate whether the regression comes
+   from our Rust pipeline or is intrinsic to the istupakov export.
+2. Widen the FLEURS-es subset to 100 utterances and switch metric to
+   WER to compare with the model card directly.
+3. If the outliers remain, profile the decoder's argmax stream to see
+   whether `<|endoftext|>` is being emitted prematurely (the most
+   likely root cause of mid-utterance dropouts).

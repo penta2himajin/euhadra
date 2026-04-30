@@ -31,6 +31,11 @@ LANGS = {
     "en": "en_us",
     "ja": "ja_jp",
     "zh": "cmn_hans_cn",
+    # FLEURS ships Latin-American Spanish (es_419) — that's the
+    # variety the eval baselines elsewhere in the project (Common
+    # Voice ES, MLS) draw from too. The es_es Iberian variant is
+    # NOT in FLEURS upstream.
+    "es": "es_419",
 }
 
 
