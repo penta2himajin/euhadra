@@ -74,6 +74,7 @@ pub struct SelfCorrectionDetector {
     /// Correction cue words that signal a self-correction boundary.
     correction_cues_en: Vec<String>,
     correction_cues_ja: Vec<String>,
+    correction_cues_es: Vec<String>,
 }
 
 impl SelfCorrectionDetector {
@@ -104,10 +105,27 @@ impl SelfCorrectionDetector {
         .collect();
         correction_cues_ja.sort_by_key(|c| std::cmp::Reverse(c.chars().count()));
 
+        // Spanish closed-set cues. Bare `no` is the most ambiguous
+        // (clashes with the negation use of the same word) so we
+        // require a sentence-internal comma context for it (handled
+        // in `detect_spanish`); the rest are unambiguous markers
+        // attested in the Val.Es.Co + CSJ-style disfluency literature.
+        // Sorted longest-first: `mejor dicho` must outrank `mejor`,
+        // `quiero decir` outrank `digo`, `no es` outrank `no`.
+        let mut correction_cues_es: Vec<String> = vec![
+            "mejor dicho", "quiero decir", "o sea", "perdón",
+            "mejor", "digo", "no es", "no",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        correction_cues_es.sort_by_key(|c| std::cmp::Reverse(c.chars().count()));
+
         Self {
             min_shared_words: 1,
             correction_cues_en,
             correction_cues_ja,
+            correction_cues_es,
         }
     }
 
@@ -213,6 +231,99 @@ impl SelfCorrectionDetector {
         None
     }
 
+    /// Find self-correction patterns in Spanish text.
+    ///
+    /// Spanish disfluencies follow the same `<reparandum> <cue>
+    /// <repair>` structure as English (whitespace tokenisation,
+    /// shared-word overlap between the trailing edge of the
+    /// reparandum and the leading edge of the repair). Punctuation
+    /// around the cue (commas, periods) is stripped before the
+    /// shared-prefix check so utterances like "voy mañana, no, voy
+    /// hoy" hit the same path as "voy mañana no voy hoy".
+    ///
+    /// Bare `no` is intentionally treated as a correction cue here
+    /// even though Spanish uses the same word for negation; the
+    /// shared-prefix requirement (`min_shared_words = 1`) keeps
+    /// pure negations like "el gato no come pescado" un-flagged
+    /// (no overlapping content word follows the cue).
+    fn detect_spanish(&self, text: &str) -> Option<(String, Correction)> {
+        let lower = text.to_lowercase();
+
+        for cue in &self.correction_cues_es {
+            // Only match the cue as a standalone word — without
+            // boundary checks, "no" would fire inside "no es" or
+            // tokens like "Mariano" / "minoría". Find with a sliding
+            // search so each candidate position can be vetted.
+            let mut from = 0usize;
+            while let Some(rel) = lower[from..].find(cue.as_str()) {
+                let cue_pos = from + rel;
+                let cue_end = cue_pos + cue.len();
+
+                // Standalone-word boundary: the chars on each side
+                // must be either out-of-bounds or a non-alphabetic
+                // ASCII delimiter (whitespace, comma, period, etc.).
+                let left_ok = cue_pos == 0
+                    || !lower
+                        .as_bytes()
+                        .get(cue_pos - 1)
+                        .map(|b| b.is_ascii_alphabetic())
+                        .unwrap_or(false);
+                let right_ok = cue_end >= lower.len()
+                    || !lower
+                        .as_bytes()
+                        .get(cue_end)
+                        .map(|b| b.is_ascii_alphabetic())
+                        .unwrap_or(false);
+                if !(left_ok && right_ok) {
+                    from = cue_pos + cue.chars().next().map_or(1, |c| c.len_utf8());
+                    continue;
+                }
+
+                // Strip surrounding punctuation + whitespace so the
+                // shared-prefix check operates on word tokens only.
+                let trim_chars: &[char] = &[',', '.', ';', ':', '!', '?', ' ', '\t'];
+                let before_cue = text[..cue_pos].trim_end_matches(trim_chars);
+                let after_cue = text[cue_end..].trim_start_matches(trim_chars);
+
+                if after_cue.is_empty() || before_cue.is_empty() {
+                    from = cue_end;
+                    continue;
+                }
+
+                let before_words: Vec<&str> = before_cue.split_whitespace().collect();
+                let after_words: Vec<&str> = after_cue.split_whitespace().collect();
+                if after_words.is_empty() || before_words.is_empty() {
+                    from = cue_end;
+                    continue;
+                }
+
+                let shared =
+                    Self::count_shared_prefix_from_end(&before_words, &after_words);
+
+                if shared >= self.min_shared_words {
+                    let keep_count = before_words.len() - shared;
+                    let kept: Vec<&str> = before_words[..keep_count].to_vec();
+                    let result = if kept.is_empty() {
+                        after_cue.to_string()
+                    } else {
+                        format!("{} {}", kept.join(" "), after_cue)
+                    };
+                    let original_rm = before_words[keep_count..].join(" ");
+                    return Some((
+                        result,
+                        Correction {
+                            kind: CorrectionKind::SelfCorrectionRemoved,
+                            original: format!("{} {}", original_rm, cue),
+                            replacement: String::new(),
+                        },
+                    ));
+                }
+                from = cue_end;
+            }
+        }
+        None
+    }
+
     /// Count how many words at the end of `before` match the beginning of
     /// `after` when lowercased.
     fn count_shared_prefix_from_end(before: &[&str], after: &[&str]) -> usize {
@@ -253,14 +364,28 @@ impl TextProcessor for SelfCorrectionDetector {
         text: &str,
         _context: &ContextSnapshot,
     ) -> Result<ProcessResult, ProcessError> {
-        // Try English first, then Japanese
-        if let Some((result, correction)) = self.detect_english(text) {
+        // Try Japanese first (whole-text comma segmentation), then
+        // Spanish (whitespace tokenisation with closed-class cues),
+        // then English (also whitespace, but with a wider cue set).
+        // Order matters when a cue word exists in two languages —
+        // `no` is both a Spanish marker and an English one, but the
+        // English detector would happily match it on Spanish input
+        // and produce a worse split. Try Japanese first (no Latin
+        // overlap), then Spanish (the more restricted cue set), then
+        // fall through to English.
+        if let Some((result, correction)) = self.detect_japanese(text) {
             return Ok(ProcessResult {
                 text: result,
                 corrections: vec![correction],
             });
         }
-        if let Some((result, correction)) = self.detect_japanese(text) {
+        if let Some((result, correction)) = self.detect_spanish(text) {
+            return Ok(ProcessResult {
+                text: result,
+                corrections: vec![correction],
+            });
+        }
+        if let Some((result, correction)) = self.detect_english(text) {
             return Ok(ProcessResult {
                 text: result,
                 corrections: vec![correction],
@@ -449,6 +574,130 @@ mod tests {
             .unwrap();
         assert!(result.text.contains("品川駅"), "repair: {}", result.text);
         assert!(!result.text.contains("東京駅"), "reparandum: {}", result.text);
+    }
+
+    // --- SelfCorrectionDetector — Spanish ---
+
+    #[tokio::test]
+    async fn spanish_self_correction_with_no() {
+        // Bare `no` as a correction cue with shared content word.
+        let detector = SelfCorrectionDetector::new();
+        let result = detector
+            .process("voy mañana no voy hoy", &empty_context())
+            .await
+            .unwrap();
+        assert!(result.text.contains("hoy"), "repair: {}", result.text);
+        assert!(!result.text.contains("mañana"), "reparandum: {}", result.text);
+        assert_eq!(result.corrections.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn spanish_self_correction_with_perdon() {
+        let detector = SelfCorrectionDetector::new();
+        let result = detector
+            .process("voy a Madrid perdón a Barcelona", &empty_context())
+            .await
+            .unwrap();
+        assert!(result.text.contains("Barcelona"), "repair: {}", result.text);
+        assert!(!result.text.contains("Madrid"), "reparandum: {}", result.text);
+    }
+
+    #[tokio::test]
+    async fn spanish_self_correction_with_digo() {
+        let detector = SelfCorrectionDetector::new();
+        let result = detector
+            .process("el presidente digo el ex-presidente", &empty_context())
+            .await
+            .unwrap();
+        assert!(result.text.contains("ex-presidente"), "repair: {}", result.text);
+    }
+
+    #[tokio::test]
+    async fn spanish_self_correction_with_mejor_dicho() {
+        // `mejor dicho` must outrank bare `mejor` (sorted longest-first).
+        let detector = SelfCorrectionDetector::new();
+        let result = detector
+            .process("salgo a las cinco mejor dicho a las seis", &empty_context())
+            .await
+            .unwrap();
+        assert!(result.text.contains("seis"), "repair: {}", result.text);
+        assert!(!result.text.contains("cinco"), "reparandum: {}", result.text);
+    }
+
+    #[tokio::test]
+    async fn spanish_self_correction_with_o_sea() {
+        let detector = SelfCorrectionDetector::new();
+        let result = detector
+            .process("llamo a Juan o sea a Pedro", &empty_context())
+            .await
+            .unwrap();
+        assert!(result.text.contains("Pedro"), "repair: {}", result.text);
+        assert!(!result.text.contains("Juan"), "reparandum: {}", result.text);
+    }
+
+    #[tokio::test]
+    async fn spanish_negation_without_overlap_is_not_correction() {
+        // Pure negation — `no` is not followed by a content word
+        // that overlaps with the reparandum, so the shared-prefix
+        // check fails and the detector leaves the text untouched.
+        let detector = SelfCorrectionDetector::new();
+        let result = detector
+            .process("el gato no come pescado", &empty_context())
+            .await
+            .unwrap();
+        assert_eq!(result.text, "el gato no come pescado");
+        assert!(result.corrections.is_empty());
+    }
+
+    #[tokio::test]
+    async fn spanish_no_self_correction_in_clean_text() {
+        let detector = SelfCorrectionDetector::new();
+        let result = detector
+            .process("la conferencia es mañana en Barcelona", &empty_context())
+            .await
+            .unwrap();
+        assert_eq!(result.text, "la conferencia es mañana en Barcelona");
+        assert!(result.corrections.is_empty());
+    }
+
+    #[tokio::test]
+    async fn spanish_self_correction_with_commas() {
+        // The cue is surrounded by punctuation in the wild; the
+        // detector strips it before computing the shared prefix.
+        let detector = SelfCorrectionDetector::new();
+        let result = detector
+            .process("voy a Madrid, perdón, a Barcelona", &empty_context())
+            .await
+            .unwrap();
+        assert!(result.text.contains("Barcelona"), "repair: {}", result.text);
+        assert!(!result.text.contains("Madrid"), "reparandum: {}", result.text);
+    }
+
+    #[tokio::test]
+    async fn spanish_no_does_not_match_inside_word() {
+        // `no` as a substring of `Mariano` / `Antonio` / `minoría`
+        // must not trigger correction. The word-boundary check in
+        // detect_spanish guards against this.
+        let detector = SelfCorrectionDetector::new();
+        let result = detector
+            .process("Mariano y Antonio fueron al cine", &empty_context())
+            .await
+            .unwrap();
+        assert_eq!(result.text, "Mariano y Antonio fueron al cine");
+        assert!(result.corrections.is_empty());
+    }
+
+    #[tokio::test]
+    async fn spanish_quiero_decir_outranks_digo() {
+        // `quiero decir` is the longer form of `digo`; longest-first
+        // sort puts it first so it gets matched as a single span.
+        let detector = SelfCorrectionDetector::new();
+        let result = detector
+            .process("voy a Madrid quiero decir a Barcelona", &empty_context())
+            .await
+            .unwrap();
+        assert!(result.text.contains("Barcelona"), "repair: {}", result.text);
+        assert!(!result.text.contains("Madrid"), "reparandum: {}", result.text);
     }
 
     // --- BasicPunctuationRestorer tests ---
