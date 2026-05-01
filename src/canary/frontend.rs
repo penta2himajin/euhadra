@@ -96,7 +96,13 @@ struct MelFilter {
 
 impl MelFrontend {
     pub fn new(opts: MelOpts) -> Self {
-        let window = hann_window(opts.win_length);
+        // The window we apply is `n_fft` long (= 512 for Canary)
+        // even though the *non-zero* support is only `win_length`
+        // (= 400). Match onnx-asr's `np.pad(np.hanning(win_length),
+        // ((n_fft - win_length) / 2, (n_fft - win_length) / 2))`:
+        // a Hann window of length `win_length` centred inside an
+        // `n_fft`-long zero-padded buffer.
+        let window = centred_hann_window(opts.win_length, opts.n_fft);
         let mel_filters = build_slaney_mel_filters(
             opts.sample_rate as f32,
             opts.n_fft,
@@ -121,57 +127,81 @@ impl MelFrontend {
     /// Compute log-mel features and apply per-feature mean/variance
     /// normalisation across time. Returns the `[num_frames, n_mels]`
     /// row-major buffer plus the frame count.
+    ///
+    /// Bit-aligned with `onnx_asr.preprocessors.numpy_preprocessor.NemoPreprocessorNumpy`:
+    ///
+    /// 1. Whole-utterance pre-emphasis (`y[t] = x[t] - 0.97 * x[t-1]`,
+    ///    `y[0] = x[0]`).
+    /// 2. Pad with `n_fft / 2` zeros each side before framing.
+    /// 3. Sliding-window of size `n_fft` (= 512) with stride `hop`,
+    ///    yielding `floor(N / hop) + 1` frames where `N` is the
+    ///    original length.
+    /// 4. Multiply each frame by a `n_fft`-length window: a Hann
+    ///    window of `win_length` (= 400) centred via
+    ///    `(n_fft - win_length) / 2` zeros each side.
+    /// 5. FFT (`n_fft = 512`) → power spectrum (mag squared).
+    /// 6. Mel filterbank (Slaney mel + Slaney norm, 128 bins).
+    /// 7. `log(mel + 2**-24)`.
+    /// 8. Per-feature CMVN with **N-1 Bessel correction** in the
+    ///    variance: `(x - mean) / (std + 1e-5)`.
     pub fn compute(&self, samples: &[f32]) -> (Vec<f32>, usize) {
-        let frame_len = self.opts.win_length;
+        let n_fft = self.opts.n_fft;
         let hop = self.opts.hop_length;
         let n_mels = self.opts.n_mels;
 
-        if samples.len() < frame_len {
+        // Pad enough for at least one centred frame, otherwise no
+        // frames fit and the encoder errors out. Mirrors the upstream
+        // `if samples.len() < frame_len { return (empty) }` guard but
+        // accounting for the new pad-then-frame strategy where the
+        // minimum input is 1 sample (which still produces 1 frame).
+        if samples.is_empty() {
             return (Vec::new(), 0);
         }
 
-        // snip_edges-style framing: number of frames that fully fit
-        // in the input. Onnx-asr's numpy preprocessor does the same
-        // (no padding before / after).
-        let num_frames = (samples.len() - frame_len) / hop + 1;
-        let mut features = vec![0.0_f32; num_frames * n_mels];
+        // Step 1: whole-utterance pre-emphasis.
+        let coeff = self.opts.preemph;
+        let pre: Vec<f32> = if coeff == 0.0 {
+            samples.to_vec()
+        } else {
+            let mut out = Vec::with_capacity(samples.len());
+            out.push(samples[0]); // y[0] = x[0] (no scaling)
+            for t in 1..samples.len() {
+                out.push(samples[t] - coeff * samples[t - 1]);
+            }
+            out
+        };
 
-        let mut buf = vec![rustfft::num_complex::Complex32::new(0.0, 0.0); self.opts.n_fft];
-        let mut frame = vec![0.0_f32; frame_len];
+        // Step 2: pad with n_fft/2 zeros each side.
+        let pad = n_fft / 2;
+        let total = pre.len() + 2 * pad;
+        let mut padded = vec![0.0_f32; total];
+        padded[pad..pad + pre.len()].copy_from_slice(&pre);
+
+        // Step 3: framing. Sliding window of length n_fft with stride
+        // hop, starting at index 0 of the padded buffer. Number of
+        // valid windows = max(0, total - n_fft + 1); after stride =
+        // ceil(valid / hop) (numpy's [::hop] picks the 0-th, hop-th,
+        // 2*hop-th, ... within `valid` positions). For Canary this
+        // simplifies to floor(samples.len() / hop) + 1 because
+        // `total - n_fft = samples.len()`.
+        if total < n_fft {
+            return (Vec::new(), 0);
+        }
+        let valid_starts = total - n_fft + 1;
+        let num_frames = valid_starts.div_ceil(hop);
+        let mut features = vec![0.0_f32; num_frames * n_mels];
+        let mut buf = vec![rustfft::num_complex::Complex32::new(0.0, 0.0); n_fft];
+
+        let n_bins = n_fft / 2 + 1;
 
         for f in 0..num_frames {
             let start = f * hop;
-            frame.copy_from_slice(&samples[start..start + frame_len]);
-
-            // Pre-emphasis: y[t] = x[t] - coeff * x[t-1].
-            // The numpy reference sets the boundary as
-            // y[0] = x[0] (no scaling), unlike Kaldi's
-            // y[0] = (1-coeff)*x[0]. Match it here: walk backwards
-            // and leave frame[0] alone.
-            let coeff = self.opts.preemph;
-            if coeff != 0.0 {
-                for n in (1..frame_len).rev() {
-                    frame[n] -= coeff * frame[n - 1];
-                }
-            }
-
-            // Hann window
-            for (s, w) in frame.iter_mut().zip(self.window.iter()) {
-                *s *= *w;
-            }
-
-            // Pack into FFT buffer (zero-pad to n_fft).
-            for (i, c) in buf.iter_mut().enumerate() {
-                *c = if i < frame_len {
-                    rustfft::num_complex::Complex32::new(frame[i], 0.0)
-                } else {
-                    rustfft::num_complex::Complex32::new(0.0, 0.0)
-                };
+            // Pack into FFT buffer with the centred Hann window.
+            for i in 0..n_fft {
+                let s = padded[start + i];
+                buf[i] = rustfft::num_complex::Complex32::new(s * self.window[i], 0.0);
             }
             self.fft.process(&mut buf);
-
-            // Power spectrum (first n_fft/2+1 bins).
-            let n_bins = self.opts.n_fft / 2 + 1;
 
             // Apply mel filters; log with zero-guard.
             for (m, filt) in self.mel_filters.iter().enumerate() {
@@ -187,10 +217,28 @@ impl MelFrontend {
             }
         }
 
-        // Per-feature CMVN: subtract the across-time mean and divide
-        // by the across-time standard deviation, computed independently
-        // per mel bin. Matches `onnx-asr`'s
-        // `(features - mean) / (std + 1e-5)`.
+        // Truncate to the **valid** frame count = floor(N / hop). The
+        // pad-then-frame strategy can emit an extra trailing frame
+        // whose contents are dominated by the right-pad zeros;
+        // onnx-asr masks that frame to zero before the encoder sees
+        // it (`features_lens = waveforms_lens // hop_length`).
+        // Truncating + passing `valid_frames` to the encoder is
+        // numerically equivalent and avoids letting an off-distribution
+        // feature row leak into the encoder's effective input.
+        let valid_frames = samples.len() / hop;
+        let valid_frames = valid_frames.min(num_frames);
+        features.truncate(valid_frames * n_mels);
+        let num_frames = valid_frames;
+
+        // Step 8: Per-feature CMVN with N-1 (Bessel) correction.
+        // Matches onnx-asr's `var = sum(...) / (features_lens - 1)`.
+        if num_frames < 2 {
+            // Bessel correction requires N >= 2. With one frame we
+            // can't compute a variance; leave the features alone
+            // (encoder will see a single un-normalised frame, which
+            // is still finite).
+            return (features, num_frames);
+        }
         for m in 0..n_mels {
             let mut sum = 0.0_f32;
             for f in 0..num_frames {
@@ -203,7 +251,9 @@ impl MelFrontend {
                 let d = features[f * n_mels + m] - mean;
                 sq += d * d;
             }
-            let std = (sq / num_frames as f32).sqrt();
+            // Bessel correction: divide by N-1 to match onnx-asr's
+            // `var = sum(...) / (features_lens - 1)`.
+            let std = (sq / (num_frames - 1) as f32).sqrt();
             let denom = std + 1e-5;
 
             for f in 0..num_frames {
@@ -213,6 +263,20 @@ impl MelFrontend {
 
         (features, num_frames)
     }
+}
+
+/// `np.pad(np.hanning(win_length), ((n_fft-win_length)/2, ...))`
+/// — a Hann window of length `win_length` zero-centred inside an
+/// `n_fft`-long buffer. Used to pre-window FFT frames in the
+/// Canary frontend.
+fn centred_hann_window(win_length: usize, n_fft: usize) -> Vec<f32> {
+    assert!(win_length <= n_fft);
+    let pad_total = n_fft - win_length;
+    let left = pad_total / 2;
+    let core = hann_window(win_length);
+    let mut out = vec![0.0_f32; n_fft];
+    out[left..left + win_length].copy_from_slice(&core);
+    out
 }
 
 fn hann_window(n: usize) -> Vec<f32> {
@@ -396,10 +460,9 @@ mod tests {
     }
 
     #[test]
-    fn frontend_short_input_returns_empty() {
+    fn frontend_empty_input_returns_empty() {
         let fe = MelFrontend::new(MelOpts::canary_default());
-        // Less than win_length (400) → no frames possible.
-        let (feats, n_frames) = fe.compute(&vec![0.0; 100]);
+        let (feats, n_frames) = fe.compute(&[]);
         assert!(feats.is_empty());
         assert_eq!(n_frames, 0);
     }
@@ -407,12 +470,14 @@ mod tests {
     #[test]
     fn frontend_output_shape_matches_n_mels_x_frames() {
         let fe = MelFrontend::new(MelOpts::canary_default());
-        // 1 second of audio at 16 kHz → expect floor((16000 - 400) /
-        // 160) + 1 = 98 frames. Canary's preprocessor produces 128
-        // mels per frame.
+        // 1 second of audio at 16 kHz → after the pad-then-frame
+        // strategy + the trailing-frame truncation that mirrors
+        // onnx-asr's `features_lens = waveforms_lens // hop_length`,
+        // we get 16000 / 160 = 100 valid frames. Canary's
+        // preprocessor produces 128 mels per frame.
         let samples = vec![0.0_f32; 16_000];
         let (feats, n_frames) = fe.compute(&samples);
-        assert_eq!(n_frames, 98);
+        assert_eq!(n_frames, 100);
         assert_eq!(feats.len(), n_frames * 128);
     }
 

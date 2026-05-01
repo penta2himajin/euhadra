@@ -78,23 +78,25 @@ pub const PREFIX_LEN: usize = 10;
 pub const DEFAULT_MAX_SEQUENCE_LENGTH: usize = 1024;
 
 /// Default greedy-decode repetition penalty. `1.0` is a no-op; values
-/// above 1 down-weight already-emitted tokens. The HuggingFace
-/// transformers / NeMo defaults sit in 1.1–1.3; we pick **1.8** based
-/// on the FLEURS-es 100-utt sweep recorded in
-/// `docs/canary-integration.md` "End-to-end validation v3":
+/// above 1 down-weight already-emitted tokens. We pick **2.0** based
+/// on the FLEURS-es 100-utt sweep on the v6-aligned frontend
+/// (recorded in `docs/canary-integration.md` "End-to-end validation
+/// v6"):
 ///
 /// | penalty | WER | hard fails | repetition loops |
 /// |---|---|---|---|
-/// | 1.0 (off) | 35.37 % | 1 | 2 |
-/// | 1.2 | 23.03 % | 1 | 1 |
-/// | 1.5 | 14.63 % | 1 | 0 |
-/// | **1.8** | **14.38 %** | 1 | 0 |
-/// | 2.0 | 18.90 % | 1 | 1 (over-penalty resurfaces a loop) |
+/// | 1.0 (off) | 34.50 % | 1 | (≥1) |
+/// | 1.2 | 34.17 % | 1 | 2 |
+/// | 1.5 | 26.37 % | 1 | 1 |
+/// | 1.8 | 26.43 % | 1 | 1 |
+/// | **2.0** | **14.12 %** | 1 | 0 |
 ///
-/// 1.5–1.8 hit the sweet spot; 1.8 narrowly wins on mean WER without
-/// regressing the 41 / 100 clean utterances that already sit at
-/// WER < 5 %. Set to `1.0` to disable.
-pub const DEFAULT_REPETITION_PENALTY: f32 = 1.8;
+/// The sweet spot moved up from 1.8 (v3-v5, pre-alignment frontend)
+/// to 2.0 here because the v6 frontend that bit-aligns with onnx-asr
+/// produces sharper logits, so a stronger penalty is needed to push
+/// repeat tokens below the most-likely non-repeat. Set to `1.0` to
+/// disable.
+pub const DEFAULT_REPETITION_PENALTY: f32 = 2.0;
 
 /// Default minimum output-token-to-encoder-frame ratio. Greedy
 /// decoding for Canary-180M-Flash sometimes emits `<|endoftext|>`
@@ -1077,7 +1079,7 @@ mod tests {
     fn decode_options_default_repetition_penalty() {
         let o = DecodeOptions::for_asr("es");
         assert_eq!(o.repetition_penalty, DEFAULT_REPETITION_PENALTY);
-        assert_eq!(o.repetition_penalty, 1.8);
+        assert_eq!(o.repetition_penalty, 2.0);
     }
 
     // --- suppress_eos_until_min_length ---

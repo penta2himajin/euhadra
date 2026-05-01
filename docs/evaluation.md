@@ -194,9 +194,10 @@ L1 で es を評価する際の ASR は **NVIDIA Canary-180M-Flash via [`istupak
 | FLEURS-es 100 utt | INT8 | 1.0 (off) | ~40 % (σ≈27 %) | — | 0.060 | v2 INT8、3 回で 34.5 / 36.4 / 94.4 % の非決定性 |
 | FLEURS-es 100 utt | FP32 | 1.8 | 14.38 % | 8.33 % | 0.165 | v3 repetition penalty 適用、loop 完全消滅 |
 | FLEURS-es 100 utt | FP32 | 1.8 + min-len 0.2 | 13.63 % | 8.45 % | 0.117 | v4 min-length gate 追加、hard fail 完全消滅 |
-| **FLEURS-es 100 utt (primary)** | **FP32** | **1.8 + min-len 0.2 + eos-margin 2.0** | **13.21 %** | **8.17 %** | 0.101 | **v5 EOS-confidence margin 追加、clean +1** |
+| FLEURS-es 100 utt | FP32 | 1.8 + min-len 0.2 + eos-margin 2.0 | 13.21 % | 8.17 % | 0.101 | v5 EOS-confidence margin 追加、clean +1 |
+| **FLEURS-es 100 utt (primary)** | **FP32** | **2.0 + min-len 0.2 + eos-margin 2.0** | **12.89 %** | **8.45 %** | 0.171 | **v6 frontend を Python `onnx-asr` に bit-align、ペナルティ 1.8→2.0 に再調整、clean +2** |
 
-公式 model card 値は **MLS Spanish WER 3.17 %** / **MCV-16.1 ES WER 4.90 %** (FLEURS-es は 180M モデルでは未公開、Canary-1B-v2 で 2.90 %)。v2 → v5 で **mean WER 35.37 % → 13.21 % (Δ = -22.2 pp)** に改善、catastrophic failure mode (repetition loop + hard fail) は完全消滅、greedy decoder gates は diminishing returns に到達。残る ~10 pp gap は beam search または別アーキテクチャ等のより大きな改修が要る。詳細は `docs/canary-integration.md` の "v5 — EOS-confidence margin" 節と "Next investigation steps"。
+公式 model card 値は **MLS Spanish WER 3.17 %** / **MCV-16.1 ES WER 4.90 %** (FLEURS-es は 180M モデルでは未公開、Canary-1B-v2 で 2.90 %)。v2 → v6 で **mean WER 35.37 % → 12.89 % (Δ = -22.5 pp)** に改善、catastrophic failure mode (repetition loop + hard fail) は完全消滅。v6 で Python `onnx-asr` の `NumpyPreprocessor` と bit-level に揃え (encoder embeddings の max_rel: 13.7% → 3.5e-6)、これにより上流 reference 実装と同等性が証明された。残る ~10 pp gap は greedy decoding 由来 (Python 公式実装でも同じ loop / dropout が出る) で、beam search 等の大改修が要る。詳細は `docs/canary-integration.md` の "v6 — Python-aligned frontend + retune" 節と "Next investigation steps"。
 
 ---
 
