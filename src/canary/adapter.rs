@@ -66,6 +66,8 @@ pub struct CanaryConfig {
     /// Length penalty α used when `beam_size > 1`. See
     /// `decoder::DEFAULT_LENGTH_PENALTY`.
     pub length_penalty: f32,
+    /// Decoder prefix layout. See `decoder::PrefixFormat`.
+    pub prefix_format: super::decoder::PrefixFormat,
 }
 
 impl CanaryConfig {
@@ -83,6 +85,7 @@ impl CanaryConfig {
             eos_confidence_margin: super::decoder::DEFAULT_EOS_CONFIDENCE_MARGIN,
             beam_size: super::decoder::DEFAULT_BEAM_SIZE,
             length_penalty: super::decoder::DEFAULT_LENGTH_PENALTY,
+            prefix_format: super::decoder::DEFAULT_PREFIX_FORMAT,
         }
     }
 
@@ -208,6 +211,7 @@ impl CanaryAdapter {
             eos_confidence_margin: self.cfg.eos_confidence_margin,
             beam_size: self.cfg.beam_size,
             length_penalty: self.cfg.length_penalty,
+            prefix_format: self.cfg.prefix_format,
         };
         let decoded = self.decoder.decode(&enc.embeddings, &enc.mask, &self.vocab, &opts)?;
 

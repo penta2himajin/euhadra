@@ -71,10 +71,38 @@ norm            = per-feature mean/var across time (CMVN-like)
 > matches the bundle.
 
 ### Decoder prefix layout
-```
-[<sot>, <ctx_lang>, <transcribe>, <pnc>, <lang>, ...]
-                                          ^slot 4 = source language
-```
+
+Two layouts are supported via `PrefixFormat` in
+`src/canary/decoder.rs`:
+
+1. **`OnnxAsr` (10 tokens — default)** — the layout hardcoded by
+   `istupakov/onnx-asr`'s Python reference, including a leading `▁`
+   (last-occurrence of U+2581) before `<|startofcontext|>`:
+   ```
+   [▁, <|soc|>, <|sot|>, <|emo:undefined|>, <|src|>, <|tgt|>,
+    <|pnc|>, <|noitn|>, <|notimestamp|>, <|nodiarize|>]
+   ```
+   Slot 4 = source language. This is what we ship through PR #28-#36
+   and is bit-aligned with the Python reference (see v6).
+
+2. **`NemoCanary2` (9 tokens — official paper layout)** — what NVIDIA's
+   `Canary2PromptFormatter` (NeMo
+   [`nemo/collections/common/prompts/canary2.py`](https://github.com/NVIDIA/NeMo/blob/main/nemo/collections/common/prompts/canary2.py))
+   actually produces when `decodercontext = ""`:
+   ```
+   [<|soc|>, <|sot|>, <|emo:undefined|>, <|src|>, <|tgt|>,
+    <|pnc|>, <|noitn|>, <|notimestamp|>, <|nodiarize|>]
+   ```
+   The official template is
+   `{CANARY2_BOCTX}|decodercontext|{CANARY_BOS}|emotion||source_lang||target_lang||pnc||itn||timestamp||diarize|`,
+   which renders to the 9 tokens above for ASR without a context
+   prompt. The Canary-1B-v2 paper (arXiv 2509.14128) describes the
+   same prompt structure; this enum codifies it.
+
+The two layouts differ by a single leading `▁`. Whether that
+makes a measurable difference at inference time is an empirical
+question — see the v8 follow-up below.
+
 Greedy decode with KV cache (`decoder_mems` shape `(layers, batch, T, hidden)`).
 
 ## Fallback triggers — when to abandon this plan
@@ -554,3 +582,40 @@ not warranted at this time.
    available proxy: it confirms the istupakov export's bare
    greedy floor IS ~34 %, not the card's 2.9 %, which means most
    of the gap is the inference path, not the model.
+
+### v8 — paper / NeMo prompt alignment (infrastructure only)
+
+Following the user request "Canaryを論文の実装を確認してそれを参照した形に
+修正して欲しい" we audited the prefix layout against:
+
+- The Canary-1B-v2 paper (arXiv 2509.14128, Sec. 3 "Prompt format").
+- NVIDIA's official NeMo
+  [`Canary2PromptFormatter`](https://github.com/NVIDIA/NeMo/blob/main/nemo/collections/common/prompts/canary2.py)
+  source — the canonical reference implementation.
+
+The official template renders to **9** tokens for ASR with empty
+`decodercontext`, whereas `istupakov/onnx-asr`'s Python reference
+hardcodes **10** tokens (extra leading `▁`). We've shipped the
+`OnnxAsr` layout since PR #28 because it bit-matches the Python
+reference (see v6 frontend alignment), but it is *not* the layout
+in the paper.
+
+This PR adds the `PrefixFormat` enum exposing both layouts and a
+`prefix_format` field on `CanaryConfig` / `DecodeOptions`. The
+default is unchanged (`OnnxAsr`) pending an empirical sweep on the
+FLEURS-es 100-utt FP32 smoke. The enum makes the choice
+explicit and lets callers opt in to the paper layout today; a
+follow-up PR will run the sweep and either:
+
+- promote `NemoCanary2` to `DEFAULT_PREFIX_FORMAT` if it improves
+  WER (and update tests/docs), or
+- keep `OnnxAsr` as default but document equivalence (the model
+  was demonstrably tolerant of both layouts at training time
+  given that the Python `onnx-asr` floor with the 10-token layout
+  reproduces the 34.43 % WER we measured; switching layouts would
+  need to *help*, not just match, to be worth the default change).
+
+No measurement is bundled with this PR — only the infrastructure
+to make the comparison runnable. This keeps the change easy to
+review and avoids conflating "support the paper's prompt" with
+"change inference behaviour by default".
