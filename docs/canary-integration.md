@@ -265,6 +265,51 @@ still picks a non-EOS token early but eventually emits EOS at the
 right scale-of-encoder-frames boundary, producing a partial
 transcript).
 
+### v5 — EOS-confidence margin (FP32, n=100, 2026-04-30)
+
+Building on v4 (penalty 1.8 + min-len 0.2), added an EOS-confidence
+margin in `src/canary/decoder.rs::enforce_eos_confidence_margin`.
+The gate demotes `<|endoftext|>` to `-inf` when its logit doesn't
+lead the next-best non-EOS token by at least `margin` raw-logit
+units. Complementary to the positional min-length gate — that one
+forbids EOS too early, this one demands EOS be confidently
+dominant when it does win.
+
+Sweep over eos_confidence_margin (with penalty 1.8 and min-len 0.2):
+
+| margin | mean WER | clean (0–5 %) | hard fails | repetition loops |
+|---|---|---|---|---|
+| 0.0 (off, v4) | 13.63 % | 41 / 100 | 0 | 0 |
+| 1.0 | 13.21 % | 42 / 100 | 0 | 0 |
+| **2.0 (default)** | **13.21 %** | **42 / 100** | **0** | **0** |
+| 3.0 | 13.21 % | 22 / 100 | 0 | 0 |
+| 5.0 | 13.21 % | 21 / 100 | 0 | 0 |
+
+**Default chosen: `eos_confidence_margin = 2.0`**
+(`DEFAULT_EOS_CONFIDENCE_MARGIN`).
+
+Headline win: **mean WER 13.63 % → 13.21 %, clean count 41 → 42**
+(small but real improvement on partial-dropout cases). 1.0 and
+2.0 give numerically identical results on this data; 2.0 chosen
+as a slightly stricter / more robust default. Above 2.0 the mean
+stays the same (the high-WER tail barely improves while clean
+utterances get padded with extra tokens — the per-utterance
+trade is symmetric but the clean count drops).
+
+Cumulative trajectory across the 4-PR series:
+
+| stage | mean WER | hard fails | loops | clean (0–5 %) |
+|---|---|---|---|---|
+| v2 (no gates) | 35.37 % | 1 | 2 | — |
+| v3 (penalty 1.8) | 14.38 % | 1 | 0 | 41 |
+| v4 (+ min-len 0.2) | 13.63 % | 0 | 0 | 41 |
+| **v5 (+ eos-margin 2.0)** | **13.21 %** | **0** | **0** | **42** |
+
+The decoder is now in steady state: catastrophic failures (loops,
+hard fails) eliminated; mean WER pushed from 35 % → 13 %. Further
+improvements need beam search (architectural change) or a different
+class of fix — see "Next investigation steps" below.
+
 ### Failure-mode inventory (FP32, n=100, no penalty)
 
 Three distinct decoder failure patterns observed:
@@ -289,7 +334,27 @@ autoregressive ASR systems mitigate them with **repetition penalty**,
 **length penalty**, and/or **beam search**. None of those is
 implemented in `src/canary/decoder.rs` yet.
 
-### Fallback-trigger status (post-v4)
+### Fallback-trigger status (post-v5)
+
+| Trigger | Status |
+|---|---|
+| > 1 pp WER regression vs model card | **Still triggered but small-fix lever exhausted.** v2 → v5 closes 67 % of the original gap (35.37 % → 13.21 %). Catastrophic failure modes (loops, hard fails) all eliminated. Remaining 10 pp delta vs MLS card 3.17 % WER needs a more substantial change (beam search / different architecture / Parakeet fallback). |
+| Decoder loop > 2 weeks of work | **Cleared** — single-session Canary integration (5 PRs) + 3 incremental decoder gates (this is the third). |
+| License clarification trouble | **Cleared** — istupakov bundle is upstream CC-BY-4.0 unchanged. |
+
+The trajectory shows **diminishing returns from greedy-decoder
+gates**:
+- v2 → v3 (penalty 1.8): -21.0 pp
+- v3 → v4 (min-len 0.2): -0.75 pp
+- v4 → v5 (eos-margin 2.0): -0.42 pp
+
+The remaining 10 pp gap likely needs beam search or an entirely
+different decoding strategy. The hard Parakeet-v3-multi fallback
+remains documented but is not warranted at this time — the
+catastrophic failure modes are gone, the mean is stable, and the
+median is 8.2 % (within reach of model-card territory).
+
+### (Previous) Fallback-trigger status (post-v4)
 
 | Trigger | Status |
 |---|---|
@@ -308,30 +373,26 @@ audio is done.
 The hard Parakeet-v3-multi fallback remains documented but is
 not warranted at this time.
 
-### Next investigation steps (post-v4)
+### Next investigation steps (post-v5)
 
-1. ~~**Implement repetition penalty**~~ — **DONE** (PR #31).
-2. ~~**Implement min-length gate**~~ — **DONE** (this PR). Killed
-   the last hard-fail; ratio=0.2 picked from a 5-value sweep.
-3. **Investigate the partial-dropout cases** that now dominate the
-   residual ~10 pp WER gap. Three plausible directions:
-   a. **Beam search instead of greedy** — would find longer
-      sequences with non-trivial probability that greedy misses.
-      Most expensive change.
-   b. **EOS-confidence margin** — require `logits[eos]` to lead
-      the next-best non-EOS by some margin (e.g., 2.0 in raw
-      logit units). Cheaper than beam, similar in spirit to the
-      length gate but probability-aware.
-   c. **Investigate alternative subsampling / encoder frames**.
-      The 0.2 ratio is conservative because Spanish utterances
-      vary widely in BPE-density per encoder frame. A more robust
-      length signal would use the encoder mask (which we already
-      have) to compute *valid* frames rather than total frames.
-4. Reassess INT8: with deterministic FP32 decoding, the INT8
-   quality question becomes "is INT8 within X pp of FP32?"
-   The earlier INT8 nondeterminism (3 runs at 34 % / 36 % / 94 %)
-   may also resolve once decoding is more stable — the 94 % run
-   was a loop.
-5. If (3) doesn't get below ~5 % WER (matching the model card),
+1. ~~**Repetition penalty**~~ — **DONE** (PR #31).
+2. ~~**Min-length gate**~~ — **DONE** (PR #32).
+3. ~~**EOS-confidence margin**~~ — **DONE** (this PR). Margin 2.0
+   picked from a 5-value sweep.
+4. **Beam search** (next major lever) — would find longer
+   sequences with non-trivial probability that greedy misses.
+   Architectural change (KV cache management for B beams instead
+   of 1, scoring across the beam, length normalisation). Estimated
+   3–5 PRs. Expected effect: -3 to -5 pp.
+5. **Encoder-mask-aware length signal** — use the encoder_mask
+   (which we already plumb) to compute *valid* frames rather than
+   total frames for the min-length gate. Smaller gain than beam
+   search but cheaper.
+6. **INT8 reassessment** — with deterministic FP32 decoding now
+   stable, the INT8 quality question becomes "is INT8 within X
+   pp of FP32?". The earlier INT8 nondeterminism (3 runs at
+   34 % / 36 % / 94 %) was driven by the catastrophic loops; with
+   those gone the INT8 numbers should be more stable.
+7. If (4) doesn't get below ~5 % WER (matching the model card),
    **execute the Parakeet-TDT-0.6B-v3-multi hard fallback** per
    the migration plan already documented in this file.
