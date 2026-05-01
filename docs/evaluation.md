@@ -967,7 +967,7 @@ cargo eval-l3 -- --task ablation --lang ja \
 |---|---|---|
 | **ja self-correction** (35 発話) | `tests/evaluation/annotations/ja_self_correction.jsonl` | **✓ Claude 下書き済、人手レビュー待ち** |
 | zh self-correction | — | 未実装 (§5.6 で ¥100–200k 見積) |
-| es self-correction | — | 未実装 (§5.6 で ¥100–200k 見積、cue 集合は `no, perdón, digo, mejor, no es, mejor dicho, o sea`) |
+| **es self-correction** (rule-based detector) | — | **✓ 実装済 (PR #35)** — `SelfCorrectionDetector::detect_spanish` が cue 集合 `no, perdón, digo, mejor dicho, o sea, no es, quiero decir` で動作。`src/processor.rs` に 10 unit test、`tests/pipeline_e2e.rs::spanish_full_pipeline_no_llm` に E2E test (filter + detector + punctuation 連鎖)。F1 ベンチマーク用アノテはまだ未着手 (§5.6 で ¥100–200k 見積)。 |
 
 ja annotation のスキーマと判定ルールは `tests/evaluation/annotations/guidelines.md` を参照。
 PR レビューで以下を確認:
