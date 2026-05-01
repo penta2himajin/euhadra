@@ -28,7 +28,9 @@ use euhadra::eval::baseline::{
 use euhadra::eval::latency::Samples;
 use euhadra::eval::metrics::{cer_lenient, wer_lenient};
 #[cfg(feature = "onnx")]
-use euhadra::canary::CanaryAdapter;
+use euhadra::canary::{CanaryAdapter, CanaryConfig};
+#[cfg(feature = "onnx")]
+use euhadra::canary::decoder::PrefixFormat;
 #[cfg(feature = "onnx")]
 use euhadra::parakeet::ParakeetAdapter;
 #[cfg(feature = "onnx")]
@@ -489,7 +491,25 @@ fn build_pipeline(
             #[cfg(feature = "onnx")]
             {
                 let dir = canary_es_dir.unwrap();
-                let asr = CanaryAdapter::load(dir)
+                // Honour `CANARY_PREFIX_FORMAT={onnx-asr,nemo-canary2}`
+                // so callers can sweep the prefix layout without a
+                // rebuild. When unset, the cfg-default applies — that
+                // default is `NemoCanary2` per `DEFAULT_PREFIX_FORMAT`.
+                let mut cfg = CanaryConfig::istupakov_default();
+                if let Ok(raw) = std::env::var("CANARY_PREFIX_FORMAT") {
+                    cfg.prefix_format = match raw.as_str() {
+                        "nemo-canary2" | "nemo_canary2" | "NemoCanary2" => {
+                            PrefixFormat::NemoCanary2
+                        }
+                        "onnx-asr" | "onnx_asr" | "OnnxAsr" => PrefixFormat::OnnxAsr,
+                        other => {
+                            return Err(format!(
+                                "unknown CANARY_PREFIX_FORMAT={other:?}; expected onnx-asr | nemo-canary2"
+                            ));
+                        }
+                    };
+                }
+                let asr = CanaryAdapter::load_with_config(dir, cfg)
                     .map_err(|e| format!("load canary es from {}: {e}", dir.display()))?
                     .with_language("es");
                 builder.asr(asr)
