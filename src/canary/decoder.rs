@@ -69,8 +69,11 @@ pub const DECODER_INPUT_DECODER_MEMS: &str = "decoder_mems";
 pub const DECODER_OUTPUT_LOGITS: &str = "logits";
 pub const DECODER_OUTPUT_HIDDEN_STATES: &str = "decoder_hidden_states";
 
-/// Length of the static decoder prefix. Pinned so accidental layout
-/// changes blow up at compile time rather than at inference.
+/// Length of the legacy `OnnxAsr` decoder prefix layout (10 tokens).
+/// Kept as a public sentinel so accidental changes to that historical
+/// layout still blow up at compile time. The default layout is now
+/// `NemoCanary2` (9 tokens) — see `PrefixFormat::token_count()` to
+/// query the active layout's length.
 pub const PREFIX_LEN: usize = 10;
 
 /// Layout of the decoder prefix tokens. The official NeMo
@@ -110,10 +113,14 @@ impl PrefixFormat {
     }
 }
 
-/// Default prefix format. `OnnxAsr` until the per-format sweep in
-/// `docs/canary-integration.md` "v8 — official prompt alignment"
-/// confirms which one the model was actually trained against.
-pub const DEFAULT_PREFIX_FORMAT: PrefixFormat = PrefixFormat::OnnxAsr;
+/// Default prefix format: `NemoCanary2` (the official paper layout).
+/// The FLEURS-es 100-utt FP32 sweep recorded in
+/// `docs/canary-integration.md` v8 found NemoCanary2 nearly halves WER
+/// (12.89 % → 6.97 %) versus the historical `OnnxAsr` 10-token wrapper,
+/// and eliminates every >50 % catastrophic failure on the smoke set.
+/// `OnnxAsr` is still selectable for bit-level reproduction of the
+/// `istupakov/onnx-asr` Python reference.
+pub const DEFAULT_PREFIX_FORMAT: PrefixFormat = PrefixFormat::NemoCanary2;
 
 /// Default cap on the autoregressive sequence length, matching the
 /// `max_sequence_length` field of the istupakov canary config.json.
@@ -1471,9 +1478,13 @@ mod tests {
     }
 
     #[test]
-    fn prefix_layout_for_spanish_asr() {
+    fn prefix_layout_for_spanish_asr_onnx_asr() {
+        // Legacy 10-token `OnnxAsr` layout — kept as a regression
+        // test so the historical bit-for-bit `istupakov/onnx-asr`
+        // reference still works for users who opt back into it.
         let v = Vocab::from_text(&mini_vocab_text()).unwrap();
-        let opts = DecodeOptions::for_asr("es");
+        let mut opts = DecodeOptions::for_asr("es");
+        opts.prefix_format = PrefixFormat::OnnxAsr;
         let p = build_decoder_prefix(&v, &opts).unwrap();
         assert_eq!(p.len(), PREFIX_LEN);
         // Slot 0 = LAST ▁ id (19, not 16).
@@ -1526,21 +1537,23 @@ mod tests {
 
     #[test]
     fn prefix_uses_nopnc_when_disabled() {
+        // Default layout is `NemoCanary2` (9 tokens); pnc is at slot 5.
         let v = Vocab::from_text(&mini_vocab_text()).unwrap();
         let mut opts = DecodeOptions::for_asr("en");
         opts.pnc = false;
         let p = build_decoder_prefix(&v, &opts).unwrap();
-        assert_eq!(p[6], 6); // <|nopnc|>
+        assert_eq!(p[5], 6); // <|nopnc|>
     }
 
     #[test]
     fn prefix_supports_all_canary_languages() {
+        // Default layout is `NemoCanary2`; src/tgt are at slots 3 and 4.
         let v = Vocab::from_text(&mini_vocab_text()).unwrap();
         for (lang, expected_id) in [("en", 12), ("de", 13), ("fr", 14), ("es", 15)] {
             let opts = DecodeOptions::for_asr(lang);
             let p = build_decoder_prefix(&v, &opts).unwrap();
+            assert_eq!(p[3], expected_id, "lang={lang}");
             assert_eq!(p[4], expected_id, "lang={lang}");
-            assert_eq!(p[5], expected_id, "lang={lang}");
         }
     }
 
