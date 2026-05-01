@@ -96,6 +96,34 @@ pub const DEFAULT_MAX_SEQUENCE_LENGTH: usize = 1024;
 /// WER < 5 %. Set to `1.0` to disable.
 pub const DEFAULT_REPETITION_PENALTY: f32 = 1.8;
 
+/// Default minimum output-token-to-encoder-frame ratio. Greedy
+/// decoding for Canary-180M-Flash sometimes emits `<|endoftext|>`
+/// in the middle of a long utterance, dropping multi-word chunks
+/// (~22 / 99 utt at 20–50 % WER on the FLEURS-es 100-utt FP32 smoke
+/// even after repetition penalty 1.8). The min-length gate
+/// suppresses the EOS logit until the generated suffix length
+/// reaches `ratio × T_sub`, where `T_sub` is the encoder's output
+/// frame count.
+///
+/// Sweep on FLEURS-es 100-utt FP32 with `repetition_penalty=1.8`
+/// (recorded in `docs/canary-integration.md` "End-to-end
+/// validation v4"):
+///
+/// | ratio | mean WER | 0–5 % | hard fails | loops |
+/// |---|---|---|---|---|
+/// | 0.0 (off) | 14.38 % | 41 | **1** | 0 |
+/// | **0.2** | **13.63 %** | **41** | **0** | **0** |
+/// | 0.3 | 15.26 % | 42 | 0 | 0 |
+/// | 0.4 | 62.33 % | 26 | 0 | 3 (over-suppression triggers loops) |
+/// | 0.5 | 96.32 % | 0 | 0 | 11 (catastrophic) |
+///
+/// 0.2 hits the sweet spot: kills the last hard-fail and slightly
+/// improves WER without forcing the decoder to keep emitting on
+/// short clips. Higher ratios overshoot, forcing the decoder to
+/// run past natural end-of-speech and triggering repetition loops
+/// the penalty alone can't catch. Set to `0.0` to disable.
+pub const DEFAULT_MIN_TOKEN_TO_FRAME_RATIO: f32 = 0.2;
+
 /// Per-call decoding knobs. Defaults to Spanish ASR with
 /// punctuation-and-capitalisation enabled.
 #[derive(Debug, Clone)]
@@ -116,6 +144,12 @@ pub struct DecodeOptions {
     /// discount logits of tokens already emitted in the current
     /// utterance. See `DEFAULT_REPETITION_PENALTY`.
     pub repetition_penalty: f32,
+    /// Minimum number of generated tokens, expressed as a fraction
+    /// of the encoder's output frame count. The greedy step
+    /// suppresses `<|endoftext|>` (sets its logit to `-inf`) until
+    /// the suffix has emitted at least `ceil(ratio × T_sub)` tokens.
+    /// `0.0` disables. See `DEFAULT_MIN_TOKEN_TO_FRAME_RATIO`.
+    pub min_token_to_frame_ratio: f32,
 }
 
 impl DecodeOptions {
@@ -127,6 +161,7 @@ impl DecodeOptions {
             pnc: true,
             max_sequence_length: DEFAULT_MAX_SEQUENCE_LENGTH,
             repetition_penalty: DEFAULT_REPETITION_PENALTY,
+            min_token_to_frame_ratio: DEFAULT_MIN_TOKEN_TO_FRAME_RATIO,
         }
     }
 }
@@ -213,6 +248,48 @@ pub fn argmax_last_position(logits: &Array3<f32>) -> Vec<u32> {
         out.push(best_v);
     }
     out
+}
+
+/// Suppress `<|endoftext|>` at the last time-position when the
+/// suffix is too short relative to the encoder frame count. Sets
+/// `logits[B-1, last, eos] = -inf` (which the greedy argmax can
+/// never pick) when `suffix_len < ceil(ratio × n_encoder_frames)`,
+/// otherwise leaves logits untouched.
+///
+/// `ratio == 0.0` is a no-op.
+///
+/// This gate addresses the chunk-dropout / hard-fail failure mode
+/// observed on FLEURS-es where the greedy decoder picks `<|eos|>`
+/// before consuming the full audio (`docs/canary-integration.md`
+/// "Failure-mode inventory"). It does not address the inverse
+/// failure (decoder runs past the natural end), which is bounded
+/// by `max_sequence_length` and the repetition penalty.
+pub fn suppress_eos_until_min_length(
+    logits: &mut Array3<f32>,
+    eos_token_id: u32,
+    suffix_len: usize,
+    n_encoder_frames: usize,
+    ratio: f32,
+) {
+    if ratio <= 0.0 || n_encoder_frames == 0 {
+        return;
+    }
+    let min_len = (ratio * n_encoder_frames as f32).ceil() as usize;
+    if suffix_len >= min_len {
+        return;
+    }
+    let (batch, time, vocab_size) = logits.dim();
+    if batch == 0 || time == 0 {
+        return;
+    }
+    let v = eos_token_id as usize;
+    if v >= vocab_size {
+        return;
+    }
+    let last_t = time - 1;
+    for b in 0..batch {
+        logits[[b, last_t, v]] = f32::NEG_INFINITY;
+    }
 }
 
 /// Down-weight logits at the last time-position for tokens that
@@ -445,9 +522,25 @@ impl CanaryDecoder {
             // language / pnc / nodiarize / etc.) would suppress
             // legitimate emissions whose surface forms also appear
             // in the prefix region. Use only the post-prefix slice.
-            if opts.repetition_penalty != 1.0 && batch_tokens.len() > prefix_len {
+            let suffix_len = batch_tokens.len().saturating_sub(prefix_len);
+            if opts.repetition_penalty != 1.0 && suffix_len > 0 {
                 let suffix = &batch_tokens[prefix_len..];
                 apply_repetition_penalty(&mut logits, suffix, opts.repetition_penalty);
+            }
+
+            // Min-length gate: forbid `<|endoftext|>` until the
+            // suffix has consumed `ratio × T_sub` tokens. Suppresses
+            // the chunk-dropout failure mode where greedy argmax
+            // exits before the encoder frames are exhausted.
+            if opts.min_token_to_frame_ratio > 0.0 {
+                let n_enc_frames = encoder_embeddings.shape()[1];
+                suppress_eos_until_min_length(
+                    &mut logits,
+                    eos,
+                    suffix_len,
+                    n_enc_frames,
+                    opts.min_token_to_frame_ratio,
+                );
             }
 
             let next_tokens = argmax_last_position(&logits);
@@ -695,6 +788,7 @@ mod tests {
             pnc: true,
             max_sequence_length: 1024,
             repetition_penalty: 1.0,
+            min_token_to_frame_ratio: 0.0,
         };
         let p = build_decoder_prefix(&v, &opts).unwrap();
         assert_eq!(p[4], 12, "source = en");
@@ -875,6 +969,104 @@ mod tests {
         let o = DecodeOptions::for_asr("es");
         assert_eq!(o.repetition_penalty, DEFAULT_REPETITION_PENALTY);
         assert_eq!(o.repetition_penalty, 1.8);
+    }
+
+    // --- suppress_eos_until_min_length ---
+
+    #[test]
+    fn min_length_no_op_at_zero_ratio() {
+        let mut logits = make_logits_1xv(&[1.0, 2.0, 3.0]);
+        let before = logits.clone();
+        suppress_eos_until_min_length(&mut logits, 1, 0, 100, 0.0);
+        assert_eq!(logits, before);
+    }
+
+    #[test]
+    fn min_length_no_op_when_suffix_long_enough() {
+        // ratio=0.3, n_enc_frames=10 → min_len = ceil(3.0) = 3.
+        // suffix_len=3 already meets the min, so EOS not suppressed.
+        let mut logits = make_logits_1xv(&[1.0, 5.0, 3.0]); // EOS=1
+        let before = logits.clone();
+        suppress_eos_until_min_length(&mut logits, 1, 3, 10, 0.3);
+        assert_eq!(logits, before);
+    }
+
+    #[test]
+    fn min_length_suppresses_eos_when_below_min() {
+        // ratio=0.5, n_enc_frames=10 → min_len = ceil(5.0) = 5.
+        // suffix_len=2 below min → EOS becomes -inf.
+        let mut logits = make_logits_1xv(&[1.0, 5.0, 3.0]);
+        suppress_eos_until_min_length(&mut logits, 1, 2, 10, 0.5);
+        assert_eq!(logits[[0, 0, 0]], 1.0); // unchanged
+        assert!(logits[[0, 0, 1]].is_infinite() && logits[[0, 0, 1]] < 0.0);
+        assert_eq!(logits[[0, 0, 2]], 3.0); // unchanged
+    }
+
+    #[test]
+    fn min_length_changes_argmax_when_eos_was_winning() {
+        // EOS (id 1) wins on raw logits with score 5.0. After
+        // suppression, the next-best (id 2 with 3.0) wins.
+        let mut logits = make_logits_1xv(&[1.0, 5.0, 3.0]);
+        assert_eq!(argmax_last_position(&logits), vec![1]);
+        suppress_eos_until_min_length(&mut logits, 1, 0, 10, 0.3);
+        assert_eq!(argmax_last_position(&logits), vec![2]);
+    }
+
+    #[test]
+    fn min_length_uses_ceil_for_fractional_min() {
+        // ratio=0.25, n_enc_frames=10 → min_len = ceil(2.5) = 3.
+        // suffix_len=2 → still below → suppress.
+        // suffix_len=3 → at min → don't suppress.
+        let mut a = make_logits_1xv(&[1.0, 5.0, 3.0]);
+        suppress_eos_until_min_length(&mut a, 1, 2, 10, 0.25);
+        assert!(a[[0, 0, 1]].is_infinite());
+
+        let mut b = make_logits_1xv(&[1.0, 5.0, 3.0]);
+        suppress_eos_until_min_length(&mut b, 1, 3, 10, 0.25);
+        assert_eq!(b[[0, 0, 1]], 5.0);
+    }
+
+    #[test]
+    fn min_length_skips_when_zero_encoder_frames() {
+        let mut logits = make_logits_1xv(&[1.0, 5.0, 3.0]);
+        let before = logits.clone();
+        suppress_eos_until_min_length(&mut logits, 1, 0, 0, 0.5);
+        assert_eq!(logits, before);
+    }
+
+    #[test]
+    fn min_length_skips_out_of_range_eos() {
+        let mut logits = make_logits_1xv(&[1.0, 2.0, 3.0]);
+        let before = logits.clone();
+        // EOS id 99 is past vocab_size=3 — must not panic.
+        suppress_eos_until_min_length(&mut logits, 99, 0, 10, 0.5);
+        assert_eq!(logits, before);
+    }
+
+    #[test]
+    fn min_length_only_touches_last_time_position() {
+        let mut logits = Array3::from_shape_vec(
+            (1, 2, 3),
+            vec![
+                // t=0
+                1.0, 2.0, 3.0,
+                // t=1 (last)
+                4.0, 5.0, 6.0,
+            ],
+        )
+        .unwrap();
+        suppress_eos_until_min_length(&mut logits, 1, 0, 10, 0.5);
+        // t=0 untouched
+        assert_eq!(logits[[0, 0, 1]], 2.0);
+        // t=1 EOS column suppressed
+        assert!(logits[[0, 1, 1]].is_infinite() && logits[[0, 1, 1]] < 0.0);
+    }
+
+    #[test]
+    fn decode_options_default_min_token_ratio() {
+        let o = DecodeOptions::for_asr("es");
+        assert_eq!(o.min_token_to_frame_ratio, DEFAULT_MIN_TOKEN_TO_FRAME_RATIO);
+        assert_eq!(o.min_token_to_frame_ratio, 0.2);
     }
 
     #[test]

@@ -54,6 +54,9 @@ pub struct CanaryConfig {
     /// Greedy-decode repetition penalty. See
     /// `decoder::DEFAULT_REPETITION_PENALTY`. `1.0` disables.
     pub repetition_penalty: f32,
+    /// Min-length gate ratio (suffix tokens / encoder frames). See
+    /// `decoder::DEFAULT_MIN_TOKEN_TO_FRAME_RATIO`. `0.0` disables.
+    pub min_token_to_frame_ratio: f32,
 }
 
 impl CanaryConfig {
@@ -67,6 +70,7 @@ impl CanaryConfig {
             default_pnc: true,
             max_sequence_length: super::decoder::DEFAULT_MAX_SEQUENCE_LENGTH,
             repetition_penalty: super::decoder::DEFAULT_REPETITION_PENALTY,
+            min_token_to_frame_ratio: super::decoder::DEFAULT_MIN_TOKEN_TO_FRAME_RATIO,
         }
     }
 
@@ -188,6 +192,7 @@ impl CanaryAdapter {
             pnc: self.cfg.default_pnc,
             max_sequence_length: self.cfg.max_sequence_length,
             repetition_penalty: self.cfg.repetition_penalty,
+            min_token_to_frame_ratio: self.cfg.min_token_to_frame_ratio,
         };
         let decoded = self.decoder.decode(&enc.embeddings, &enc.mask, &self.vocab, &opts)?;
 

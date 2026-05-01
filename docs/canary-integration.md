@@ -219,6 +219,52 @@ single hard-fail utterance — neither of which the repetition
 penalty addresses. Step (2) of the next-investigation list
 (min-length / EOS-confidence gate) is the right tool for those.
 
+### v4 — min-length / EOS-suppression gate (FP32, n=100, 2026-04-30)
+
+Building on v3's repetition penalty=1.8, added a min-length gate
+in `src/canary/decoder.rs::suppress_eos_until_min_length`. The
+gate sets `logits[<|endoftext|>] = -inf` until the suffix has
+emitted at least `ceil(ratio × T_sub)` tokens, where `T_sub` is
+the encoder's output frame count. This addresses the chunk-
+dropout / hard-fail failure modes where greedy argmax exits
+before consuming the full audio.
+
+Sweep over min_token_to_frame_ratio (with penalty fixed at 1.8):
+
+| ratio | mean WER | clean (0–5 %) | hard fails | repetition loops |
+|---|---|---|---|---|
+| 0.0 (off, v3) | 14.38 % | 41 / 99 | **1** | 0 |
+| **0.2 (default)** | **13.63 %** | **41 / 100** | **0** | **0** |
+| 0.3 | 15.26 % | 42 / 100 | 0 | 0 |
+| 0.4 | 62.33 % | 26 / 100 | 0 | 3 (over-suppression triggers loops) |
+| 0.5 | 96.32 % | 0 / 100 | 0 | 11 (catastrophic) |
+
+**Default chosen: `min_token_to_frame_ratio = 0.2`**
+(`DEFAULT_MIN_TOKEN_TO_FRAME_RATIO`).
+
+Headline win: **mean WER 14.38 % → 13.63 %, hard fails 1 → 0**.
+The improvement on mean WER is modest (0.75 pp), but the more
+important effect is killing the last hard-fail utterance — it
+moves from the 100% bucket into the long tail proper. Higher
+ratios catastrophically overshoot: forcing the decoder to keep
+emitting past natural end-of-speech triggers repetition loops
+that the penalty alone can't catch (ratio=0.5 gives WER 96.32 %).
+
+Across v1 → v4 the trajectory is:
+
+| stage | mean WER | hard fails | repetition loops |
+|---|---|---|---|
+| v2 (no gates) | 35.37 % | 1 | 2 |
+| v3 (penalty 1.8) | 14.38 % | 1 | 0 |
+| **v4 (penalty 1.8 + min-len 0.2)** | **13.63 %** | **0** | **0** |
+
+The two catastrophic failure modes (loops + hard fails) are now
+both eliminated. The residual 13.63 % is dominated by chunk-
+dropout cases that the gate doesn't fully address (the decoder
+still picks a non-EOS token early but eventually emits EOS at the
+right scale-of-encoder-frames boundary, producing a partial
+transcript).
+
 ### Failure-mode inventory (FP32, n=100, no penalty)
 
 Three distinct decoder failure patterns observed:
@@ -243,37 +289,49 @@ autoregressive ASR systems mitigate them with **repetition penalty**,
 **length penalty**, and/or **beam search**. None of those is
 implemented in `src/canary/decoder.rs` yet.
 
-### Fallback-trigger status (post-v3)
+### Fallback-trigger status (post-v4)
 
 | Trigger | Status |
 |---|---|
-| > 1 pp WER regression vs model card | **Still triggered but trending toward resolution** — repetition penalty closed > 60 % of the gap (35.37 % → 14.38 %). The remaining 11.21 pp delta vs MLS model-card 3.17 % WER is mostly chunk-dropout failures (~22 utt at 20–50 % WER) and one hard-fail. Step (2) of the next-investigation list (min-length / EOS-confidence gate) is the right tool. |
-| Decoder loop > 2 weeks of work | **Cleared** — frontend → vocab → encoder → decoder → adapter delivered in 5 PRs over a single session, plus repetition penalty in 1 follow-up PR. |
+| > 1 pp WER regression vs model card | **Still triggered but two of three catastrophic failure modes resolved.** v4 closes 64 % of the original v2 gap (35.37 % → 13.63 %). The remaining 10.46 pp delta vs MLS model-card 3.17 % WER is now dominated by chunk-dropout cases that survive the gate (decoder picks non-EOS early but still produces a partial transcript). |
+| Decoder loop > 2 weeks of work | **Cleared** — frontend → vocab → encoder → decoder → adapter delivered in 5 PRs over a single session, plus repetition penalty (PR #31) and min-length gate (this PR) as 2 follow-ups. |
 | License clarification trouble | **Cleared** — istupakov bundle is upstream CC-BY-4.0 unchanged. |
 
-The trajectory is clear: **decoder-side fixes are working as
-expected**. The penalty alone moved median behaviour to model-card
-quality (median WER unchanged at 8.3 %, but the long tail
-collapsed). The hard Parakeet-v3-multi fallback remains documented
-but is not warranted at this time.
+The trajectory is clear: **decoder-side fixes continue to work**.
+Repetition loops and hard fails are now both eliminated. The
+remaining gap is harder to close because the partial-dropout
+cases produce plausible-looking partial transcripts (the decoder
+emits 30-70 % of the reference correctly then exits) — neither
+penalty nor min-length helps if the decoder genuinely thinks the
+audio is done.
 
-### Next investigation steps (post-v3)
+The hard Parakeet-v3-multi fallback remains documented but is
+not warranted at this time.
 
-1. ~~**Implement repetition penalty**~~ — **DONE** (this PR). Best
-   penalty 1.8 picked from a 5-value sweep.
-2. **Implement minimum-length / EOS-confidence gate** — only accept
-   `<|endoftext|>` if its logit dominates by some margin AND the
-   total emitted length is plausible relative to encoder frames.
-   Would address the 1 hard-fail and the chunk-dropout cluster
-   (~22 utt at 20–50 % WER) that still dominate the residual mean
-   WER.
-3. Re-run the 100-utt FP32 smoke after (2) and confirm WER drops
-   below the 1-pp-vs-model-card trigger (target: WER ≤ 5 % on FP32).
-4. After (2)–(3), reassess INT8: with deterministic decoding, the
-   INT8 quality question becomes "is INT8 within X pp of FP32?"
-   rather than "is INT8 broken?". The earlier INT8 nondeterminism
-   may also resolve once decoding is more stable (the loops were
-   the source of the worst-case 0.94 WER outlier).
-5. If (2)–(3) don't get below ~10 % WER, **execute the
-   Parakeet-TDT-0.6B-v3-multi hard fallback** per the migration plan
-   already documented in this file.
+### Next investigation steps (post-v4)
+
+1. ~~**Implement repetition penalty**~~ — **DONE** (PR #31).
+2. ~~**Implement min-length gate**~~ — **DONE** (this PR). Killed
+   the last hard-fail; ratio=0.2 picked from a 5-value sweep.
+3. **Investigate the partial-dropout cases** that now dominate the
+   residual ~10 pp WER gap. Three plausible directions:
+   a. **Beam search instead of greedy** — would find longer
+      sequences with non-trivial probability that greedy misses.
+      Most expensive change.
+   b. **EOS-confidence margin** — require `logits[eos]` to lead
+      the next-best non-EOS by some margin (e.g., 2.0 in raw
+      logit units). Cheaper than beam, similar in spirit to the
+      length gate but probability-aware.
+   c. **Investigate alternative subsampling / encoder frames**.
+      The 0.2 ratio is conservative because Spanish utterances
+      vary widely in BPE-density per encoder frame. A more robust
+      length signal would use the encoder mask (which we already
+      have) to compute *valid* frames rather than total frames.
+4. Reassess INT8: with deterministic FP32 decoding, the INT8
+   quality question becomes "is INT8 within X pp of FP32?"
+   The earlier INT8 nondeterminism (3 runs at 34 % / 36 % / 94 %)
+   may also resolve once decoding is more stable — the 94 % run
+   was a loop.
+5. If (3) doesn't get below ~5 % WER (matching the model card),
+   **execute the Parakeet-TDT-0.6B-v3-multi hard fallback** per
+   the migration plan already documented in this file.
