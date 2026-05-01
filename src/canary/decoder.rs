@@ -124,6 +124,35 @@ pub const DEFAULT_REPETITION_PENALTY: f32 = 1.8;
 /// the penalty alone can't catch. Set to `0.0` to disable.
 pub const DEFAULT_MIN_TOKEN_TO_FRAME_RATIO: f32 = 0.2;
 
+/// Default required margin (in raw logit units) by which
+/// `<|endoftext|>` must lead the next-best non-EOS token before
+/// the greedy step accepts it. Addresses the **partial-dropout**
+/// failure mode where EOS marginally wins the argmax mid-utterance,
+/// producing a transcript that's plausible but missing later words.
+/// Complementary to the positional `min_token_to_frame_ratio` gate
+/// — that one forbids EOS too early; this one demands EOS be
+/// confidently dominant when it does win.
+///
+/// Sweep on FLEURS-es 100-utt FP32 with `repetition_penalty=1.8`
+/// and `min_token_to_frame_ratio=0.2` (recorded in
+/// `docs/canary-integration.md` "End-to-end validation v5"):
+///
+/// | margin | mean WER | 0–5 % | hard fails | loops |
+/// |---|---|---|---|---|
+/// | 0.0 (off, v4) | 13.63 % | 41 | 0 | 0 |
+/// | 1.0 | 13.21 % | 42 | 0 | 0 |
+/// | **2.0** | **13.21 %** | **42** | **0** | **0** |
+/// | 3.0 | 13.21 % | 22 | 0 | 0 |
+/// | 5.0 | 13.21 % | 21 | 0 | 0 |
+///
+/// 1.0–2.0 hit a small-but-real improvement; 2.0 chosen as a
+/// slightly stricter and more robust default. Above 2.0 the mean
+/// stays the same (decoder keeps emitting, but the high-WER tail
+/// barely improves while clean utterances get padded with extra
+/// tokens — the per-utterance trade is symmetric but the clean
+/// count drops). Set to `0.0` to disable.
+pub const DEFAULT_EOS_CONFIDENCE_MARGIN: f32 = 2.0;
+
 /// Per-call decoding knobs. Defaults to Spanish ASR with
 /// punctuation-and-capitalisation enabled.
 #[derive(Debug, Clone)]
@@ -150,6 +179,13 @@ pub struct DecodeOptions {
     /// the suffix has emitted at least `ceil(ratio × T_sub)` tokens.
     /// `0.0` disables. See `DEFAULT_MIN_TOKEN_TO_FRAME_RATIO`.
     pub min_token_to_frame_ratio: f32,
+    /// Required logit-margin by which `<|endoftext|>` must lead the
+    /// next-best non-EOS token before the greedy step accepts it.
+    /// Demotes EOS to `-inf` when its logit doesn't lead by at
+    /// least this margin, forcing the decoder to keep emitting on
+    /// borderline cases. `0.0` disables. See
+    /// `DEFAULT_EOS_CONFIDENCE_MARGIN`.
+    pub eos_confidence_margin: f32,
 }
 
 impl DecodeOptions {
@@ -162,6 +198,7 @@ impl DecodeOptions {
             max_sequence_length: DEFAULT_MAX_SEQUENCE_LENGTH,
             repetition_penalty: DEFAULT_REPETITION_PENALTY,
             min_token_to_frame_ratio: DEFAULT_MIN_TOKEN_TO_FRAME_RATIO,
+            eos_confidence_margin: DEFAULT_EOS_CONFIDENCE_MARGIN,
         }
     }
 }
@@ -289,6 +326,64 @@ pub fn suppress_eos_until_min_length(
     let last_t = time - 1;
     for b in 0..batch {
         logits[[b, last_t, v]] = f32::NEG_INFINITY;
+    }
+}
+
+/// Demote `<|endoftext|>` to `-inf` at the last time-position if
+/// its logit doesn't lead the next-best non-EOS token by at least
+/// `margin`. Forces the greedy step to keep emitting on borderline
+/// EOS picks — addresses the partial-dropout failure mode where
+/// EOS is just barely the argmax mid-utterance.
+///
+/// `margin <= 0.0` is a no-op. EOS logits already at `-inf` (e.g.
+/// suppressed by `suppress_eos_until_min_length`) are left alone:
+/// the comparison `-inf - X` underflows and naturally fails the
+/// margin check.
+///
+/// Operates on the last time-position only — earlier positions
+/// are prefix tokens or already-emitted tokens that the greedy
+/// step won't sample again.
+pub fn enforce_eos_confidence_margin(
+    logits: &mut Array3<f32>,
+    eos_token_id: u32,
+    margin: f32,
+) {
+    if margin <= 0.0 {
+        return;
+    }
+    let (batch, time, vocab_size) = logits.dim();
+    if batch == 0 || time == 0 {
+        return;
+    }
+    let v = eos_token_id as usize;
+    if v >= vocab_size {
+        return;
+    }
+    let last_t = time - 1;
+    for b in 0..batch {
+        let eos_logit = logits[[b, last_t, v]];
+        if !eos_logit.is_finite() {
+            continue;
+        }
+        // Find the highest non-EOS logit at the last time-position.
+        let mut max_other = f32::NEG_INFINITY;
+        for vi in 0..vocab_size {
+            if vi == v {
+                continue;
+            }
+            let l = logits[[b, last_t, vi]];
+            if l > max_other {
+                max_other = l;
+            }
+        }
+        if !max_other.is_finite() {
+            // No competing token exists — accept EOS rather than
+            // demote to -inf and stall the decoder.
+            continue;
+        }
+        if eos_logit - max_other < margin {
+            logits[[b, last_t, v]] = f32::NEG_INFINITY;
+        }
     }
 }
 
@@ -543,6 +638,19 @@ impl CanaryDecoder {
                 );
             }
 
+            // EOS-confidence margin: complementary to min-length.
+            // Demotes EOS when it's only marginally winning the
+            // argmax, addressing partial-dropout cases where the
+            // decoder gives up just as the next content token was
+            // also competitive.
+            if opts.eos_confidence_margin > 0.0 {
+                enforce_eos_confidence_margin(
+                    &mut logits,
+                    eos,
+                    opts.eos_confidence_margin,
+                );
+            }
+
             let next_tokens = argmax_last_position(&logits);
             let next = next_tokens[0];
             if next == eos {
@@ -789,6 +897,7 @@ mod tests {
             max_sequence_length: 1024,
             repetition_penalty: 1.0,
             min_token_to_frame_ratio: 0.0,
+            eos_confidence_margin: 0.0,
         };
         let p = build_decoder_prefix(&v, &opts).unwrap();
         assert_eq!(p[4], 12, "source = en");
@@ -1067,6 +1176,99 @@ mod tests {
         let o = DecodeOptions::for_asr("es");
         assert_eq!(o.min_token_to_frame_ratio, DEFAULT_MIN_TOKEN_TO_FRAME_RATIO);
         assert_eq!(o.min_token_to_frame_ratio, 0.2);
+    }
+
+    // --- enforce_eos_confidence_margin ---
+
+    #[test]
+    fn eos_margin_no_op_at_zero() {
+        let mut logits = make_logits_1xv(&[5.0, 1.0, 2.0]); // EOS=0
+        let before = logits.clone();
+        enforce_eos_confidence_margin(&mut logits, 0, 0.0);
+        assert_eq!(logits, before);
+    }
+
+    #[test]
+    fn eos_margin_keeps_eos_when_dominant() {
+        // EOS lead = 5 - 2 = 3 ≥ margin 2 → keep.
+        let mut logits = make_logits_1xv(&[5.0, 1.0, 2.0]);
+        enforce_eos_confidence_margin(&mut logits, 0, 2.0);
+        assert_eq!(logits[[0, 0, 0]], 5.0);
+    }
+
+    #[test]
+    fn eos_margin_demotes_eos_when_marginal() {
+        // EOS lead = 5 - 4 = 1 < margin 2 → demote to -inf.
+        let mut logits = make_logits_1xv(&[5.0, 4.0, 2.0]);
+        enforce_eos_confidence_margin(&mut logits, 0, 2.0);
+        assert!(logits[[0, 0, 0]].is_infinite() && logits[[0, 0, 0]] < 0.0);
+        assert_eq!(logits[[0, 0, 1]], 4.0);
+        assert_eq!(logits[[0, 0, 2]], 2.0);
+    }
+
+    #[test]
+    fn eos_margin_skips_already_suppressed_eos() {
+        // EOS already at -inf (e.g. by the min-length gate). The
+        // margin enforcement must not panic and must not somehow
+        // resurrect EOS.
+        let mut logits = make_logits_1xv(&[f32::NEG_INFINITY, 1.0, 2.0]);
+        let before = logits.clone();
+        enforce_eos_confidence_margin(&mut logits, 0, 2.0);
+        assert_eq!(format!("{:?}", logits), format!("{:?}", before));
+    }
+
+    #[test]
+    fn eos_margin_skips_out_of_range_id() {
+        let mut logits = make_logits_1xv(&[1.0, 2.0, 3.0]);
+        let before = logits.clone();
+        enforce_eos_confidence_margin(&mut logits, 99, 2.0);
+        assert_eq!(logits, before);
+    }
+
+    #[test]
+    fn eos_margin_changes_argmax_when_demoting() {
+        // Without margin: EOS (id 0) wins.
+        // With margin 2 and lead 1: EOS demoted, token 1 wins.
+        let mut logits = make_logits_1xv(&[5.0, 4.0, 2.0]);
+        assert_eq!(argmax_last_position(&logits), vec![0]);
+        enforce_eos_confidence_margin(&mut logits, 0, 2.0);
+        assert_eq!(argmax_last_position(&logits), vec![1]);
+    }
+
+    #[test]
+    fn eos_margin_only_touches_last_time_position() {
+        let mut logits = Array3::from_shape_vec(
+            (1, 2, 3),
+            vec![
+                // t=0: EOS (id 0) lead = 1 < margin
+                5.0, 4.0, 2.0,
+                // t=1 (last): EOS lead = 5 - 4 = 1 < margin
+                5.0, 4.0, 3.0,
+            ],
+        )
+        .unwrap();
+        enforce_eos_confidence_margin(&mut logits, 0, 2.0);
+        // t=0 untouched
+        assert_eq!(logits[[0, 0, 0]], 5.0);
+        // t=1 EOS demoted
+        assert!(logits[[0, 1, 0]].is_infinite() && logits[[0, 1, 0]] < 0.0);
+    }
+
+    #[test]
+    fn eos_margin_keeps_eos_when_no_competing_token() {
+        // Single-token vocab: EOS has no competition. The gate must
+        // accept EOS rather than stall the decoder.
+        let mut logits = make_logits_1xv(&[3.0]);
+        let before = logits.clone();
+        enforce_eos_confidence_margin(&mut logits, 0, 2.0);
+        assert_eq!(logits, before);
+    }
+
+    #[test]
+    fn decode_options_default_eos_confidence_margin() {
+        let o = DecodeOptions::for_asr("es");
+        assert_eq!(o.eos_confidence_margin, DEFAULT_EOS_CONFIDENCE_MARGIN);
+        assert_eq!(o.eos_confidence_margin, 2.0);
     }
 
     #[test]
