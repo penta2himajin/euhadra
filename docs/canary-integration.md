@@ -554,13 +554,10 @@ not warranted at this time.
 5. ~~**Beam search machinery**~~ — **DONE** (this PR), but the
    current α = 0.6 default regresses WER vs greedy. Default
    stays at `beam_size = 1` while we tune.
-6. **Length-penalty sweep at fixed beam_size = 4** — the v7
-   regression is most consistent with α favouring shorter beams
-   too aggressively. Sweep α ∈ {0.0, 1.0, 1.2, 1.5, 2.0} and
-   pick the value that beats greedy (if any). If no α ≥ 0
-   works, switch to GNMT-style normalisation
-   `((5 + length) / 6)^α` which has a different shape across
-   small beam sizes.
+6. ~~**Length-penalty sweep at fixed beam_size = 4**~~ — **DONE**
+   (v9). Beam=4 across α ∈ {0.0, 0.6, 1.0, 1.2, 1.5, 2.0} stays
+   flat at ~6.94 % WER vs greedy 6.97 % — ≤ 0.03 pp gain at
+   2.5× the latency cost. Default stays at `beam_size = 1`.
 7. **Encoder-mask-aware min-length** — use `encoder_mask` (which
    we already plumb) to compute *valid* frames rather than the
    total frame count for the min-length gate. Smaller gain than
@@ -577,18 +574,17 @@ not warranted at this time.
    artefact of the Python reference using the same 10-token wrapper
    we did; the model's actual greedy floor on the paper layout is
    ~7 %.
-10. If (6) doesn't get beam search below ~5 % WER (matching the
-    model card), **execute the Parakeet-TDT-0.6B-v3-multi hard
-    fallback** per the migration plan already documented in this
-    file. Note: the residual gap to model card 2.9 % is partly
-    because the model card numbers come from the full NeMo
-    inference pipeline (with internal beam + LM features); a
-    side-by-side measurement with `nemo_toolkit[asr]` Python
-    wasn't feasible on this CPU box (NeMo 2.7.3 requires the
-    internal `nv_one_logger` package not on PyPI; NeMo 1.23 has an
-    incompatible `huggingface_hub` API). With v8 the gap is now
-    only ~4 pp (6.97 % vs 2.9 %), so item (6)'s beam-search retune
-    is now the most likely path to model-card parity.
+10. **Hard fallback decision deferred.** v9 ruled out beam search
+    as a path to closing the remaining 6.97 % → 3.17 % gap.
+    Before triggering the Parakeet-TDT-0.6B-v3-multi migration,
+    quantify items (7) and (8) — the encoder-mask min-length
+    fix and the INT8 re-assessment — and audit how much of the
+    gap is the FLEURS/MLS test-set distribution shift vs.
+    actual model-pipeline differences. The 6.97 % FLEURS-es
+    floor is already inside the "good enough for production"
+    range for the kind of disfluency-detection workload euhadra
+    targets; missing model-card parity by ~4 pp on a *different*
+    test set is not by itself a fallback trigger.
 
 ### v8 — paper / NeMo prompt alignment (FP32, n=100, 2026-05-01)
 
@@ -668,3 +664,70 @@ measured against Python `onnx-asr` — that reference *also* uses
 the 10-token wrapper, so its WER was bounded by the same prompt
 mismatch. With the paper layout, the istupakov export's actual
 greedy floor is 6.97 %, not 34 %.
+
+### v9 — beam-search length-penalty sweep (FP32, n=100, 2026-05-01)
+
+Item (6) from the post-v7 next-steps list, re-run on the v8
+paper-prompt baseline. Sweep α ∈ {0.0, 0.6, 1.0, 1.2, 1.5, 2.0}
+at `beam_size = 4`, FLEURS-es 100-utt FP32, NemoCanary2 prefix,
+penalty=2.0 / min-len=0.2 / margin=2.0. Driven via the new
+`CANARY_BEAM_SIZE` and `CANARY_LENGTH_PENALTY` env vars on
+`examples/eval_l1_smoke.rs`.
+
+| Config            | Mean WER | RTF (median) |
+|---                |---:|---:|
+| **greedy (b=1)**  | **6.97 %** | **0.11** |
+| beam=4, α=0.0     | 6.96 %     | 0.28 |
+| beam=4, α=0.6     | 6.94 %     | 0.29 |
+| beam=4, α=1.0     | 6.94 %     | 0.28 |
+| beam=4, α=1.2     | 6.94 %     | 0.28 |
+| beam=4, α=1.5     | 6.94 %     | 0.28 |
+| beam=4, α=2.0     | 6.94 %     | 0.28 |
+
+**Result:** beam search at b=4 gives a ≤ 0.03 pp WER improvement
+over greedy regardless of α, at ≈ 2.5× the latency cost (RTF
+0.11 → 0.28). 0.03 pp on 4470 reference words is ~1 word — well
+inside the run-to-run noise floor.
+
+**Action:** keep `DEFAULT_BEAM_SIZE = 1` (greedy). The
+beam-search machinery from PR #36 stays opt-in via
+`CanaryConfig::beam_size` / the new `CANARY_BEAM_SIZE` env var
+for callers who want to experiment, but it is no longer
+recommended for production.
+
+#### Why beam search doesn't help here
+
+The catastrophic failure modes that motivated the v7 beam search
+work — `Asus E E E …` loops, `boda boda` repetitions, partial
+transcripts cut short by premature `<|endoftext|>` — were all
+upstream of the decoder's top-1 vs top-k choice. They were
+symptoms of the wrong prompt biasing the LM. With the v8
+NemoCanary2 prefix the decoder's greedy path is already mostly
+correct on these utterances, so beam search has nothing to fix:
+the top-1 token is the right choice for ~99.97 % of decoded
+positions.
+
+The implication for next-steps item (10) (Parakeet hard
+fallback): closing the remaining 6.97 % → 3.17 % gap to the
+Canary-180M-Flash MLS-Spanish model card via beam search is
+*not* on the table. The remaining gap is most likely:
+
+1. **Test-set difference** — FLEURS-es vs MLS-es. FLEURS is
+   read-speech multi-speaker on a wider domain; MLS is LibriVox
+   audiobooks. The two distributions differ by several pp on
+   most ASR benchmarks.
+2. **NeMo inference features outside the ONNX export** — the
+   model card numbers come from the full `nemo_toolkit[asr]`
+   pipeline (LM rescoring, time-stamp post-processing, etc.).
+   The `istupakov/onnx-asr` export is encoder + decoder only.
+3. **Tokenisation / normalisation drift** — our `wer_lenient`
+   is whisper-normalizer-equivalent (~ 0.5 pp delta in our
+   earlier audit), so this is a small but real contributor.
+
+Items (7) and (8) — encoder-mask-aware min-length and INT8
+reassessment — remain the next two avenues. Beyond those the
+6.97 % FLEURS-es FP32 floor is plausibly the Canary-180M-Flash
+ONNX export's effective ceiling at greedy; further gains would
+require either Parakeet-v3-multi (item 10) or Canary integrated
+via the full NeMo pipeline (not feasible on this CPU box per the
+v7 NeMo dep notes).

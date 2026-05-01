@@ -509,6 +509,18 @@ fn build_pipeline(
                         }
                     };
                 }
+                // Beam-search knobs — used by the post-v8 length-penalty
+                // sweep. When unset, cfg-defaults apply (greedy).
+                if let Ok(raw) = std::env::var("CANARY_BEAM_SIZE") {
+                    cfg.beam_size = raw
+                        .parse()
+                        .map_err(|e| format!("CANARY_BEAM_SIZE: {e}"))?;
+                }
+                if let Ok(raw) = std::env::var("CANARY_LENGTH_PENALTY") {
+                    cfg.length_penalty = raw
+                        .parse()
+                        .map_err(|e| format!("CANARY_LENGTH_PENALTY: {e}"))?;
+                }
                 let asr = CanaryAdapter::load_with_config(dir, cfg)
                     .map_err(|e| format!("load canary es from {}: {e}", dir.display()))?
                     .with_language("es");
