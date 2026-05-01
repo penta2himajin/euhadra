@@ -563,11 +563,12 @@ not warranted at this time.
    (per-utt frame diff ≤ 1 with 8× stride, below the gate's
    effective resolution). New `valid_frame_count` helper + 5
    unit tests.
-8. **INT8 reassessment** — with deterministic FP32 decoding now
-   stable, the INT8 quality question becomes "is INT8 within X
-   pp of FP32?". The earlier INT8 nondeterminism (3 runs at
-   34 % / 36 % / 94 %) was driven by the catastrophic loops; with
-   those gone the INT8 numbers should be more stable.
+8. ~~**INT8 reassessment**~~ — **DONE** (v11). INT8 mean WER
+   16.61 % vs FP32 6.97 % (~2.4× worse, +9.64 pp absolute), at
+   1.8× faster RTF and 73 % smaller on-disk footprint. Still
+   nondeterministic but the spread shrank from ~60 pp to ~4 pp.
+   FP32 stays the default; INT8 stays opt-in for latency/RAM-
+   sensitive deployments with the quality caveat documented.
 9. ~~**Paper / NeMo prompt alignment**~~ — **DONE** (v8). Switching
    to the official 9-token `Canary2PromptFormatter` layout dropped
    FLEURS-es WER from 12.89 % → 6.97 % at FP32 greedy. The earlier
@@ -772,3 +773,63 @@ shipped as a **correctness improvement**, not a WER win — the
 prior code happened to be benign on this benchmark but was using
 the wrong quantity by definition. Catches future regressions on
 edge-of-stride-length distributions.
+
+### v11 — INT8 reassessment (FP32 vs INT8, n=100, 2026-05-01)
+
+Item (8) from the post-v7 next-steps list. The original v3 INT8
+runs (pre-v8 prompt fix) were catastrophically nondeterministic:
+3 runs at 34 % / 36 % / 94 % WER. With FP32 decoding now stable
+at 6.97 % thanks to the v8 prompt fix and the v10 mask-aware
+gate, the question becomes "is INT8 within X pp of FP32, and is
+it deterministic?".
+
+**Sweep:** FLEURS-es 100-utt, NemoCanary2 prefix,
+penalty=2.0/min-len=0.2/margin=2.0, greedy, 1 FP32 cell + 3 INT8
+cells. INT8 toggled via `CANARY_INT8=1` on
+`examples/eval_l1_smoke.rs --langs es`. INT8 weight bundle:
+`encoder-model.int8.onnx` (128 MB) + `decoder-model.int8.onnx`
+(76 MB) — 204 MB total vs 744 MB FP32, a 73 % memory reduction.
+
+| Config       | Mean WER | RTF (median) | asr p50 | asr p95 |
+|---           |---:|---:|---:|---:|
+| **FP32**     | **6.97 %** | 0.124 | 1341 ms | 2824 ms |
+| INT8 r1      | 13.98 %    | 0.068 |  732 ms | 1510 ms |
+| INT8 r2      | 18.16 %    | 0.071 |  736 ms | 1416 ms |
+| INT8 r3      | 17.68 %    | 0.067 |  726 ms | 1529 ms |
+| INT8 mean    | 16.61 %    | 0.069 |  731 ms | 1485 ms |
+
+**INT8 quality:** mean WER 16.61 % is **~2.4× worse than FP32**
+(+9.64 pp absolute). Even the best INT8 run (13.98 %) is worse
+than the pre-v8 OnnxAsr 10-token greedy floor (12.89 %) — i.e.,
+the INT8 quality penalty is bigger than the prompt-format penalty
+we fixed in v8.
+
+**INT8 determinism:** still nondeterministic, but the spread
+shrank dramatically vs v3 — 4.18 pp range now (13.98-18.16 %) vs
+~60 pp range then (34-94 %). The remaining nondeterminism is
+likely ORT's INT8 kernels having tie-breaking that varies with
+thread scheduling; pinning ORT to a single thread or fixing
+`OMP_NUM_THREADS=1` might help but doesn't address the
+fundamental per-run quality variance that makes the INT8 path
+hard to validate in CI.
+
+**INT8 latency:** mean RTF 0.069 vs FP32 0.124 — **1.8× faster**.
+ASR p50 730 ms vs 1341 ms — well below 1 s/utt.
+
+**INT8 memory:** 204 MB vs 744 MB on disk — 73 % smaller. Real
+process RSS savings depend on ORT's allocator behaviour but the
+disk footprint is a reasonable lower bound for embedded/mobile.
+
+**Action:** keep FP32 as default. INT8 weights stay available
+through `CanaryConfig::with_int8_weights()` (and `CANARY_INT8=1`
+on the eval harness) for users who care about latency / RAM more
+than quality, but the documentation must flag the quality hit
+clearly. Marks item (8) DONE.
+
+**Reframes item (10) (Parakeet hard fallback) again:** INT8 is
+not a path to bringing the FLEURS-es WER closer to the
+Canary-180M-Flash MLS-Spanish model card (3.17 %). The 6.97 %
+FP32 floor is the effective production baseline at greedy on
+this export, period. Any further quality gain on Spanish
+requires either Parakeet-v3-multi (item 10) or NeMo's full
+inference pipeline.

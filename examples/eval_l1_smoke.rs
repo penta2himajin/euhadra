@@ -509,6 +509,16 @@ fn build_pipeline(
                         }
                     };
                 }
+                // INT8 toggle — used by the post-v8 INT8
+                // re-assessment sweep. When unset, FP32 weights are
+                // loaded (the cfg default). Truthy values enable the
+                // INT8 encoder + decoder weight bundles.
+                if let Ok(raw) = std::env::var("CANARY_INT8") {
+                    let truthy = matches!(raw.as_str(), "1" | "true" | "TRUE" | "yes");
+                    if truthy {
+                        cfg = cfg.with_int8_weights();
+                    }
+                }
                 // Beam-search knobs — used by the post-v8 length-penalty
                 // sweep. When unset, cfg-defaults apply (greedy).
                 if let Ok(raw) = std::env::var("CANARY_BEAM_SIZE") {
