@@ -558,10 +558,11 @@ not warranted at this time.
    (v9). Beam=4 across α ∈ {0.0, 0.6, 1.0, 1.2, 1.5, 2.0} stays
    flat at ~6.94 % WER vs greedy 6.97 % — ≤ 0.03 pp gain at
    2.5× the latency cost. Default stays at `beam_size = 1`.
-7. **Encoder-mask-aware min-length** — use `encoder_mask` (which
-   we already plumb) to compute *valid* frames rather than the
-   total frame count for the min-length gate. Smaller gain than
-   (6) but a real bug.
+7. ~~**Encoder-mask-aware min-length**~~ — **DONE** (v10).
+   Correctness fix; WER unchanged on FLEURS-es smoke as predicted
+   (per-utt frame diff ≤ 1 with 8× stride, below the gate's
+   effective resolution). New `valid_frame_count` helper + 5
+   unit tests.
 8. **INT8 reassessment** — with deterministic FP32 decoding now
    stable, the INT8 quality question becomes "is INT8 within X
    pp of FP32?". The earlier INT8 nondeterminism (3 runs at
@@ -731,3 +732,43 @@ ONNX export's effective ceiling at greedy; further gains would
 require either Parakeet-v3-multi (item 10) or Canary integrated
 via the full NeMo pipeline (not feasible on this CPU box per the
 v7 NeMo dep notes).
+
+### v10 — encoder-mask-aware min-length gate (FP32, n=100, 2026-05-01)
+
+Item (7) from the post-v7 next-steps list. The bug: three call
+sites in `src/canary/decoder.rs` (greedy step loop, beam step 0,
+beam step loop) were passing `encoder_embeddings.shape()[1]`
+(`T_sub`, the padded encoder output time dimension) into
+`suppress_eos_until_min_length` instead of the count of *valid*
+frames as reported by `encoder_mask`.
+
+Concretely, the FastConformer encoder pads `T_sub` to a multiple
+of its 8× subsampling stride. For inputs that don't divide
+cleanly, the trailing 1-7 positions are zero in the mask. Using
+the padded count slightly over-estimates `min_len` and could
+over-suppress `<|endoftext|>` for very short utterances or
+distributions with lots of edge-of-stride lengths.
+
+**Fix:** introduced `valid_frame_count(mask, batch_idx)` and
+swapped the three call sites. New helper has 5 unit tests
+pinning the contract (count of 1-bits per row, full-mask sanity,
+out-of-range batch returns 0, treats any non-zero as valid,
+batches independent).
+
+**Measurement:** FLEURS-es 100-utt FP32, NemoCanary2 prefix,
+penalty=2.0/min-len=0.2/margin=2.0, greedy.
+
+| Config            | Mean WER | RTF (median) |
+|---                |---:|---:|
+| master @ 3cbf1af  | 6.97 % | 0.114 |
+| this PR           | 6.97 % | 0.117 |
+
+WER unchanged on the smoke set — the docs predicted "smaller
+gain than (6)" and "a real bug". For FLEURS-es with 8× stride,
+the per-utt frame difference is ≤ 1, which is below the gate's
+effective resolution (`min_len = ceil(0.2 × n_frames)` and
+typical suffix lengths are 30+ tokens). The fix is therefore
+shipped as a **correctness improvement**, not a WER win — the
+prior code happened to be benign on this benchmark but was using
+the wrong quantity by definition. Catches future regressions on
+edge-of-stride-length distributions.
