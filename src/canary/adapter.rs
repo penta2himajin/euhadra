@@ -60,6 +60,12 @@ pub struct CanaryConfig {
     /// EOS-confidence margin in raw logit units. See
     /// `decoder::DEFAULT_EOS_CONFIDENCE_MARGIN`. `0.0` disables.
     pub eos_confidence_margin: f32,
+    /// Beam-search width. `1` keeps the v6 greedy path. See
+    /// `decoder::DEFAULT_BEAM_SIZE`.
+    pub beam_size: usize,
+    /// Length penalty α used when `beam_size > 1`. See
+    /// `decoder::DEFAULT_LENGTH_PENALTY`.
+    pub length_penalty: f32,
 }
 
 impl CanaryConfig {
@@ -75,6 +81,8 @@ impl CanaryConfig {
             repetition_penalty: super::decoder::DEFAULT_REPETITION_PENALTY,
             min_token_to_frame_ratio: super::decoder::DEFAULT_MIN_TOKEN_TO_FRAME_RATIO,
             eos_confidence_margin: super::decoder::DEFAULT_EOS_CONFIDENCE_MARGIN,
+            beam_size: super::decoder::DEFAULT_BEAM_SIZE,
+            length_penalty: super::decoder::DEFAULT_LENGTH_PENALTY,
         }
     }
 
@@ -198,6 +206,8 @@ impl CanaryAdapter {
             repetition_penalty: self.cfg.repetition_penalty,
             min_token_to_frame_ratio: self.cfg.min_token_to_frame_ratio,
             eos_confidence_margin: self.cfg.eos_confidence_margin,
+            beam_size: self.cfg.beam_size,
+            length_penalty: self.cfg.length_penalty,
         };
         let decoded = self.decoder.decode(&enc.embeddings, &enc.mask, &self.vocab, &opts)?;
 
