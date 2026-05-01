@@ -418,6 +418,18 @@ pub fn suppress_eos_until_min_length(
     }
 }
 
+/// Count valid frames in row `batch_idx` of an encoder mask
+/// `[B, T_sub]`. The encoder pads `T_sub` to a multiple of its
+/// FastConformer subsampling stride; trailing positions are 0 in
+/// the mask. Use this for any computation that should be driven by
+/// real audio length rather than the padded shape.
+pub fn valid_frame_count(mask: &Array2<i64>, batch_idx: usize) -> usize {
+    if batch_idx >= mask.shape()[0] {
+        return 0;
+    }
+    mask.row(batch_idx).iter().filter(|&&v| v != 0).count()
+}
+
 /// Demote `<|endoftext|>` to `-inf` at the last time-position if
 /// its logit doesn't lead the next-best non-EOS token by at least
 /// `margin`. Forces the greedy step to keep emitting on borderline
@@ -717,11 +729,12 @@ impl CanaryDecoder {
             }
 
             // Min-length gate: forbid `<|endoftext|>` until the
-            // suffix has consumed `ratio × T_sub` tokens. Suppresses
-            // the chunk-dropout failure mode where greedy argmax
-            // exits before the encoder frames are exhausted.
+            // suffix has consumed `ratio × n_valid_frames` tokens.
+            // Use the encoder mask (not the padded `T_sub`) so the
+            // gate measures against real audio length — see
+            // `valid_frame_count`.
             if opts.min_token_to_frame_ratio > 0.0 {
-                let n_enc_frames = encoder_embeddings.shape()[1];
+                let n_enc_frames = valid_frame_count(encoder_mask, 0);
                 suppress_eos_until_min_length(
                     &mut logits,
                     eos,
@@ -920,7 +933,7 @@ impl CanaryDecoder {
         // suffix yet, so repetition penalty has nothing to do).
         let mut step0_logits = init_logits;
         if opts.min_token_to_frame_ratio > 0.0 {
-            let n_enc_frames = encoder_embeddings.shape()[1];
+            let n_enc_frames = valid_frame_count(encoder_mask, 0);
             suppress_eos_until_min_length(
                 &mut step0_logits,
                 eos,
@@ -991,7 +1004,10 @@ impl CanaryDecoder {
             // prefix_len + step count, but suffix == step count is
             // identical across beams at this point).
             let suffix_len = active[0].tokens.len() - prefix_len;
-            let n_enc_frames = encoder_embeddings.shape()[1];
+            // Mask is `[1, T_sub]` (input batch == 1); each beam
+            // shares the same encoder output, so all beams use the
+            // same valid-frame count.
+            let n_enc_frames = valid_frame_count(encoder_mask, 0);
             for (bi, beam) in active.iter().enumerate() {
                 if opts.repetition_penalty != 1.0 {
                     apply_repetition_penalty_one_batch(
@@ -1807,6 +1823,64 @@ mod tests {
         let mut b = make_logits_1xv(&[1.0, 5.0, 3.0]);
         suppress_eos_until_min_length(&mut b, 1, 3, 10, 0.25);
         assert_eq!(b[[0, 0, 1]], 5.0);
+    }
+
+    #[test]
+    fn valid_frame_count_returns_count_of_ones() {
+        let m = ndarray::Array2::<i64>::from_shape_vec(
+            (1, 8),
+            vec![1, 1, 1, 1, 1, 0, 0, 0],
+        )
+        .unwrap();
+        assert_eq!(valid_frame_count(&m, 0), 5);
+    }
+
+    #[test]
+    fn valid_frame_count_full_mask_equals_shape() {
+        let m = ndarray::Array2::<i64>::from_shape_vec(
+            (1, 4),
+            vec![1, 1, 1, 1],
+        )
+        .unwrap();
+        assert_eq!(valid_frame_count(&m, 0), 4);
+    }
+
+    #[test]
+    fn valid_frame_count_handles_out_of_range_batch() {
+        let m = ndarray::Array2::<i64>::from_shape_vec(
+            (1, 4),
+            vec![1, 1, 0, 0],
+        )
+        .unwrap();
+        // Asking for a non-existent batch must not panic.
+        assert_eq!(valid_frame_count(&m, 7), 0);
+    }
+
+    #[test]
+    fn valid_frame_count_treats_nonzero_as_valid() {
+        // The ONNX export emits i64 1-vs-0; defensively treat any
+        // non-zero as valid in case a future export uses a different
+        // truthy convention.
+        let m = ndarray::Array2::<i64>::from_shape_vec(
+            (1, 4),
+            vec![1, 2, 0, 1],
+        )
+        .unwrap();
+        assert_eq!(valid_frame_count(&m, 0), 3);
+    }
+
+    #[test]
+    fn valid_frame_count_per_batch_independent() {
+        let m = ndarray::Array2::<i64>::from_shape_vec(
+            (2, 4),
+            vec![
+                1, 1, 1, 0, // batch 0 → 3 valid
+                1, 1, 0, 0, // batch 1 → 2 valid
+            ],
+        )
+        .unwrap();
+        assert_eq!(valid_frame_count(&m, 0), 3);
+        assert_eq!(valid_frame_count(&m, 1), 2);
     }
 
     #[test]
