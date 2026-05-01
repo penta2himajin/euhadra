@@ -40,6 +40,13 @@ onnx = ["dep:ort", "dep:ndarray", "dep:tokenizers", "dep:parakeet-rs", "dep:rust
 name = "euhadra"
 path = "src/main.rs"
 
+# Canary tensor dump tool — only buildable with the onnx feature
+# because it pulls in `euhadra::canary::*` directly and instantiates
+# an ort Session.
+[[example]]
+name = "dump_canary_rust_tensors"
+required-features = ["onnx"]
+
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
 async-trait = "0.1"

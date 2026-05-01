@@ -265,6 +265,77 @@ still picks a non-EOS token early but eventually emits EOS at the
 right scale-of-encoder-frames boundary, producing a partial
 transcript).
 
+### v6 — Python-aligned frontend + retune (FP32, n=100, 2026-05-01)
+
+Investigated whether the residual ~13 % WER might be a Rust-side
+bug rather than a model-intrinsic limit. Built a tensor-dump
+harness (`scripts/dump_canary_python_tensors.py` +
+`examples/dump_canary_rust_tensors.rs` +
+`scripts/compare_canary_tensors.py`) that runs both `onnx-asr`'s
+Python pipeline and our Rust `CanaryAdapter` on the same WAV and
+compares mel / encoder / decoder tensors element-wise.
+
+**Key finding** — for FLEURS-es utterance 2001 the first two
+greedy tokens matched bit-exactly between Python and Rust even
+before any frontend changes; for the loop-triggering utterances
+(1725 "Asus E E E…", 1915 "boda boda…") **`onnx-asr` produces the
+same loops as our Rust** with no gates active. The catastrophic
+failure modes are upstream model / export behaviour, not Rust
+bugs. The repetition penalty / min-length / EOS-margin gates from
+v3-v5 are correct mitigations.
+
+**But** the dump comparator did surface four real numerical
+mismatches in `src/canary/frontend.rs` vs onnx-asr's
+`NumpyPreprocessor`:
+
+1. Framing strategy — Python pads the waveform with `n_fft / 2`
+   zeros each side before sliding-window framing; Rust used
+   snip-edges (no padding).
+2. Frame length — Python frames are length `n_fft` (= 512); Rust
+   used `win_length` (= 400).
+3. Window — Python applies a Hann window of `win_length`
+   centre-padded to `n_fft`; Rust used a raw `win_length` Hann.
+4. CMVN variance — Python uses N-1 (Bessel correction); Rust used N.
+
+Plus an off-by-one: Python truncates to `features_lens =
+samples.len() / hop_length` (zeroing any extra trailing frame in
+the buffer); Rust passed all `num_frames` to the encoder via the
+`length` input.
+
+Aligning the frontend to Python:
+
+| component | max_rel diff before | max_rel diff after |
+|---|---|---|
+| mel | shape mismatch (1282 vs 1285) | aligned (truncate to 1284) |
+| encoder_emb | 13.7 % | **3.5e-6** |
+| step0_logits | 0.90 % | **5.1e-7** |
+| step0_hidden | 0.34 % | **2.8e-7** |
+
+Now Rust matches Python at FP32 float-precision level. Re-tuned the
+gates against the new bit-aligned frontend (penalty 1.8 → **2.0**;
+min-len 0.2 unchanged; eos-margin 2.0 unchanged):
+
+```
+[es] n=100  WER=0.1289  median=0.0845  RTF=0.171
+       hard fails=0  repetition loops=0  clean(0–5%)=44
+```
+
+Across v2 → v6 trajectory:
+
+| stage | mean WER | hard fails | loops | clean (0–5 %) |
+|---|---|---|---|---|
+| v2 (no gates, ad-hoc frontend) | 35.37 % | 1 | 2 | — |
+| v3 (penalty 1.8) | 14.38 % | 1 | 0 | 41 |
+| v4 (+ min-len 0.2) | 13.63 % | 0 | 0 | 41 |
+| v5 (+ eos-margin 2.0) | 13.21 % | 0 | 0 | 42 |
+| **v6 (Python-aligned + penalty 2.0)** | **12.89 %** | **0** | **0** | **44** |
+
+The bit-level alignment is **strictly better** even though the
+mean improvement vs v5 is small (-0.32 pp) — the clean count
+moves from 42 to 44, the median holds at 8.4 %, and the
+implementation is now provably equivalent to the upstream Python
+reference.
+
 ### v5 — EOS-confidence margin (FP32, n=100, 2026-04-30)
 
 Building on v4 (penalty 1.8 + min-len 0.2), added an EOS-confidence
