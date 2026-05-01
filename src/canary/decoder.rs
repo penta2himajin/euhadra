@@ -73,6 +73,48 @@ pub const DECODER_OUTPUT_HIDDEN_STATES: &str = "decoder_hidden_states";
 /// changes blow up at compile time rather than at inference.
 pub const PREFIX_LEN: usize = 10;
 
+/// Layout of the decoder prefix tokens. The official NeMo
+/// `Canary2PromptFormatter` template
+///
+/// ```text
+/// {CANARY2_BOCTX}|decodercontext|{CANARY_BOS}|emotion||source_lang|
+/// |target_lang||pnc||itn||timestamp||diarize|
+/// ```
+///
+/// renders to **9 tokens** when `decodercontext` is the empty string
+/// (the default for ASR without a context prompt). The
+/// `istupakov/onnx-asr` Python reference instead emits a 10-token
+/// prefix that puts a leading `▁` (last-occurrence of U+2581) before
+/// `<|startofcontext|>`. The two layouts produce different decoder
+/// behaviour for some inputs; we expose the choice as an enum so a
+/// future PR can sweep both layouts and pick the one that actually
+/// matches Canary's training distribution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrefixFormat {
+    /// 10-token onnx-asr layout: `[▁, <|soc|>, <|sot|>, ..., <|nodiarize|>]`.
+    /// What we shipped through PR #28-#36; matches the Python
+    /// `onnx-asr` reference bit-for-bit.
+    OnnxAsr,
+    /// 9-token NeMo Canary2PromptFormatter layout (no leading ▁):
+    /// `[<|soc|>, <|sot|>, <|emo:undefined|>, <|src|>, <|tgt|>,
+    ///  <|pnc|>, <|noitn|>, <|notimestamp|>, <|nodiarize|>]`.
+    NemoCanary2,
+}
+
+impl PrefixFormat {
+    pub fn token_count(&self) -> usize {
+        match self {
+            PrefixFormat::OnnxAsr => 10,
+            PrefixFormat::NemoCanary2 => 9,
+        }
+    }
+}
+
+/// Default prefix format. `OnnxAsr` until the per-format sweep in
+/// `docs/canary-integration.md` "v8 — official prompt alignment"
+/// confirms which one the model was actually trained against.
+pub const DEFAULT_PREFIX_FORMAT: PrefixFormat = PrefixFormat::OnnxAsr;
+
 /// Default cap on the autoregressive sequence length, matching the
 /// `max_sequence_length` field of the istupakov canary config.json.
 pub const DEFAULT_MAX_SEQUENCE_LENGTH: usize = 1024;
@@ -216,6 +258,8 @@ pub struct DecodeOptions {
     /// Length penalty α for beam-search final scoring; ignored when
     /// `beam_size == 1`. See `DEFAULT_LENGTH_PENALTY`.
     pub length_penalty: f32,
+    /// Decoder prefix layout. See `PrefixFormat`.
+    pub prefix_format: PrefixFormat,
 }
 
 impl DecodeOptions {
@@ -231,6 +275,7 @@ impl DecodeOptions {
             eos_confidence_margin: DEFAULT_EOS_CONFIDENCE_MARGIN,
             beam_size: DEFAULT_BEAM_SIZE,
             length_penalty: DEFAULT_LENGTH_PENALTY,
+            prefix_format: DEFAULT_PREFIX_FORMAT,
         }
     }
 }
@@ -291,10 +336,15 @@ pub fn build_decoder_prefix(
         message: "vocab missing <|nodiarize|>".into(),
     })?;
 
-    let prefix = vec![
-        space, soc, sot, emo, src_lang, tgt_lang, pnc, noitn, notimestamp, nodiarize,
-    ];
-    debug_assert_eq!(prefix.len(), PREFIX_LEN);
+    let prefix: Vec<u32> = match opts.prefix_format {
+        PrefixFormat::OnnxAsr => vec![
+            space, soc, sot, emo, src_lang, tgt_lang, pnc, noitn, notimestamp, nodiarize,
+        ],
+        PrefixFormat::NemoCanary2 => vec![
+            soc, sot, emo, src_lang, tgt_lang, pnc, noitn, notimestamp, nodiarize,
+        ],
+    };
+    debug_assert_eq!(prefix.len(), opts.prefix_format.token_count());
     Ok(prefix.into_iter().map(|x| x as i64).collect())
 }
 
@@ -1449,6 +1499,32 @@ mod tests {
     }
 
     #[test]
+    fn prefix_nemo_canary2_layout_is_nine_tokens() {
+        // The official NeMo `Canary2PromptFormatter` template
+        // (NVIDIA/NeMo nemo/collections/common/prompts/canary2.py)
+        // renders to 9 tokens for ASR with empty `decodercontext`:
+        //   [<|soc|>, <|sot|>, <|emo:undefined|>, <|src|>, <|tgt|>,
+        //    <|pnc|>, <|noitn|>, <|notimestamp|>, <|nodiarize|>]
+        // i.e. the same as `OnnxAsr` minus the leading ▁.
+        let v = Vocab::from_text(&mini_vocab_text()).unwrap();
+        let mut opts = DecodeOptions::for_asr("es");
+        opts.prefix_format = PrefixFormat::NemoCanary2;
+        let p = build_decoder_prefix(&v, &opts).unwrap();
+        assert_eq!(p.len(), 9);
+        assert_eq!(p.len(), PrefixFormat::NemoCanary2.token_count());
+        // Slot 0 = <|startofcontext|> (no leading ▁ in NeMo template).
+        assert_eq!(p[0], 7);
+        assert_eq!(p[1], 4);  // <|startoftranscript|>
+        assert_eq!(p[2], 11); // <|emo:undefined|>
+        assert_eq!(p[3], 15); // source <|es|>
+        assert_eq!(p[4], 15); // target <|es|>
+        assert_eq!(p[5], 5);  // <|pnc|>
+        assert_eq!(p[6], 8);  // <|noitn|>
+        assert_eq!(p[7], 10); // <|notimestamp|>
+        assert_eq!(p[8], 9);  // <|nodiarize|>
+    }
+
+    #[test]
     fn prefix_uses_nopnc_when_disabled() {
         let v = Vocab::from_text(&mini_vocab_text()).unwrap();
         let mut opts = DecodeOptions::for_asr("en");
@@ -1482,6 +1558,7 @@ mod tests {
             eos_confidence_margin: 0.0,
             beam_size: 1,
             length_penalty: 0.0,
+            prefix_format: PrefixFormat::OnnxAsr,
         };
         let p = build_decoder_prefix(&v, &opts).unwrap();
         assert_eq!(p[4], 12, "source = en");
