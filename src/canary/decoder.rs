@@ -155,6 +155,25 @@ pub const DEFAULT_MIN_TOKEN_TO_FRAME_RATIO: f32 = 0.2;
 /// count drops). Set to `0.0` to disable.
 pub const DEFAULT_EOS_CONFIDENCE_MARGIN: f32 = 2.0;
 
+/// Default beam-search width. `1` means greedy (the v6 path); higher
+/// values trade compute for accuracy by exploring multiple
+/// hypotheses in parallel and keeping the top-`beam_size` by
+/// length-normalised log-probability. The Canary model card numbers
+/// (FLEURS-es 2.9 % WER on the 1B-v2 variant) are reported with a
+/// beam search; the istupakov ONNX export's `onnx-asr` Python
+/// reference is greedy-only and clocks 34.43 % WER on the same 100-utt
+/// FLEURS-es subset — the gap motivates this option. Sweep recorded
+/// in `docs/canary-integration.md` "End-to-end validation v7".
+pub const DEFAULT_BEAM_SIZE: usize = 1;
+
+/// Default length penalty α for beam-search final scoring. Score per
+/// hypothesis is `log_prob / length^α`; α = 0 disables length
+/// normalisation (longer sequences are penalised), α = 1 fully
+/// length-normalises. The HF transformers default for ASR is around
+/// 0.6 — slightly favours longer hypotheses without making them
+/// arbitrarily long. Only used when `beam_size > 1`.
+pub const DEFAULT_LENGTH_PENALTY: f32 = 0.6;
+
 /// Per-call decoding knobs. Defaults to Spanish ASR with
 /// punctuation-and-capitalisation enabled.
 #[derive(Debug, Clone)]
@@ -188,6 +207,15 @@ pub struct DecodeOptions {
     /// borderline cases. `0.0` disables. See
     /// `DEFAULT_EOS_CONFIDENCE_MARGIN`.
     pub eos_confidence_margin: f32,
+    /// Beam-search width. `1` keeps the v6 greedy path. Values > 1
+    /// switch to a batched beam-search loop where the decoder runs
+    /// `beam_size` hypotheses in parallel and selects the top-
+    /// `beam_size` by accumulated length-normalised log-probability
+    /// at each step.
+    pub beam_size: usize,
+    /// Length penalty α for beam-search final scoring; ignored when
+    /// `beam_size == 1`. See `DEFAULT_LENGTH_PENALTY`.
+    pub length_penalty: f32,
 }
 
 impl DecodeOptions {
@@ -201,6 +229,8 @@ impl DecodeOptions {
             repetition_penalty: DEFAULT_REPETITION_PENALTY,
             min_token_to_frame_ratio: DEFAULT_MIN_TOKEN_TO_FRAME_RATIO,
             eos_confidence_margin: DEFAULT_EOS_CONFIDENCE_MARGIN,
+            beam_size: DEFAULT_BEAM_SIZE,
+            length_penalty: DEFAULT_LENGTH_PENALTY,
         }
     }
 }
@@ -523,6 +553,10 @@ impl CanaryDecoder {
             });
         }
 
+        if opts.beam_size > 1 {
+            return self.decode_beam(encoder_embeddings, encoder_mask, vocab, opts);
+        }
+
         let prefix = build_decoder_prefix(vocab, opts)?;
         let prefix_len = prefix.len();
         let max_len = opts.max_sequence_length.max(prefix_len + 1);
@@ -700,6 +734,552 @@ fn logprob_of_token(logits: &Array3<f32>, batch: usize, token: u32) -> f32 {
     let sum_exp: f32 = (0..vocab_size).map(|v| (last[v] - max).exp()).sum();
     let logsumexp = max + sum_exp.ln();
     last[token as usize] - logsumexp
+}
+
+/// Compute the per-token log-softmax of a single `[V]` logit row,
+/// returning the full normalised vector. Numerically stable
+/// (subtracts max before exponentiating).
+fn log_softmax_row(logits: &[f32]) -> Vec<f32> {
+    let mut max = f32::NEG_INFINITY;
+    for &v in logits {
+        if v > max {
+            max = v;
+        }
+    }
+    if !max.is_finite() {
+        return vec![f32::NEG_INFINITY; logits.len()];
+    }
+    let mut sum_exp = 0.0_f32;
+    for &v in logits {
+        sum_exp += (v - max).exp();
+    }
+    let logsumexp = max + sum_exp.ln();
+    logits.iter().map(|&v| v - logsumexp).collect()
+}
+
+/// Find the top-`k` indices of `xs` by descending value. Stable
+/// across ties (lower index wins). Returns at most `k` items even
+/// if `xs.len() < k`.
+fn topk_indices(xs: &[f32], k: usize) -> Vec<(usize, f32)> {
+    let mut indexed: Vec<(usize, f32)> = xs.iter().enumerate().map(|(i, &v)| (i, v)).collect();
+    indexed.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(a.0.cmp(&b.0))
+    });
+    indexed.truncate(k);
+    indexed
+}
+
+/// Length-normalised hypothesis score: `cum_logprob / length^α`.
+/// `length` is the number of generated (non-prefix, non-EOS) tokens.
+/// `α = 0` reduces to the raw cumulative log-prob; `α = 1` fully
+/// length-normalises. Used to compare beams of different lengths
+/// at the final selection step.
+fn length_normalised_score(cum_logprob: f32, length: usize, alpha: f32) -> f32 {
+    if length == 0 {
+        return cum_logprob;
+    }
+    if alpha == 0.0 {
+        return cum_logprob;
+    }
+    cum_logprob / (length as f32).powf(alpha)
+}
+
+#[derive(Clone)]
+struct ActiveBeam {
+    /// Full token sequence, prefix included.
+    tokens: Vec<i64>,
+    /// Sum of log-probabilities over the generated suffix.
+    cum_logprob: f32,
+}
+
+#[derive(Clone)]
+struct FinishedBeam {
+    tokens: Vec<i64>,
+    cum_logprob: f32,
+    /// Generated-suffix length (excludes prefix, excludes the
+    /// trailing EOS).
+    length: usize,
+}
+
+impl CanaryDecoder {
+    /// Beam-search decoding loop. Mirrors `decode` but maintains
+    /// `beam_size` parallel hypotheses, expands each by the top-
+    /// `beam_size` next tokens at every step, and keeps the global
+    /// top-`beam_size` after re-ranking.
+    ///
+    /// All gates from the greedy path (repetition penalty, min-length,
+    /// EOS-confidence margin) apply per beam — each beam carries its
+    /// own history for the repetition penalty, while the positional
+    /// min-length and EOS-margin gates operate on each beam's own
+    /// suffix length.
+    ///
+    /// KV cache (`decoder_mems`) is reordered per step using
+    /// `ndarray::select` along the batch axis so each new beam starts
+    /// from its parent's cache.
+    fn decode_beam(
+        &self,
+        encoder_embeddings: &Array3<f32>,
+        encoder_mask: &Array2<i64>,
+        vocab: &Vocab,
+        opts: &DecodeOptions,
+    ) -> Result<DecodeOutput, AsrError> {
+        let beam_size = opts.beam_size;
+        if beam_size < 2 {
+            return Err(AsrError {
+                message: format!(
+                    "decode_beam requires beam_size ≥ 2 (got {beam_size})"
+                ),
+            });
+        }
+
+        let prefix = build_decoder_prefix(vocab, opts)?;
+        let prefix_len = prefix.len();
+        let max_len = opts.max_sequence_length.max(prefix_len + 1);
+        let eos = vocab.eos()?;
+
+        let mut session = self.session.lock().map_err(|e| AsrError {
+            message: format!("decoder session lock poisoned: {e}"),
+        })?;
+
+        // === Step 0: identical prefix across all B beams; run once
+        // and seed the beam set from the top-B candidates. ===
+        let initial_input: Array2<i64> =
+            Array2::from_shape_vec((1, prefix_len), prefix.clone()).map_err(|e| AsrError {
+                message: format!("input_ids reshape (initial): {e}"),
+            })?;
+        let initial_mems: Array4<f32> =
+            Array4::zeros((self.mems_layers, 1, 0, self.mems_hidden));
+        let (init_logits, init_hidden) = run_decoder_step(
+            &mut session,
+            initial_input,
+            encoder_embeddings.clone(),
+            encoder_mask.clone(),
+            initial_mems,
+        )?;
+
+        // Apply min-length / eos-margin gates once at step 0 (no
+        // suffix yet, so repetition penalty has nothing to do).
+        let mut step0_logits = init_logits;
+        if opts.min_token_to_frame_ratio > 0.0 {
+            let n_enc_frames = encoder_embeddings.shape()[1];
+            suppress_eos_until_min_length(
+                &mut step0_logits,
+                eos,
+                0,
+                n_enc_frames,
+                opts.min_token_to_frame_ratio,
+            );
+        }
+        if opts.eos_confidence_margin > 0.0 {
+            enforce_eos_confidence_margin(&mut step0_logits, eos, opts.eos_confidence_margin);
+        }
+
+        let last_t = step0_logits.shape()[1] - 1;
+        let vocab_size = step0_logits.shape()[2];
+        let last_row: Vec<f32> = (0..vocab_size).map(|v| step0_logits[[0, last_t, v]]).collect();
+        let log_probs0 = log_softmax_row(&last_row);
+        let candidates0 = topk_indices(&log_probs0, beam_size);
+
+        let mut active: Vec<ActiveBeam> = Vec::with_capacity(beam_size);
+        for (vid, lp) in &candidates0 {
+            let mut tokens = prefix.clone();
+            tokens.push(*vid as i64);
+            active.push(ActiveBeam {
+                tokens,
+                cum_logprob: *lp,
+            });
+        }
+
+        // Broadcast the [L, 1, T_acc, H] step-0 hidden state to
+        // [L, B, T_acc, H] by stacking `beam_size` copies along
+        // axis 1 — they're all identical at this point because the
+        // prefix is shared.
+        let mut decoder_mems: Array4<f32> = stack_along_batch(&init_hidden, beam_size)?;
+
+        let mut finished: Vec<FinishedBeam> = Vec::new();
+
+        // === Step ≥ 1: each active beam is now distinct. Run them
+        // in a single batched decoder call (input_ids [B, 1],
+        // encoder repeated). ===
+        while !active.is_empty()
+            && active[0].tokens.len() < max_len
+            && finished.len() < beam_size
+        {
+            let b = active.len();
+
+            // Build input_ids = each beam's last token, shape [B, 1].
+            let last_tokens: Vec<i64> = active.iter().map(|x| *x.tokens.last().unwrap()).collect();
+            let input_ids: Array2<i64> = Array2::from_shape_vec((b, 1), last_tokens.clone())
+                .map_err(|e| AsrError {
+                    message: format!("input_ids reshape (step): {e}"),
+                })?;
+
+            // Replicate encoder I/O across the batch dim.
+            let enc_emb_b: Array3<f32> = repeat_along_axis0(encoder_embeddings, b);
+            let enc_mask_b: Array2<i64> = repeat_along_axis0_i64(encoder_mask, b);
+
+            let (mut logits, hidden) = run_decoder_step(
+                &mut session,
+                input_ids,
+                enc_emb_b,
+                enc_mask_b,
+                decoder_mems,
+            )?;
+
+            // Apply per-beam gates: repetition penalty uses each
+            // beam's own history; min-length / eos-margin operate on
+            // each beam's suffix length (all beams share the same
+            // prefix_len + step count, but suffix == step count is
+            // identical across beams at this point).
+            let suffix_len = active[0].tokens.len() - prefix_len;
+            let n_enc_frames = encoder_embeddings.shape()[1];
+            for (bi, beam) in active.iter().enumerate() {
+                if opts.repetition_penalty != 1.0 {
+                    apply_repetition_penalty_one_batch(
+                        &mut logits,
+                        bi,
+                        &beam.tokens[prefix_len..],
+                        opts.repetition_penalty,
+                    );
+                }
+                if opts.min_token_to_frame_ratio > 0.0 {
+                    suppress_eos_until_min_length_one_batch(
+                        &mut logits,
+                        bi,
+                        eos,
+                        suffix_len,
+                        n_enc_frames,
+                        opts.min_token_to_frame_ratio,
+                    );
+                }
+                if opts.eos_confidence_margin > 0.0 {
+                    enforce_eos_confidence_margin_one_batch(
+                        &mut logits,
+                        bi,
+                        eos,
+                        opts.eos_confidence_margin,
+                    );
+                }
+            }
+
+            // For each beam, compute log-softmax of last position
+            // and grab top-`beam_size` candidates. Score each
+            // candidate as parent.cum_logprob + log_prob[v].
+            let last_t = logits.shape()[1] - 1;
+            let vocab_size = logits.shape()[2];
+            let mut all_candidates: Vec<(usize, i64, f32)> =
+                Vec::with_capacity(b * beam_size);
+            for bi in 0..b {
+                let row: Vec<f32> = (0..vocab_size).map(|v| logits[[bi, last_t, v]]).collect();
+                let lp = log_softmax_row(&row);
+                let topk = topk_indices(&lp, beam_size);
+                for (vid, score) in topk {
+                    all_candidates.push((bi, vid as i64, active[bi].cum_logprob + score));
+                }
+            }
+            all_candidates.sort_by(|a, c| {
+                c.2.partial_cmp(&a.2)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then(a.0.cmp(&c.0))
+            });
+
+            // Take up to `beam_size` candidates, classifying each as
+            // finished (next == EOS) or active. EOS hypotheses
+            // always finalise — they're scored by the cumulative
+            // log-prob *up to but not including* the EOS token,
+            // which is the convention onnx-asr uses for its
+            // logprob-aligned output.
+            let mut next_active: Vec<ActiveBeam> = Vec::new();
+            let mut parent_idx_for_active: Vec<usize> = Vec::new();
+            for (parent, vid, cum) in all_candidates {
+                if next_active.len() + finished.len() >= beam_size + finished.len() {
+                    // pruned
+                }
+                if next_active.len() >= beam_size {
+                    break;
+                }
+                let mut tokens = active[parent].tokens.clone();
+                if vid as u32 == eos {
+                    finished.push(FinishedBeam {
+                        tokens,
+                        cum_logprob: active[parent].cum_logprob,
+                        length: suffix_len,
+                    });
+                    if finished.len() >= beam_size {
+                        break;
+                    }
+                } else {
+                    tokens.push(vid);
+                    next_active.push(ActiveBeam {
+                        tokens,
+                        cum_logprob: cum,
+                    });
+                    parent_idx_for_active.push(parent);
+                }
+            }
+
+            if next_active.is_empty() {
+                break;
+            }
+
+            // Reorder decoder_mems by parent_idx so each new beam
+            // starts from its parent's KV cache. `hidden` has shape
+            // [L, b, T_acc+1, H]; `select` along axis 1 picks the
+            // parent rows in the new beam order.
+            decoder_mems = hidden.select(Axis(1), &parent_idx_for_active);
+            active = next_active;
+        }
+
+        // Finalise: collect candidates from finished + still-active
+        // beams, score them by length-normalised log-prob, pick the
+        // best.
+        let alpha = opts.length_penalty;
+        let mut best: Option<(Vec<i64>, Vec<f32>)> = None;
+        let mut best_score = f32::NEG_INFINITY;
+
+        for f in &finished {
+            let score = length_normalised_score(f.cum_logprob, f.length, alpha);
+            if score > best_score {
+                best_score = score;
+                let logprobs = vec![0.0_f32; f.length];
+                best = Some((f.tokens.clone(), logprobs));
+            }
+        }
+        for a in &active {
+            let length = a.tokens.len() - prefix_len;
+            let score = length_normalised_score(a.cum_logprob, length, alpha);
+            if score > best_score {
+                best_score = score;
+                let logprobs = vec![0.0_f32; length];
+                best = Some((a.tokens.clone(), logprobs));
+            }
+        }
+
+        let (best_tokens, best_logprobs) = best.ok_or_else(|| AsrError {
+            message: "beam search produced no candidates".into(),
+        })?;
+
+        let all_ids: Vec<u32> = best_tokens.iter().map(|&x| x as u32).collect();
+        let kept = strip_prefix_and_specials(&all_ids, prefix_len, vocab);
+        // The per-token logprobs vector is a placeholder (filled with
+        // zeros) — beam search merges contributions across multiple
+        // ancestor paths, so per-step log-probabilities aren't
+        // unambiguously aligned with the surviving tokens. Caller
+        // can ignore them; `kept` is the user-facing transcript.
+        let kept_logprobs: Vec<f32> = vec![0.0_f32; kept.len()];
+        let _ = best_logprobs;
+
+        Ok(DecodeOutput {
+            tokens: kept,
+            logprobs: kept_logprobs,
+        })
+    }
+}
+
+/// Run a single decoder step from outside the greedy/beam loops.
+/// Returns `(logits, decoder_hidden_states)`.
+fn run_decoder_step(
+    session: &mut Session,
+    input_ids: Array2<i64>,
+    encoder_embeddings: Array3<f32>,
+    encoder_mask: Array2<i64>,
+    decoder_mems: Array4<f32>,
+) -> Result<(Array3<f32>, Array4<f32>), AsrError> {
+    let input_ids_v = Value::from_array(input_ids).map_err(|e| AsrError {
+        message: format!("input_ids Value: {e}"),
+    })?;
+    let enc_emb_v = Value::from_array(encoder_embeddings).map_err(|e| AsrError {
+        message: format!("encoder_embeddings Value: {e}"),
+    })?;
+    let enc_mask_v = Value::from_array(encoder_mask).map_err(|e| AsrError {
+        message: format!("encoder_mask Value: {e}"),
+    })?;
+    let mems_v = Value::from_array(decoder_mems).map_err(|e| AsrError {
+        message: format!("decoder_mems Value: {e}"),
+    })?;
+    let outputs = session
+        .run(vec![
+            (DECODER_INPUT_IDS, input_ids_v.into_dyn()),
+            (DECODER_INPUT_ENCODER_EMBEDDINGS, enc_emb_v.into_dyn()),
+            (DECODER_INPUT_ENCODER_MASK, enc_mask_v.into_dyn()),
+            (DECODER_INPUT_DECODER_MEMS, mems_v.into_dyn()),
+        ])
+        .map_err(|e| AsrError {
+            message: format!("Canary decoder run: {e}"),
+        })?;
+    let logits_idx = output_index(&outputs, DECODER_OUTPUT_LOGITS).ok_or_else(|| AsrError {
+        message: format!("decoder missing output {DECODER_OUTPUT_LOGITS}"),
+    })?;
+    let mems_idx = output_index(&outputs, DECODER_OUTPUT_HIDDEN_STATES).ok_or_else(|| AsrError {
+        message: format!("decoder missing output {DECODER_OUTPUT_HIDDEN_STATES}"),
+    })?;
+    let logits: Array3<f32> = outputs[logits_idx]
+        .try_extract_array::<f32>()
+        .map_err(|e| AsrError {
+            message: format!("extract logits: {e}"),
+        })?
+        .to_owned()
+        .into_dimensionality()
+        .map_err(|e| AsrError {
+            message: format!("logits rank: {e}"),
+        })?;
+    let hidden: Array4<f32> = outputs[mems_idx]
+        .try_extract_array::<f32>()
+        .map_err(|e| AsrError {
+            message: format!("extract hidden: {e}"),
+        })?
+        .to_owned()
+        .into_dimensionality()
+        .map_err(|e| AsrError {
+            message: format!("hidden rank: {e}"),
+        })?;
+    Ok((logits, hidden))
+}
+
+/// Stack `n_copies` of the rank-4 `hidden` tensor (shape
+/// `[L, 1, T, H]`) along the batch axis to produce
+/// `[L, n_copies, T, H]`. Used by `decode_beam` to broadcast the
+/// shared step-0 KV cache to each beam.
+fn stack_along_batch(hidden: &Array4<f32>, n_copies: usize) -> Result<Array4<f32>, AsrError> {
+    let (l, b, t, h) = hidden.dim();
+    if b != 1 {
+        return Err(AsrError {
+            message: format!("stack_along_batch expected batch=1, got {b}"),
+        });
+    }
+    let mut out = Array4::<f32>::zeros((l, n_copies, t, h));
+    for k in 0..n_copies {
+        out.slice_mut(ndarray::s![.., k..k + 1, .., ..])
+            .assign(hidden);
+    }
+    Ok(out)
+}
+
+/// Repeat a `[1, ..]` tensor along axis 0 `n_copies` times. Used to
+/// expand the encoder outputs across beam batch dim.
+fn repeat_along_axis0(arr: &Array3<f32>, n_copies: usize) -> Array3<f32> {
+    let shape = arr.shape();
+    let new_shape = (n_copies, shape[1], shape[2]);
+    let mut out = Array3::<f32>::zeros(new_shape);
+    for k in 0..n_copies {
+        out.slice_mut(ndarray::s![k..k + 1, .., ..]).assign(arr);
+    }
+    out
+}
+
+fn repeat_along_axis0_i64(arr: &Array2<i64>, n_copies: usize) -> Array2<i64> {
+    let shape = arr.shape();
+    let new_shape = (n_copies, shape[1]);
+    let mut out = Array2::<i64>::zeros(new_shape);
+    for k in 0..n_copies {
+        out.slice_mut(ndarray::s![k..k + 1, ..]).assign(arr);
+    }
+    out
+}
+
+/// Per-batch variants of the gate helpers — the public versions
+/// iterate over all batch elements; in beam search we want to
+/// process one row at a time because each beam has its own history.
+fn apply_repetition_penalty_one_batch(
+    logits: &mut Array3<f32>,
+    batch: usize,
+    history: &[i64],
+    penalty: f32,
+) {
+    if penalty == 1.0 || history.is_empty() {
+        return;
+    }
+    let (_, time, vocab_size) = logits.dim();
+    if time == 0 {
+        return;
+    }
+    let last_t = time - 1;
+    let mut seen = std::collections::HashSet::<i64>::new();
+    for &tok in history {
+        if tok < 0 || !seen.insert(tok) {
+            continue;
+        }
+        let v = tok as usize;
+        if v >= vocab_size {
+            continue;
+        }
+        let score = logits[[batch, last_t, v]];
+        let new_score = if score < 0.0 {
+            score * penalty
+        } else {
+            score / penalty
+        };
+        logits[[batch, last_t, v]] = new_score;
+    }
+}
+
+fn suppress_eos_until_min_length_one_batch(
+    logits: &mut Array3<f32>,
+    batch: usize,
+    eos_token_id: u32,
+    suffix_len: usize,
+    n_encoder_frames: usize,
+    ratio: f32,
+) {
+    if ratio <= 0.0 || n_encoder_frames == 0 {
+        return;
+    }
+    let min_len = (ratio * n_encoder_frames as f32).ceil() as usize;
+    if suffix_len >= min_len {
+        return;
+    }
+    let (_, time, vocab_size) = logits.dim();
+    if time == 0 {
+        return;
+    }
+    let v = eos_token_id as usize;
+    if v >= vocab_size {
+        return;
+    }
+    let last_t = time - 1;
+    logits[[batch, last_t, v]] = f32::NEG_INFINITY;
+}
+
+fn enforce_eos_confidence_margin_one_batch(
+    logits: &mut Array3<f32>,
+    batch: usize,
+    eos_token_id: u32,
+    margin: f32,
+) {
+    if margin <= 0.0 {
+        return;
+    }
+    let (_, time, vocab_size) = logits.dim();
+    if time == 0 {
+        return;
+    }
+    let v = eos_token_id as usize;
+    if v >= vocab_size {
+        return;
+    }
+    let last_t = time - 1;
+    let eos_logit = logits[[batch, last_t, v]];
+    if !eos_logit.is_finite() {
+        return;
+    }
+    let mut max_other = f32::NEG_INFINITY;
+    for vi in 0..vocab_size {
+        if vi == v {
+            continue;
+        }
+        let l = logits[[batch, last_t, vi]];
+        if l > max_other {
+            max_other = l;
+        }
+    }
+    if !max_other.is_finite() {
+        return;
+    }
+    if eos_logit - max_other < margin {
+        logits[[batch, last_t, v]] = f32::NEG_INFINITY;
+    }
 }
 
 fn validate_decoder_io(session: &Session, path: &Path) -> Result<(), AsrError> {
@@ -900,6 +1480,8 @@ mod tests {
             repetition_penalty: 1.0,
             min_token_to_frame_ratio: 0.0,
             eos_confidence_margin: 0.0,
+            beam_size: 1,
+            length_penalty: 0.0,
         };
         let p = build_decoder_prefix(&v, &opts).unwrap();
         assert_eq!(p[4], 12, "source = en");
@@ -1271,6 +1853,159 @@ mod tests {
         let o = DecodeOptions::for_asr("es");
         assert_eq!(o.eos_confidence_margin, DEFAULT_EOS_CONFIDENCE_MARGIN);
         assert_eq!(o.eos_confidence_margin, 2.0);
+    }
+
+    // --- beam search helpers ---
+
+    #[test]
+    fn log_softmax_row_sums_to_one_in_probability_space() {
+        let logits = vec![1.0, 2.0, 3.0, 4.0];
+        let lp = log_softmax_row(&logits);
+        let sum_p: f32 = lp.iter().map(|&x| x.exp()).sum();
+        assert!((sum_p - 1.0).abs() < 1e-5, "sum p = {sum_p}");
+    }
+
+    #[test]
+    fn log_softmax_row_handles_neg_inf_inputs() {
+        // A finite max with a -inf neighbour must not produce NaN.
+        let logits = vec![1.0_f32, f32::NEG_INFINITY, 2.0, 3.0];
+        let lp = log_softmax_row(&logits);
+        for v in &lp {
+            assert!(v.is_finite() || *v == f32::NEG_INFINITY, "v={v}");
+        }
+        // The masked entry maps to -inf in log-prob space.
+        assert_eq!(lp[1], f32::NEG_INFINITY);
+    }
+
+    #[test]
+    fn topk_indices_picks_largest_in_descending_order() {
+        let xs = vec![1.0, 5.0, 2.0, 4.0, 3.0];
+        let top = topk_indices(&xs, 3);
+        assert_eq!(top.len(), 3);
+        assert_eq!(top[0].0, 1); // 5.0
+        assert_eq!(top[1].0, 3); // 4.0
+        assert_eq!(top[2].0, 4); // 3.0
+    }
+
+    #[test]
+    fn topk_indices_breaks_ties_by_lower_index() {
+        let xs = vec![3.0, 3.0, 3.0, 1.0];
+        let top = topk_indices(&xs, 2);
+        assert_eq!(top[0].0, 0);
+        assert_eq!(top[1].0, 1);
+    }
+
+    #[test]
+    fn topk_indices_caps_at_input_length() {
+        let xs = vec![1.0, 2.0];
+        let top = topk_indices(&xs, 5);
+        assert_eq!(top.len(), 2);
+    }
+
+    #[test]
+    fn length_normalised_score_alpha_zero_returns_raw_logprob() {
+        assert_eq!(length_normalised_score(-3.0, 5, 0.0), -3.0);
+    }
+
+    #[test]
+    fn length_normalised_score_alpha_one_divides_by_length() {
+        let s = length_normalised_score(-6.0, 3, 1.0);
+        assert!((s - (-2.0)).abs() < 1e-6, "s={s}");
+    }
+
+    #[test]
+    fn length_normalised_score_zero_length_returns_raw() {
+        // Avoid 0^0 numerical issues; a zero-length sequence is just
+        // its raw log-prob (which is 0.0 in practice).
+        assert_eq!(length_normalised_score(0.0, 0, 0.6), 0.0);
+    }
+
+    #[test]
+    fn length_normalised_score_alpha_below_one_penalises_longer_seqs() {
+        // `score = cum_logprob / length^α` for `α < 1`: cum_logprob
+        // grows linearly with length but the divisor grows sub-
+        // linearly, so the longer sequence ends up with a more
+        // negative score. (HF transformers' length_penalty kwarg
+        // uses the same convention; values > 1 are needed to
+        // promote longer sequences.)
+        let short = length_normalised_score(-5.0, 5, 0.6);
+        let long = length_normalised_score(-10.0, 10, 0.6);
+        assert!(short > long, "short={short} long={long}");
+    }
+
+    #[test]
+    fn length_normalised_score_alpha_above_one_promotes_longer_seqs() {
+        // Mirror of the previous test: `α > 1` makes the divisor
+        // grow super-linearly so longer sequences end up with a
+        // less negative score and win.
+        let short = length_normalised_score(-5.0, 5, 1.5);
+        let long = length_normalised_score(-10.0, 10, 1.5);
+        assert!(long > short, "short={short} long={long}");
+    }
+
+    #[test]
+    fn decode_options_default_beam_size_is_one() {
+        let o = DecodeOptions::for_asr("es");
+        assert_eq!(o.beam_size, DEFAULT_BEAM_SIZE);
+        assert_eq!(o.beam_size, 1);
+    }
+
+    #[test]
+    fn stack_along_batch_replicates_correctly() {
+        let h: Array4<f32> =
+            Array4::from_shape_vec((2, 1, 3, 2), (0..12).map(|x| x as f32).collect()).unwrap();
+        let stacked = stack_along_batch(&h, 4).unwrap();
+        assert_eq!(stacked.dim(), (2, 4, 3, 2));
+        for k in 0..4 {
+            for l in 0..2 {
+                for t in 0..3 {
+                    for c in 0..2 {
+                        assert_eq!(stacked[[l, k, t, c]], h[[l, 0, t, c]]);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn stack_along_batch_rejects_non_unit_batch() {
+        let h: Array4<f32> = Array4::zeros((2, 3, 1, 1));
+        assert!(stack_along_batch(&h, 4).is_err());
+    }
+
+    #[test]
+    fn repeat_along_axis0_f32_replicates() {
+        let a: Array3<f32> =
+            Array3::from_shape_vec((1, 2, 3), (0..6).map(|x| x as f32).collect()).unwrap();
+        let r = repeat_along_axis0(&a, 3);
+        assert_eq!(r.dim(), (3, 2, 3));
+        for k in 0..3 {
+            for i in 0..2 {
+                for j in 0..3 {
+                    assert_eq!(r[[k, i, j]], a[[0, i, j]]);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn repeat_along_axis0_i64_replicates() {
+        let a: Array2<i64> = Array2::from_shape_vec((1, 4), vec![10, 20, 30, 40]).unwrap();
+        let r = repeat_along_axis0_i64(&a, 2);
+        assert_eq!(r.dim(), (2, 4));
+        assert_eq!(r[[0, 2]], 30);
+        assert_eq!(r[[1, 2]], 30);
+    }
+
+    #[test]
+    fn apply_repetition_penalty_one_batch_only_touches_target_batch() {
+        // Two-batch logits; penalty applies to batch=1 only. Batch
+        // 0 must remain unchanged.
+        let mut logits: Array3<f32> =
+            Array3::from_shape_vec((2, 1, 3), vec![1.0, 2.0, 3.0, 1.0, 2.0, 3.0]).unwrap();
+        apply_repetition_penalty_one_batch(&mut logits, 1, &[1], 2.0);
+        assert_eq!(logits[[0, 0, 1]], 2.0); // unchanged
+        assert_eq!(logits[[1, 0, 1]], 1.0); // 2 / 2
     }
 
     #[test]

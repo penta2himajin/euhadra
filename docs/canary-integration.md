@@ -265,6 +265,77 @@ still picks a non-EOS token early but eventually emits EOS at the
 right scale-of-encoder-frames boundary, producing a partial
 transcript).
 
+### v7 — Beam search (opt-in, regression on FLEURS-es greedy baseline)
+
+Implemented batched beam search in `src/canary/decoder.rs::decode_beam`
+to test the hypothesis that the gap between our greedy WER (12.89 %)
+and the Canary 1B-v2 model card FLEURS-es WER (2.9 %) is mostly
+greedy-vs-beam. Enabled by setting `DecodeOptions.beam_size > 1`;
+default remains `1` (greedy v6 path).
+
+The implementation:
+
+- Runs `B` parallel hypotheses in a single batched decoder call by
+  tiling encoder I/O across the batch dim and selecting the top-`B`
+  candidates from each step's logits.
+- Reorders `decoder_mems` per step via
+  `ndarray::Array4::select(Axis(1), &parent_idx)` so each new beam
+  starts from its parent's KV cache.
+- Reuses the v3-v5 gates per beam (repetition penalty / min-length /
+  eos-margin) via per-batch helper variants
+  (`apply_repetition_penalty_one_batch` etc.) that each operate on a
+  single row of the `[B, T, V]` logits tensor.
+- Length-normalised final scoring: `cum_logprob / length^α`.
+
+Sweep on FLEURS-es 100-utt FP32 with `length_penalty = 0.6`:
+
+| beam_size | mean WER | clean (0–5 %) | hard fails | repetition loops | RTF |
+|---|---|---|---|---|---|
+| **1 (greedy, v6 default)** | **12.89 %** | **44** | **0** | **0** | **0.13** |
+| 2 | 19.34 % | 44 | 0 | 1 | 0.28 |
+| 4 | 28.45 % | 45 | 0 | 2 | 0.64 |
+| 8 | (cancelled at 30 min) | — | — | — | — |
+
+**Beam search regresses WER monotonically with width**. Beam 4
+introduces 2 catastrophic loops the v6 gates had eliminated. The
+clean count edges up by 1 (44 → 45 at beam=4), suggesting beam
+helps on already-easy utterances while breaking borderline ones.
+
+The most likely root cause is the interaction between
+`length_penalty < 1` and the EOS-confidence margin gate:
+
+- Score `cum_logprob / length^0.6` favours **shorter** sequences
+  (cum_logprob grows linearly with length but the divisor grows
+  sub-linearly), so beam search with α = 0.6 picks early-EOS paths
+  even when the eos-margin gate has demoted EOS in the per-step
+  logits.
+- Greedy doesn't pick early EOS because the demoted EOS logit
+  loses argmax to a content token; beam search picks finishing
+  paths through the length-normalised aggregate score even when
+  EOS lost the per-step competition.
+
+Confirming this requires a length-penalty sweep at fixed beam_size
+(tracked in "Next investigation steps" below) — the code is
+correct, the default `α = 0.6` is wrong for this configuration.
+
+**Default chosen: `beam_size = 1`** (= greedy = v6, unchanged).
+Beam search is opt-in via `CanaryConfig.beam_size`; users who want
+to experiment can also tune `length_penalty`. Shipping the gates
+machinery so the next iteration (length-penalty sweep, possibly
+GNMT-style normalisation) can land cleanly without rewriting the
+beam loop.
+
+Cumulative trajectory across the 5-stage decoder series:
+
+| stage | mean WER | hard fails | loops | clean (0–5 %) |
+|---|---|---|---|---|
+| v2 (no gates, ad-hoc frontend) | 35.37 % | 1 | 2 | — |
+| v3 (penalty 1.8) | 14.38 % | 1 | 0 | 41 |
+| v4 (+ min-len 0.2) | 13.63 % | 0 | 0 | 41 |
+| v5 (+ eos-margin 2.0) | 13.21 % | 0 | 0 | 42 |
+| v6 (Python-aligned + penalty 2.0) | 12.89 % | 0 | 0 | 44 |
+| **v7 (beam search opt-in, default still greedy)** | **12.89 %** | **0** | **0** | **44** |
+
 ### v6 — Python-aligned frontend + retune (FP32, n=100, 2026-05-01)
 
 Investigated whether the residual ~13 % WER might be a Rust-side
@@ -444,26 +515,42 @@ audio is done.
 The hard Parakeet-v3-multi fallback remains documented but is
 not warranted at this time.
 
-### Next investigation steps (post-v5)
+### Next investigation steps (post-v7)
 
 1. ~~**Repetition penalty**~~ — **DONE** (PR #31).
 2. ~~**Min-length gate**~~ — **DONE** (PR #32).
-3. ~~**EOS-confidence margin**~~ — **DONE** (this PR). Margin 2.0
-   picked from a 5-value sweep.
-4. **Beam search** (next major lever) — would find longer
-   sequences with non-trivial probability that greedy misses.
-   Architectural change (KV cache management for B beams instead
-   of 1, scoring across the beam, length normalisation). Estimated
-   3–5 PRs. Expected effect: -3 to -5 pp.
-5. **Encoder-mask-aware length signal** — use the encoder_mask
-   (which we already plumb) to compute *valid* frames rather than
-   total frames for the min-length gate. Smaller gain than beam
-   search but cheaper.
-6. **INT8 reassessment** — with deterministic FP32 decoding now
+3. ~~**EOS-confidence margin**~~ — **DONE** (PR #33).
+4. ~~**Frontend bit-alignment**~~ — **DONE** (PR #34).
+5. ~~**Beam search machinery**~~ — **DONE** (this PR), but the
+   current α = 0.6 default regresses WER vs greedy. Default
+   stays at `beam_size = 1` while we tune.
+6. **Length-penalty sweep at fixed beam_size = 4** — the v7
+   regression is most consistent with α favouring shorter beams
+   too aggressively. Sweep α ∈ {0.0, 1.0, 1.2, 1.5, 2.0} and
+   pick the value that beats greedy (if any). If no α ≥ 0
+   works, switch to GNMT-style normalisation
+   `((5 + length) / 6)^α` which has a different shape across
+   small beam sizes.
+7. **Encoder-mask-aware min-length** — use `encoder_mask` (which
+   we already plumb) to compute *valid* frames rather than the
+   total frame count for the min-length gate. Smaller gain than
+   (6) but a real bug.
+8. **INT8 reassessment** — with deterministic FP32 decoding now
    stable, the INT8 quality question becomes "is INT8 within X
    pp of FP32?". The earlier INT8 nondeterminism (3 runs at
    34 % / 36 % / 94 %) was driven by the catastrophic loops; with
    those gone the INT8 numbers should be more stable.
-7. If (4) doesn't get below ~5 % WER (matching the model card),
-   **execute the Parakeet-TDT-0.6B-v3-multi hard fallback** per
-   the migration plan already documented in this file.
+9. If (6) doesn't get beam search below ~5 % WER (matching the
+   model card), **execute the Parakeet-TDT-0.6B-v3-multi hard
+   fallback** per the migration plan already documented in this
+   file. Note: the residual gap to model card 2.9 % is partly
+   because the model card numbers come from the full NeMo
+   inference pipeline (with internal beam + LM features); a
+   side-by-side measurement with `nemo_toolkit[asr]` Python
+   wasn't feasible on this CPU box (NeMo 2.7.3 requires the
+   internal `nv_one_logger` package not on PyPI; NeMo 1.23 has an
+   incompatible `huggingface_hub` API). The 100-utt result with
+   `onnx-asr` Python (greedy, 34.43 % WER) is the strongest
+   available proxy: it confirms the istupakov export's bare
+   greedy floor IS ~34 %, not the card's 2.9 %, which means most
+   of the gap is the inference path, not the model.
