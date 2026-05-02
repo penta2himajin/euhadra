@@ -29,11 +29,13 @@
 
 use async_trait::async_trait;
 use ndarray::{Array1, Array3};
-// `language` / `textnorm` / `speech_lengths` are i64 in the official
-// FunASR export — `torch.onnx.export` traces `nn.Embedding(...)` with
-// the default long-tensor dtype, so the exported ONNX graph types
-// these inputs as int64. (Some third-party exporters, e.g. sherpa-onnx,
-// rewrite the wrapper to use int32; we target the upstream layout.)
+// `language` / `textnorm` / `speech_lengths` are i32 in the official
+// FunASR export. PyTorch's `nn.Embedding` requires long tensors at
+// the layer boundary, but the SenseVoice export wrapper inserts a
+// Cast int32 → int64 right after the encoder inputs, exposing the
+// portable int32 type at the ONNX boundary. The runtime rejects
+// int64 here with `Unexpected input data type. Actual:
+// (tensor(int64)), expected: (tensor(int32))`.
 use ort::session::Session;
 use ort::value::Value;
 use std::path::{Path, PathBuf};
@@ -252,14 +254,14 @@ impl SenseVoiceAdapter {
         };
 
         // ONNX expects `speech` as [B=1, T, feat_dim] f32 and the three
-        // sidecar integer inputs as int64 1-D tensors.
+        // sidecar integer inputs as int32 1-D tensors.
         let speech: Array3<f32> = Array3::from_shape_vec((1, t_lfr, feat_dim), feats)
             .map_err(|e| AsrError {
                 message: format!("speech tensor shape: {e}"),
             })?;
-        let speech_lengths: Array1<i64> = Array1::from(vec![t_lfr as i64]);
-        let language_arr: Array1<i64> = Array1::from(vec![language_id as i64]);
-        let text_norm_arr: Array1<i64> = Array1::from(vec![text_norm_id as i64]);
+        let speech_lengths: Array1<i32> = Array1::from(vec![t_lfr as i32]);
+        let language_arr: Array1<i32> = Array1::from(vec![language_id]);
+        let text_norm_arr: Array1<i32> = Array1::from(vec![text_norm_id]);
 
         let speech_val = Value::from_array(speech).map_err(|e| AsrError {
             message: format!("speech Value: {e}"),
