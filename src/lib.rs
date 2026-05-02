@@ -24,3 +24,6 @@ pub mod paraformer;
 
 #[cfg(feature = "onnx")]
 pub mod canary;
+
+#[cfg(feature = "onnx")]
+pub mod sensevoice;
