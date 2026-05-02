@@ -203,9 +203,39 @@ jobs:
       - name: Install Python deps for SenseVoice export (cache miss only)
         if: steps.sensevoice-cache.outputs.cache-hit != 'true'
         run: |
-          pip3 install --quiet \
+          # FunASR's runtime imports torchaudio at module scope, so it
+          # must be installed alongside torch (CPU wheels). libsndfile1
+          # backs torchaudio's audio I/O and isn't always preinstalled
+          # on minimal images. Drop --quiet so any resolver / build
+          # error surfaces in CI logs (PR #45 first-run debugging).
+          sudo apt-get install -y --no-install-recommends libsndfile1
+          python3 -m pip install --upgrade pip
+          python3 -m pip install \
             --extra-index-url https://download.pytorch.org/whl/cpu \
-            torch funasr modelscope onnx onnxruntime sentencepiece
+            torch torchaudio
+          python3 -m pip install \
+            funasr modelscope onnx onnxruntime sentencepiece
+
+      - name: Verify Python deps importable (cache miss only)
+        if: steps.sensevoice-cache.outputs.cache-hit != 'true'
+        run: |
+          python3 - <<'PY'
+          import sys
+          mods = ["torch", "torchaudio", "onnx", "onnxruntime",
+                  "sentencepiece", "modelscope", "funasr"]
+          failed = []
+          for m in mods:
+              try:
+                  mod = __import__(m)
+                  print(f"[ok] import {m} (version: {getattr(mod, '__version__', 'unknown')})")
+              except Exception as e:  # noqa: BLE001
+                  print(f"[FAIL] import {m}: {type(e).__name__}: {e}", file=sys.stderr)
+                  failed.append(m)
+          if failed:
+              print(f"\n[error] {len(failed)} module(s) failed to import: {failed}",
+                    file=sys.stderr)
+              sys.exit(1)
+          PY
 
       - name: Self-export SenseVoice ONNX (cache miss only)
         if: steps.sensevoice-cache.outputs.cache-hit != 'true'
