@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated": "epoch:1777196100",
-  "asr_model": "parakeet-tdt-0.6b-v3 (en) / parakeet-tdt_ctc-0.6b-ja (ja) / paraformer-large-zh (zh)",
+  "asr_model": "parakeet-tdt-0.6b-v3 (en) / parakeet-tdt_ctc-0.6b-ja (ja) / paraformer-large-zh (zh) / canary-180m-flash (es)",
   "languages": {
     "en": {
       "samples": 10,
@@ -15,6 +15,19 @@
         "p95": 1285.0
       },
       "rtf": 0.111
+    },
+    "es": {
+      "samples": 10,
+      "wer": 0.0472,
+      "asr_latency_ms": {
+        "p50": 840.0,
+        "p95": 2100.0
+      },
+      "e2e_latency_ms": {
+        "p50": 840.0,
+        "p95": 2100.0
+      },
+      "rtf": 0.091
     },
     "ja": {
       "samples": 10,
