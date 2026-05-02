@@ -74,16 +74,21 @@ jobs:
         run: cargo clippy --features onnx --all-targets --locked -- -D warnings
 
   # L1 ASR live smoke (§1.1 / §3.8): runs Parakeet (en + ja),
-  # Paraformer-large (zh), and whisper-tiny (fallback) on a 10-utterance
-  # FLEURS subset per language, measures WER/CER + ASR/E2E latency + RTF,
-  # and gates against docs/benchmarks/ci_baseline.json. All large
-  # artefacts (whisper.cpp build, GGML models, FLEURS subset, parakeet
-  # en + ja ONNX bundles, paraformer-zh ONNX bundle) are cached so warm
-  # runs finish in a couple of minutes.
+  # Paraformer-large (zh), Canary-180M-Flash (es), SenseVoice-Small
+  # (ko), and whisper-tiny (fallback) on a 10-utterance FLEURS subset
+  # per language, measures WER/CER + ASR/E2E latency + RTF, and gates
+  # against docs/benchmarks/ci_baseline.json. All large artefacts
+  # (whisper.cpp build, GGML models, FLEURS subset, parakeet en + ja
+  # ONNX bundles, paraformer-zh ONNX bundle, canary-es ONNX bundle,
+  # sensevoice ONNX bundle) are cached so warm runs finish in a couple
+  # of minutes.
   # Parakeet-ja replaced whisper-tiny for `ja` in PR #11 (CER 42% → 3.3%).
   # Parakeet-v3 replaced whisper-tiny.en for `en` in PR #12 (WER 8.4% → 7.5%).
   # Paraformer-large replaced whisper-tiny for `zh` in PR #14
   # (CER 37% → ~5%; baseline numbers recalibrated in a follow-up commit).
+  # SenseVoice-Small added `ko` in PR #45 — first run after merge has
+  # no baseline entry and emits a warn (not fail); the baseline is
+  # back-filled with the measured numbers in a follow-up commit.
   evaluate-asr:
     name: evaluate (ASR live smoke)
     runs-on: ubuntu-latest
@@ -123,11 +128,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: data/fleurs_subset
-          key: fleurs-subset-v2-en-ja-zh-es-n10
+          key: fleurs-subset-v3-en-ja-zh-es-ko-n10
 
       - name: Download FLEURS subset (cache miss only)
         if: steps.fleurs-cache.outputs.cache-hit != 'true'
-        run: python3 scripts/download_fleurs_subset.py --lang en --lang ja --lang zh --lang es --n 10
+        run: python3 scripts/download_fleurs_subset.py --lang en --lang ja --lang zh --lang es --lang ko --n 10
 
       - name: Cache parakeet-ja ONNX bundle (~2.4 GB)
         id: parakeet-ja-cache
@@ -182,7 +187,75 @@ jobs:
           CANARY_ES_DIR: vendor/canary_es
           CANARY_FP32: "1"
 
-      - name: Build eval binary (with onnx for ParakeetAdapter + ParaformerAdapter + CanaryAdapter)
+      # SenseVoice-Small ONNX bundle (~1.1 GB total: ~895 MB FP32 +
+      # ~234 MB INT8 + sidecars). Self-exported from the official
+      # `iic/SenseVoiceSmall` HuggingFace repo via FunASR — no
+      # third-party pre-export. The cache key is bumped whenever the
+      # bundle layout changes; warm runs skip the heavy Python deps
+      # entirely.
+      - name: Cache sensevoice ONNX bundle (~1.1 GB)
+        id: sensevoice-cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/sensevoice
+          key: sensevoice-small-funaudiollm-fp32-int8-v1
+
+      - name: Install Python deps for SenseVoice export (cache miss only)
+        if: steps.sensevoice-cache.outputs.cache-hit != 'true'
+        run: |
+          # FunASR's runtime imports torchaudio at module scope, so it
+          # must be installed alongside torch (CPU wheels). libsndfile1
+          # backs torchaudio's audio I/O and isn't always preinstalled
+          # on minimal images. `onnxscript` is required by torch >= 2.5's
+          # ONNX exporter at runtime.
+          #
+          # torch is pinned to <2.5 (CPU wheels) because the 2.5+ ONNX
+          # exporter emits a `Less` op with mismatched int64/float
+          # operands inside the SenseVoice graph — onnxruntime then
+          # refuses to load with `Type Error: Type parameter (T) of
+          # Optype (Less) bound to different types`. The 2.4.x series
+          # exporter handles the same model cleanly. Once upstream
+          # funasr / sensevoice fix the export graph, the pin can be
+          # dropped.
+          #
+          # Drop --quiet so any resolver / build error surfaces in CI
+          # logs.
+          sudo apt-get install -y --no-install-recommends libsndfile1
+          python3 -m pip install --upgrade pip
+          python3 -m pip install \
+            --extra-index-url https://download.pytorch.org/whl/cpu \
+            'torch<2.5' 'torchaudio<2.5'
+          python3 -m pip install \
+            funasr modelscope onnx onnxruntime onnxscript sentencepiece
+
+      - name: Verify Python deps importable (cache miss only)
+        if: steps.sensevoice-cache.outputs.cache-hit != 'true'
+        run: |
+          python3 - <<'PY'
+          import sys
+          mods = ["torch", "torchaudio", "onnx", "onnxruntime",
+                  "sentencepiece", "modelscope", "funasr"]
+          failed = []
+          for m in mods:
+              try:
+                  mod = __import__(m)
+                  print(f"[ok] import {m} (version: {getattr(mod, '__version__', 'unknown')})")
+              except Exception as e:  # noqa: BLE001
+                  print(f"[FAIL] import {m}: {type(e).__name__}: {e}", file=sys.stderr)
+                  failed.append(m)
+          if failed:
+              print(f"\n[error] {len(failed)} module(s) failed to import: {failed}",
+                    file=sys.stderr)
+              sys.exit(1)
+          PY
+
+      - name: Self-export SenseVoice ONNX (cache miss only)
+        if: steps.sensevoice-cache.outputs.cache-hit != 'true'
+        run: bash scripts/setup_sensevoice.sh
+        env:
+          SENSEVOICE_DIR: vendor/sensevoice
+
+      - name: Build eval binary (with onnx for Parakeet/Paraformer/Canary/SenseVoice adapters)
         run: cargo build --release --example eval_l1_smoke --features onnx --locked
 
       - name: Run L1 smoke evaluation
@@ -196,7 +269,8 @@ jobs:
             --parakeet-ja-dir vendor/parakeet_ja \
             --paraformer-zh-dir vendor/paraformer_zh \
             --canary-es-dir vendor/canary_es \
-            --langs en,ja,zh,es \
+            --sensevoice-dir vendor/sensevoice \
+            --langs en,ja,zh,es,ko \
             --baseline docs/benchmarks/ci_baseline.json \
             --dump-utterances
 

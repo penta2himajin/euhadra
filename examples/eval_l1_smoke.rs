@@ -35,6 +35,8 @@ use euhadra::canary::decoder::PrefixFormat;
 use euhadra::parakeet::ParakeetAdapter;
 #[cfg(feature = "onnx")]
 use euhadra::paraformer::ParaformerAdapter;
+#[cfg(feature = "onnx")]
+use euhadra::sensevoice::SenseVoiceAdapter;
 use euhadra::prelude::*;
 use euhadra::whisper_local::{WhisperLocal, read_wav};
 
@@ -61,8 +63,8 @@ struct Cli {
     #[arg(long, default_value = "docs/benchmarks/ci_baseline.json")]
     baseline: PathBuf,
 
-    /// Languages to evaluate (default: all three)
-    #[arg(long, value_delimiter = ',', default_value = "en,ja,zh")]
+    /// Languages to evaluate (default: all five)
+    #[arg(long, value_delimiter = ',', default_value = "en,ja,zh,es,ko")]
     langs: Vec<String>,
 
     /// Write the measured numbers as the new baseline instead of comparing.
@@ -107,6 +109,16 @@ struct Cli {
     /// `scripts/setup_canary_es.sh`.
     #[arg(long, env = "CANARY_ES_DIR")]
     canary_es_dir: Option<PathBuf>,
+
+    /// Optional path to a `FunAudioLLM/SenseVoiceSmall` ONNX bundle
+    /// (`model.onnx` or `model.int8.onnx`, `am.mvn`, `tokens.txt`,
+    /// `metadata.json`). When provided, the `ko` language is run
+    /// through `SenseVoiceAdapter` instead of whisper-tiny — the
+    /// upstream model reports Korean CER far below whisper-tiny's
+    /// multilingual baseline. Requires `--features onnx` at build
+    /// time. Populate via `scripts/setup_sensevoice.sh`.
+    #[arg(long, env = "SENSEVOICE_DIR")]
+    sensevoice_dir: Option<PathBuf>,
 
     /// Print every utterance's reference / hypothesis / per-utterance
     /// WER + CER as the smoke runs. Useful when chasing residual
@@ -167,6 +179,7 @@ async fn run() -> Result<(), String> {
     let mut used_parakeet_ja = false;
     let mut used_parakeet_en = false;
     let mut used_paraformer_zh = false;
+    let mut used_sensevoice_ko = false;
 
     for lang in &cli.langs {
         let manifest = load_manifest(&cli.data_dir, lang)
@@ -187,6 +200,7 @@ async fn run() -> Result<(), String> {
             cli.parakeet_en_dir.as_deref(),
             cli.paraformer_zh_dir.as_deref(),
             cli.canary_es_dir.as_deref(),
+            cli.sensevoice_dir.as_deref(),
         )?;
         if lang == "ja" && cli.parakeet_ja_dir.is_some() {
             used_parakeet_ja = true;
@@ -196,6 +210,9 @@ async fn run() -> Result<(), String> {
         }
         if lang == "zh" && cli.paraformer_zh_dir.is_some() {
             used_paraformer_zh = true;
+        }
+        if lang == "ko" && cli.sensevoice_dir.is_some() {
+            used_sensevoice_ko = true;
         }
 
         let lang_result = evaluate_language(lang, &manifest, &pipeline, cli.dump_utterances).await?;
@@ -213,10 +230,11 @@ async fn run() -> Result<(), String> {
     }
 
     let asr_model_label = format!(
-        "{en_model} (en) / {ja_model} (ja) / {zh_model} (zh)",
+        "{en_model} (en) / {ja_model} (ja) / {zh_model} (zh) / {ko_model} (ko)",
         en_model = if used_parakeet_en { "parakeet-tdt-0.6b-v3" } else { "ggml-tiny.en" },
         ja_model = if used_parakeet_ja { "parakeet-tdt_ctc-0.6b-ja" } else { "ggml-tiny" },
         zh_model = if used_paraformer_zh { "paraformer-large-zh" } else { "ggml-tiny" },
+        ko_model = if used_sensevoice_ko { "sensevoice-small" } else { "ggml-tiny" },
     );
 
     if cli.update_baseline {
@@ -355,9 +373,11 @@ async fn evaluate_language(
 
         if dump_utterances {
             // Whitespace-segmented languages (en, es) report WER as
-            // primary; logographic / non-segmented (ja, zh) report
-            // CER. Spanish matches the Canary model card convention
-            // (MLS WER 3.17 %, MCV WER 4.90 %).
+            // primary; logographic / non-segmented (ja, zh) and
+            // Korean — where eojeol vs morpheme spacing varies and
+            // Korean ASR papers default to CER — report CER.
+            // Spanish matches the Canary model card convention (MLS
+            // WER 3.17 %, MCV WER 4.90 %).
             let primary = match lang {
                 "en" | "es" => format!("WER={:.4}", w),
                 _ => format!("CER={:.4}", c),
@@ -384,11 +404,14 @@ async fn evaluate_language(
     let asr_summary = asr_latency.summary().ok_or("no asr samples")?;
     let e2e_summary = e2e_latency.summary().ok_or("no e2e samples")?;
 
-    // For en / es we report WER, for ja / zh we report CER. Both
-    // are computed either way; only the "primary" metric is stored
-    // in the baseline. Spanish is whitespace-segmented and the
-    // Canary model card publishes WER (MLS 3.17 %, MCV-16.1 4.90 %),
-    // so WER is the right axis to compare against.
+    // For en / es we report WER, for ja / zh / ko we report CER.
+    // Both are computed either way; only the "primary" metric is
+    // stored in the baseline. Spanish is whitespace-segmented and
+    // the Canary model card publishes WER (MLS 3.17 %, MCV-16.1
+    // 4.90 %), so WER is the right axis to compare against. Korean
+    // is space-separated at the eojeol level but spacing
+    // conventions vary across speakers / corpora; Korean ASR papers
+    // default to CER for that reason.
     let (wer_field, cer_field) = match lang {
         "en" | "es" => (Some(round4(mean_wer)), None),
         _ => (None, Some(round4(mean_cer))),
@@ -410,6 +433,11 @@ async fn evaluate_language(
     })
 }
 
+// Each ASR backend has its own optional model-dir flag, and clippy's
+// 7-arg default threshold only barely fits the original four; rather
+// than refactor the wiring into a config struct just for this eval
+// driver, accept the count and pin the allow here.
+#[allow(clippy::too_many_arguments)]
 fn build_pipeline(
     whisper_cli: &Path,
     model: &Path,
@@ -418,6 +446,7 @@ fn build_pipeline(
     parakeet_en_dir: Option<&Path>,
     paraformer_zh_dir: Option<&Path>,
     canary_es_dir: Option<&Path>,
+    sensevoice_dir: Option<&Path>,
 ) -> Result<Pipeline, String> {
     // Build the post-ASR stack first; ASR is bolted on per-language
     // because its concrete type depends on the model choice.
@@ -432,6 +461,11 @@ fn build_pipeline(
         "ja" => builder.filter(JapaneseFillerFilter::new()),
         "zh" => builder.filter(ChineseFillerFilter::new()),
         "es" => builder.filter(SpanishFillerFilter::new()),
+        // Korean filler filter is a follow-up. The English filter's
+        // dictionary (um / uh / well / …) shares no surface form
+        // with Hangul fillers (음 / 어 / 그 / …), so it acts as a
+        // safe pass-through for Korean transcripts.
+        "ko" => builder.filter(SimpleFillerFilter::english()),
         other => return Err(format!("unsupported language: {other}")),
     };
 
@@ -484,6 +518,22 @@ fn build_pipeline(
             {
                 return Err(
                     "--paraformer-zh-dir requires --features onnx at build time".into(),
+                );
+            }
+        }
+        "ko" if sensevoice_dir.is_some() => {
+            #[cfg(feature = "onnx")]
+            {
+                let dir = sensevoice_dir.unwrap();
+                let asr = SenseVoiceAdapter::load(dir)
+                    .map_err(|e| format!("load sensevoice from {}: {e}", dir.display()))?
+                    .with_language("ko");
+                builder.asr(asr)
+            }
+            #[cfg(not(feature = "onnx"))]
+            {
+                return Err(
+                    "--sensevoice-dir requires --features onnx at build time".into(),
                 );
             }
         }
