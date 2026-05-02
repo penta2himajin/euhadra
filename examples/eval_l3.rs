@@ -107,7 +107,7 @@ async fn run_self_correction(cli: &Cli) -> Result<(), String> {
     let mut span_stats: Vec<F1Stats> = Vec::new();
     let mut strict_stats: Vec<F1Stats> = Vec::new();
 
-    let cues = ja_cue_set();
+    let cues = cue_set_for(&cli.lang)?;
 
     for anno in &annotations {
         let result = detector
@@ -233,6 +233,17 @@ async fn run_self_correction(cli: &Cli) -> Result<(), String> {
     Ok(())
 }
 
+fn cue_set_for(lang: &str) -> Result<Vec<&'static str>, String> {
+    match lang {
+        "ja" | "japanese" => Ok(ja_cue_set()),
+        "es" | "spanish" => Ok(es_cue_set()),
+        other => Err(format!(
+            "self-correction task: --lang {other} not wired \
+             (expected one of: ja, es)"
+        )),
+    }
+}
+
 fn ja_cue_set() -> Vec<&'static str> {
     vec![
         "いや",
@@ -242,6 +253,23 @@ fn ja_cue_set() -> Vec<&'static str> {
         "ていうか",
         "っていうか",
         "じゃない",
+    ]
+}
+
+/// Mirrors `SelfCorrectionDetector::correction_cues_es` in
+/// `src/processor.rs`. Order is unspecified — `trim_trailing_cue`
+/// re-sorts longest-first internally so that `mejor dicho`
+/// outranks `mejor` and `quiero decir` outranks `digo`.
+fn es_cue_set() -> Vec<&'static str> {
+    vec![
+        "mejor dicho",
+        "quiero decir",
+        "o sea",
+        "perdón",
+        "mejor",
+        "digo",
+        "no es",
+        "no",
     ]
 }
 
@@ -284,31 +312,40 @@ fn diff_removed_span(input: &str, output: &str) -> Option<Span> {
     }
 }
 
-/// Trim trailing 、 + cue from a detected span so it represents the
-/// reparandum only.
+/// Trim trailing separator + cue from a detected span so it
+/// represents the reparandum only.
 ///
 /// The detector's diff captures everything between input and output
-/// that disappeared. For ja that includes both the cue itself and any
-/// 、 separator immediately before *or after* the cue, depending on
-/// the source (e.g. "鈴木課長、じゃない、佐藤課長です" → diff is
-/// "鈴木課長、じゃない、" with both an inner and a trailing 、). We:
+/// that disappeared. The diff includes both the cue itself and any
+/// separator (`、` for Japanese, whitespace + comma/period/etc. for
+/// Spanish) immediately before *or after* the cue (e.g.
+/// `"鈴木課長、じゃない、佐藤課長です"` → diff is
+/// `"鈴木課長、じゃない、"` with both inner and trailing `、`;
+/// `"voy mañana no voy hoy"` → diff is `"voy mañana no "` with a
+/// trailing space). We:
 ///
-/// 1. strip any trailing 、 (handles cues followed by a 、 separator,
-///    e.g. `じゃない、`),
+/// 1. strip any trailing separator chars,
 /// 2. strip the longest matching cue suffix (longest-first so that
-///    `っていうか` outranks the substring `ていうか`),
-/// 3. strip a trailing 、 again (handles the inner separator, e.g.
-///    after stripping the cue from `鈴木課長、じゃない` we land at
-///    `鈴木課長、` and want `鈴木課長`).
+///    `っていうか` outranks `ていうか`, `mejor dicho` outranks
+///    `mejor`),
+/// 3. strip trailing separator chars again to drop the separator
+///    that sits between reparandum and the (just-removed) cue.
 fn trim_trailing_cue(input: &str, raw: Span, cues: &[&str]) -> Span {
     let chars: Vec<char> = input.chars().collect();
     if raw.start >= raw.end || raw.end > chars.len() {
         return raw;
     }
 
-    // Step 1: strip trailing 、 separators.
+    let is_sep = |c: char| {
+        // JA separator + Spanish/English whitespace and punctuation
+        // that the detector treats as a token boundary in its
+        // shared-prefix check (see `detect_spanish` trim_chars).
+        c == '、' || c.is_whitespace() || matches!(c, ',' | '.' | ';' | ':' | '!' | '?')
+    };
+
+    // Step 1: strip trailing separators.
     let mut end = raw.end;
-    while end > raw.start && chars[end - 1] == '、' {
+    while end > raw.start && is_sep(chars[end - 1]) {
         end -= 1;
     }
 
@@ -320,9 +357,9 @@ fn trim_trailing_cue(input: &str, raw: Span, cues: &[&str]) -> Span {
         if span_text.ends_with(*cue) {
             let cue_chars = cue.chars().count();
             end -= cue_chars;
-            // Step 3: strip trailing 、 again, now between reparandum
-            // and the (just-removed) cue.
-            while end > raw.start && chars[end - 1] == '、' {
+            // Step 3: strip trailing separators again, now between
+            // reparandum and the (just-removed) cue.
+            while end > raw.start && is_sep(chars[end - 1]) {
                 end -= 1;
             }
             break;
