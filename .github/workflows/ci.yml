@@ -206,15 +206,19 @@ jobs:
           # FunASR's runtime imports torchaudio at module scope, so it
           # must be installed alongside torch (CPU wheels). libsndfile1
           # backs torchaudio's audio I/O and isn't always preinstalled
-          # on minimal images. Drop --quiet so any resolver / build
-          # error surfaces in CI logs (PR #45 first-run debugging).
+          # on minimal images. `onnxscript` is required by torch >= 2.5's
+          # ONNX exporter — `torch.onnx.export()` does
+          # `import onnxscript` at runtime and we hit
+          # `ModuleNotFoundError` without it (PR #45 second-run debug).
+          # Drop --quiet so any resolver / build error surfaces in CI
+          # logs.
           sudo apt-get install -y --no-install-recommends libsndfile1
           python3 -m pip install --upgrade pip
           python3 -m pip install \
             --extra-index-url https://download.pytorch.org/whl/cpu \
             torch torchaudio
           python3 -m pip install \
-            funasr modelscope onnx onnxruntime sentencepiece
+            funasr modelscope onnx onnxruntime onnxscript sentencepiece
 
       - name: Verify Python deps importable (cache miss only)
         if: steps.sensevoice-cache.outputs.cache-hit != 'true'
