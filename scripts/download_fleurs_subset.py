@@ -35,6 +35,7 @@ LANGS = {
     # Voice ES, MLS) draw from too. The es_es Iberian variant is
     # NOT in FLEURS upstream.
     "es": "es_419",
+    "ko": "ko_kr",
 }
 
 
@@ -110,7 +111,7 @@ def main() -> int:
         "--lang",
         action="append",
         choices=list(LANGS),
-        help="languages to download; repeat or omit for all (en, ja, zh)",
+        help="languages to download; repeat or omit for all (en, ja, zh, es, ko)",
     )
     p.add_argument("--n", type=int, default=10, help="utterances per language")
     p.add_argument(
