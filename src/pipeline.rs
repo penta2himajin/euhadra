@@ -249,12 +249,23 @@ async fn run_session(
         }
     }
 
-    // Wait for ASR task to finish
-    let _ = asr_handle.await;
+    // Wait for ASR task to finish. Hold on to the result so we can
+    // surface adapter-level errors / panics in the no-speech-detected
+    // path instead of silently swallowing them — the previous
+    // `let _ = asr_handle.await` made adapter bugs (e.g. an ONNX run
+    // failure) indistinguishable from a genuinely silent utterance.
+    let asr_outcome = asr_handle.await;
 
     if final_text.is_empty() {
         sm.reset();
-        return Err(PipelineError { message: "no speech detected".into() });
+        let detail = match asr_outcome {
+            Ok(Ok(())) => "adapter completed without emitting a final result".to_string(),
+            Ok(Err(e)) => format!("adapter error: {}", e.message),
+            Err(e) => format!("adapter task panicked: {e}"),
+        };
+        return Err(PipelineError {
+            message: format!("no speech detected ({detail})"),
+        });
     }
 
     // ── Processing (filter → context → refinement) ──────────────────────

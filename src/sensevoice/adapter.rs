@@ -222,7 +222,17 @@ impl SenseVoiceAdapter {
             });
         }
 
+        // Stage 1: FBANK. Logged so we can tell, in CI logs, whether
+        // an empty transcript came from "audio too short" vs "model
+        // produced nothing" — the two failure modes look identical
+        // from the pipeline's perspective.
         let (mel, n_frames) = self.fbank.compute(samples);
+        tracing::debug!(
+            n_samples = samples.len(),
+            n_frames,
+            n_mels = self.fbank.n_mels(),
+            "sensevoice: fbank computed"
+        );
         if n_frames == 0 {
             return Err(AsrError {
                 message: format!(
@@ -238,6 +248,7 @@ impl SenseVoiceAdapter {
         let (mut feats, t_lfr) = apply_lfr(&mel, n_frames, n_mels, lfr_m, lfr_n);
         let feat_dim = n_mels * lfr_m;
         apply_cmvn(&mut feats, feat_dim, &self.cmvn);
+        tracing::debug!(t_lfr, feat_dim, "sensevoice: lfr+cmvn applied");
 
         let language_id = self.metadata.language_id(&self.language).ok_or_else(|| AsrError {
             message: format!(
@@ -250,6 +261,13 @@ impl SenseVoiceAdapter {
         } else {
             self.metadata.without_itn_id
         };
+        tracing::debug!(
+            language = %self.language,
+            language_id,
+            text_norm_id,
+            blank_id = self.metadata.blank_id,
+            "sensevoice: encoder inputs prepared"
+        );
 
         // ONNX expects `speech` as [B=1, T, feat_dim] f32 and the three
         // sidecar integer inputs as int64 1-D tensors.
@@ -305,6 +323,7 @@ impl SenseVoiceAdapter {
         }
         let t = shape[1];
         let v = shape[2];
+        tracing::debug!(t, v, "sensevoice: logits shape");
 
         let mut ids = Vec::with_capacity(t);
         for ti in 0..t {
@@ -322,7 +341,22 @@ impl SenseVoiceAdapter {
 
         let collapsed = ctc_collapse(&ids, self.metadata.blank_id);
         let tokens = ids_to_tokens(&collapsed, &self.vocab);
-        Ok(decode_tokens(&tokens))
+        let text = decode_tokens(&tokens);
+        // Cap the head-of-stream debug previews so the log stays
+        // readable for utterance-batch evaluation runs.
+        let preview_n = ids.len().min(16);
+        tracing::debug!(
+            ids_len = ids.len(),
+            collapsed_len = collapsed.len(),
+            tokens_len = tokens.len(),
+            text_len = text.len(),
+            ids_preview = ?&ids[..preview_n],
+            collapsed_preview = ?&collapsed[..collapsed.len().min(16)],
+            tokens_preview = ?&tokens[..tokens.len().min(8)],
+            text_preview = %&text[..text.len().min(64)],
+            "sensevoice: decode complete"
+        );
+        Ok(text)
     }
 }
 
