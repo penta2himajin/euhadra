@@ -527,7 +527,10 @@ async fn run_ablation(cli: &Cli) -> Result<(), String> {
     let result = evaluate_ablation_for_lang(&cli.lang, &fixtures).await?;
     println!("=== L3 ablation ({}) ===", cli.lang);
     println!("fixtures: {}", result.fixtures);
-    let primary = if cli.lang == "en" { "WER" } else { "CER" };
+    let primary = match cli.lang.as_str() {
+        "en" | "es" => "WER",
+        _ => "CER",
+    };
     for (cfg, er) in &result.ablation {
         println!("  ablation/{cfg:30}  {primary}={er:.4}");
     }
@@ -587,7 +590,7 @@ async fn evaluate_ablation_for_lang(
     fixtures: &[Fixture],
 ) -> Result<LanguageLayerBaseline, String> {
     let configs: Vec<LayerConfig> = match lang {
-        "en" | "ja" | "zh" => vec![FULL, WITHOUT_FILLER, WITHOUT_SC, WITHOUT_PUNCT],
+        "en" | "ja" | "zh" | "es" => vec![FULL, WITHOUT_FILLER, WITHOUT_SC, WITHOUT_PUNCT],
         other => return Err(format!("unsupported lang {other}")),
     };
 
@@ -633,7 +636,8 @@ async fn mean_error_rate(
             return Err("expected TextInsertion".into());
         };
         let er = match lang {
-            "en" => wer(&fix.reference, text),
+            // Word-segmented languages use WER; CJK uses CER.
+            "en" | "es" => wer(&fix.reference, text),
             _ => cer(&fix.reference, text),
         };
         if !er.is_nan() {
@@ -658,6 +662,7 @@ fn build_pipeline(lang: &str, cfg: &LayerConfig, hypothesis: &str) -> Result<Pip
             "en" => builder.filter(SimpleFillerFilter::english()),
             "ja" => builder.filter(JapaneseFillerFilter::new()),
             "zh" => builder.filter(ChineseFillerFilter::new()),
+            "es" => builder.filter(SpanishFillerFilter::new()),
             other => return Err(format!("unsupported lang {other}")),
         };
     }
@@ -694,6 +699,13 @@ async fn bench_layer_latency(
         }
         "zh" => {
             let f = ChineseFillerFilter::new();
+            out.insert(
+                "filler".to_string(),
+                bench_filter(&f, fixtures, warmup, iters).await,
+            );
+        }
+        "es" => {
+            let f = SpanishFillerFilter::new();
             out.insert(
                 "filler".to_string(),
                 bench_filter(&f, fixtures, warmup, iters).await,

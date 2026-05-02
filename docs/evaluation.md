@@ -955,7 +955,7 @@ cargo eval-l3 -- --task ablation --lang ja \
 | en | `tests/evaluation/fixtures-natural/en.jsonl` (10 発話、FLEURS 由来 whisper-tiny output) | **✓ commit 済** |
 | ja | `tests/evaluation/fixtures-natural/ja.jsonl` (10 発話、同上) | **✓ commit 済** |
 | zh | `tests/evaluation/fixtures-natural/zh.jsonl` (10 発話、同上) | **✓ commit 済** |
-| es | (未生成) — `build_l3_natural_fixtures.py` を Canary パスに対応させた後 FLEURS-es 10 発話 + CIEMPIESS LIGHT サブセットから生成 | 未実装 |
+| es | `tests/evaluation/fixtures-natural/es.jsonl` (10 発話、FLEURS-es、`build_l3_natural_fixtures.py manifest --asr canary-es` で生成、Canary-180M-Flash hypothesis) | **✓ commit 済** |
 
 現状の natural-speech fixtures は FLEURS (読み上げ音声) に whisper-tiny を通した小規模サンプル。**Tier 1 / Tier 2 self-correction の効果はほぼ見えない**ことを前提とする。本格的な自然発話 ablation には ReazonSpeech / WenetSpeech-meeting / TED-LIUM へ拡張が必要 (フォローアップ; ReazonSpeech は HF gated repo、TED-LIUM は ~50 GB)。
 
