@@ -165,18 +165,6 @@ fn load_manifest(data_dir: &Path, lang: &str) -> std::io::Result<Manifest> {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    // Honour `RUST_LOG`/default to `euhadra=info` so adapter
-    // tracing::debug events (e.g. SenseVoice CTC decode previews) are
-    // visible when the operator opts in via `RUST_LOG=euhadra=debug`,
-    // without spamming logs on a quiet baseline run.
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "euhadra=info".parse().unwrap()),
-        )
-        .with_writer(std::io::stderr)
-        .init();
-
     if let Err(e) = run().await {
         eprintln!("error: {e}");
         std::process::exit(2);

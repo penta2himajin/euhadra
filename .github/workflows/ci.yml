@@ -259,14 +259,6 @@ jobs:
         run: cargo build --release --example eval_l1_smoke --features onnx --locked
 
       - name: Run L1 smoke evaluation
-        env:
-          # `euhadra=debug` surfaces SenseVoiceAdapter's per-utterance
-          # FBANK / LFR / argmax / CTC-collapse trace lines so a
-          # silent-output regression (CER=1.0 across all utterances)
-          # can be diagnosed from CI logs without re-running with a
-          # different env. Volume is bounded by the 10-utterance L1
-          # smoke subset.
-          RUST_LOG: euhadra=debug
         run: |
           ./target/release/examples/eval_l1_smoke \
             --whisper-cli vendor/whisper.cpp/build/bin/whisper-cli \
