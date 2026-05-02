@@ -29,6 +29,11 @@
 
 use async_trait::async_trait;
 use ndarray::{Array1, Array3};
+// `language` / `textnorm` / `speech_lengths` are i64 in the official
+// FunASR export — `torch.onnx.export` traces `nn.Embedding(...)` with
+// the default long-tensor dtype, so the exported ONNX graph types
+// these inputs as int64. (Some third-party exporters, e.g. sherpa-onnx,
+// rewrite the wrapper to use int32; we target the upstream layout.)
 use ort::session::Session;
 use ort::value::Value;
 use std::path::{Path, PathBuf};
@@ -121,10 +126,10 @@ struct InputNames {
     text_norm: String,
 }
 
-const ONNX_INPUT_X: &str = "x";
-const ONNX_INPUT_X_LENGTH: &str = "x_length";
+const ONNX_INPUT_X: &str = "speech";
+const ONNX_INPUT_X_LENGTH: &str = "speech_lengths";
 const ONNX_INPUT_LANGUAGE: &str = "language";
-const ONNX_INPUT_TEXT_NORM: &str = "text_norm";
+const ONNX_INPUT_TEXT_NORM: &str = "textnorm";
 
 impl SenseVoiceAdapter {
     /// Load a model bundle laid out as
@@ -246,26 +251,27 @@ impl SenseVoiceAdapter {
             self.metadata.without_itn_id
         };
 
-        // ONNX expects `x` as [B=1, T, feat_dim] f32.
-        let x: Array3<f32> = Array3::from_shape_vec((1, t_lfr, feat_dim), feats)
+        // ONNX expects `speech` as [B=1, T, feat_dim] f32 and the three
+        // sidecar integer inputs as int64 1-D tensors.
+        let speech: Array3<f32> = Array3::from_shape_vec((1, t_lfr, feat_dim), feats)
             .map_err(|e| AsrError {
-                message: format!("x tensor shape: {e}"),
+                message: format!("speech tensor shape: {e}"),
             })?;
-        let x_length: Array1<i32> = Array1::from(vec![t_lfr as i32]);
-        let language_arr: Array1<i32> = Array1::from(vec![language_id]);
-        let text_norm_arr: Array1<i32> = Array1::from(vec![text_norm_id]);
+        let speech_lengths: Array1<i64> = Array1::from(vec![t_lfr as i64]);
+        let language_arr: Array1<i64> = Array1::from(vec![language_id as i64]);
+        let text_norm_arr: Array1<i64> = Array1::from(vec![text_norm_id as i64]);
 
-        let x_val = Value::from_array(x).map_err(|e| AsrError {
-            message: format!("x Value: {e}"),
+        let speech_val = Value::from_array(speech).map_err(|e| AsrError {
+            message: format!("speech Value: {e}"),
         })?;
-        let x_length_val = Value::from_array(x_length).map_err(|e| AsrError {
-            message: format!("x_length Value: {e}"),
+        let speech_lengths_val = Value::from_array(speech_lengths).map_err(|e| AsrError {
+            message: format!("speech_lengths Value: {e}"),
         })?;
         let language_val = Value::from_array(language_arr).map_err(|e| AsrError {
             message: format!("language Value: {e}"),
         })?;
         let text_norm_val = Value::from_array(text_norm_arr).map_err(|e| AsrError {
-            message: format!("text_norm Value: {e}"),
+            message: format!("textnorm Value: {e}"),
         })?;
 
         // Hold the session lock for the duration of decoding so the
@@ -275,8 +281,8 @@ impl SenseVoiceAdapter {
         })?;
         let outputs = session
             .run(vec![
-                (self.input_names.x.as_str(), x_val.into_dyn()),
-                (self.input_names.x_length.as_str(), x_length_val.into_dyn()),
+                (self.input_names.x.as_str(), speech_val.into_dyn()),
+                (self.input_names.x_length.as_str(), speech_lengths_val.into_dyn()),
                 (self.input_names.language.as_str(), language_val.into_dyn()),
                 (self.input_names.text_norm.as_str(), text_norm_val.into_dyn()),
             ])
