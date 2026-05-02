@@ -207,16 +207,24 @@ jobs:
           # must be installed alongside torch (CPU wheels). libsndfile1
           # backs torchaudio's audio I/O and isn't always preinstalled
           # on minimal images. `onnxscript` is required by torch >= 2.5's
-          # ONNX exporter — `torch.onnx.export()` does
-          # `import onnxscript` at runtime and we hit
-          # `ModuleNotFoundError` without it (PR #45 second-run debug).
+          # ONNX exporter at runtime.
+          #
+          # torch is pinned to <2.5 (CPU wheels) because the 2.5+ ONNX
+          # exporter emits a `Less` op with mismatched int64/float
+          # operands inside the SenseVoice graph — onnxruntime then
+          # refuses to load with `Type Error: Type parameter (T) of
+          # Optype (Less) bound to different types`. The 2.4.x series
+          # exporter handles the same model cleanly. Once upstream
+          # funasr / sensevoice fix the export graph, the pin can be
+          # dropped.
+          #
           # Drop --quiet so any resolver / build error surfaces in CI
           # logs.
           sudo apt-get install -y --no-install-recommends libsndfile1
           python3 -m pip install --upgrade pip
           python3 -m pip install \
             --extra-index-url https://download.pytorch.org/whl/cpu \
-            torch torchaudio
+            'torch<2.5' 'torchaudio<2.5'
           python3 -m pip install \
             funasr modelscope onnx onnxruntime onnxscript sentencepiece
 
