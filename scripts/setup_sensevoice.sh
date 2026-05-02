@@ -26,7 +26,7 @@
 # the maintained one.
 #
 # Python deps (install before running):
-#   pip install funasr modelscope onnx onnxruntime sentencepiece
+#   pip install funasr modelscope onnx onnxruntime sentencepiece torch torchaudio
 #
 # Licensing:
 #   - FunASR runtime: MIT
@@ -35,7 +35,15 @@
 #     (https://github.com/FunAudioLLM/SenseVoice/blob/main/MODEL_LICENSE)
 #     — non-commercial use only without explicit upstream permission.
 
+# `inherit_errexit` propagates `set -e` into command substitutions so
+# a Python failure inside `$(python3 - <<PY ... PY)` no longer leaves
+# bash silently stepping over an empty capture. xtrace is on so the
+# CI log records every command, not just stderr — without it a
+# failure mode like "modelscope download timed out" looks identical
+# to "model.export() raised" in the log summary.
 set -euo pipefail
+shopt -s inherit_errexit
+set -x
 
 DIR="${SENSEVOICE_DIR:-models/sensevoice-small-onnx}"
 HF_REPO_ID="${SENSEVOICE_HF_REPO_ID:-iic/SenseVoiceSmall}"
@@ -61,165 +69,162 @@ if [[ -s "$DIR/model.onnx" && -s "$DIR/model.int8.onnx" \
 fi
 
 echo "[setup] SenseVoice-Small → $DIR (repo=$HF_REPO_ID)"
+df -h .
 
-# Run the official FunASR export. AutoModel downloads the checkpoint
-# from ModelScope (or HuggingFace if MODELSCOPE_OFFLINE is unset and
-# ModelScope is unreachable), then `export(type="onnx")` writes the
-# ONNX files into the model's local cache directory and returns its
-# path.
-PY_OUT="$(python3 - "$HF_REPO_ID" <<'PY'
+# Single end-to-end Python driver: does the FunASR export, locates the
+# upstream artefacts inside the modelscope cache, copies them into $DIR
+# under our naming convention, materialises tokens.txt from the
+# SentencePiece BPE, and writes metadata.json. Doing it all in one
+# `python3 -` invocation means any uncaught exception propagates as a
+# non-zero exit code that bash's set -e respects, which the previous
+# `$(python3 - ...)` capture pattern accidentally swallowed.
+python3 - "$HF_REPO_ID" "$DIR" <<'PY'
 import json
 import os
+import shutil
 import sys
+import traceback
 from pathlib import Path
 
 repo_id = sys.argv[1]
+out_dir = Path(sys.argv[2]).resolve()
+out_dir.mkdir(parents=True, exist_ok=True)
+
+print(f"[py] repo_id={repo_id} out_dir={out_dir}", flush=True)
 
 try:
     from funasr import AutoModel
-except ImportError as exc:
-    sys.stderr.write(
-        "[error] python package `funasr` is required: "
-        "pip install funasr modelscope onnx onnxruntime sentencepiece\n"
-    )
-    sys.stderr.write(f"        underlying ImportError: {exc}\n")
+    print(f"[py] funasr={__import__('funasr').__version__}", flush=True)
+except Exception:
+    traceback.print_exc()
     sys.exit(5)
-
-# `disable_update=True` keeps modelscope from contacting its update
-# server during init — flaky in CI and unnecessary for our use.
-model = AutoModel(model=repo_id, disable_update=True)
-
-# `quantize=True` emits both `model.onnx` (FP32) and `model_quant.onnx`
-# (INT8) into the same directory. Returns the directory path.
-export_dir = model.export(type="onnx", quantize=True)
-if isinstance(export_dir, (list, tuple)):
-    # Older funasr returns a list of file paths; take the parent dir.
-    export_dir = os.path.dirname(export_dir[0])
-
-print(json.dumps({"export_dir": str(Path(export_dir).resolve())}))
-PY
-)"
-
-EXPORT_DIR="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["export_dir"])' <<<"$PY_OUT")"
-echo "[ok] funasr export dir: $EXPORT_DIR"
-
-# Copy the artefacts we need into $DIR. We rename `model_quant.onnx`
-# to `model.int8.onnx` to match the convention used by the Canary
-# adapter (`with_int8_weights()` swaps `model.onnx` → `model.int8.onnx`).
-copy_if_present() {
-    local src="$1" dst="$2"
-    if [[ -s "$dst" ]]; then
-        echo "[skip] $(basename "$dst") already present"
-        return 0
-    fi
-    if [[ ! -s "$src" ]]; then
-        echo "[error] expected upstream artefact missing: $src" >&2
-        exit 6
-    fi
-    echo "[copy] $(basename "$dst")"
-    cp "$src" "$dst"
-}
-
-copy_if_present "$EXPORT_DIR/model.onnx"        "$DIR/model.onnx"
-copy_if_present "$EXPORT_DIR/model_quant.onnx"  "$DIR/model.int8.onnx"
-copy_if_present "$EXPORT_DIR/am.mvn"            "$DIR/am.mvn"
-copy_if_present "$EXPORT_DIR/config.yaml"       "$DIR/config.yaml"
-
-# Locate the SentencePiece BPE model. The upstream filename has
-# changed historically (`bpe.model`, `chn_jpn_yue_eng_ko_spectok.bpe.model`),
-# so we fall back to the first `*.bpe.model` we find.
-BPE_MODEL=""
-for candidate in "$EXPORT_DIR/chn_jpn_yue_eng_ko_spectok.bpe.model" \
-                 "$EXPORT_DIR/bpe.model"; do
-    if [[ -s "$candidate" ]]; then
-        BPE_MODEL="$candidate"
-        break
-    fi
-done
-if [[ -z "$BPE_MODEL" ]]; then
-    BPE_MODEL="$(find "$EXPORT_DIR" -maxdepth 2 -name '*.bpe.model' -print -quit || true)"
-fi
-if [[ -z "$BPE_MODEL" || ! -s "$BPE_MODEL" ]]; then
-    echo "[error] no SentencePiece *.bpe.model found under $EXPORT_DIR" >&2
-    exit 7
-fi
-echo "[ok] BPE model: $BPE_MODEL"
-
-# Dump tokens.txt (one piece per line, line index = id) from the
-# SentencePiece BPE. The Rust adapter expects this exact layout.
-if [[ ! -s "$DIR/tokens.txt" ]]; then
-    echo "[gen] tokens.txt"
-    python3 - "$BPE_MODEL" "$DIR/tokens.txt" <<'PY'
-import sys
 
 try:
     import sentencepiece as spm
-except ImportError as exc:
-    sys.stderr.write(
-        "[error] python package `sentencepiece` is required: "
-        "pip install sentencepiece\n"
-    )
-    sys.stderr.write(f"        underlying ImportError: {exc}\n")
+    print(f"[py] sentencepiece={spm.__version__}", flush=True)
+except Exception:
+    traceback.print_exc()
     sys.exit(5)
 
-bpe_path, out_path = sys.argv[1], sys.argv[2]
-sp = spm.SentencePieceProcessor()
-sp.Load(bpe_path)
+# Match the parameter set used by FunAudioLLM/SenseVoice/export.py
+# verbatim so we get the same ONNX graph the upstream demo exports
+# (cpu device, opset 14, both FP32 + INT8 quantised model).
+print("[py] AutoModel(...)", flush=True)
+model = AutoModel(model=repo_id, device="cpu", disable_update=True)
+print("[py] model.export(type='onnx', quantize=True, opset_version=14)", flush=True)
+res = model.export(type="onnx", quantize=True, opset_version=14, device="cpu")
+print(f"[py] export returned: {res!r}", flush=True)
 
-n = sp.GetPieceSize()
-if n < 1000:
-    sys.stderr.write(
-        f"[error] BPE size {n} is suspiciously small (expected ~25K)\n"
+# `model.export` returns either a single file path (older funasr), a
+# list of file paths (newer funasr), or a dict whose values are file
+# paths. We only need the directory those files live in — that's
+# where am.mvn + the BPE model sit too, since funasr exports into the
+# checkpoint's own cache dir.
+def _resolve_export_dir(res):
+    if isinstance(res, (list, tuple)) and res:
+        return Path(res[0]).resolve().parent
+    if isinstance(res, dict) and res:
+        any_path = next(iter(res.values()))
+        return Path(any_path).resolve().parent
+    if isinstance(res, (str, os.PathLike)):
+        p = Path(res).resolve()
+        return p if p.is_dir() else p.parent
+    raise RuntimeError(f"unexpected export() return type: {type(res).__name__}")
+
+export_dir = _resolve_export_dir(res)
+print(f"[py] export_dir={export_dir}", flush=True)
+print(f"[py] export_dir contents: {sorted(p.name for p in export_dir.iterdir())}",
+      flush=True)
+
+# Copy ONNX + sidecars under our naming convention. We rename
+# `model_quant.onnx` to `model.int8.onnx` to match the Canary adapter
+# convention (`with_int8_weights()` swaps `model.onnx` → `model.int8.onnx`).
+def _copy_required(src_name: str, dst_name: str):
+    src = export_dir / src_name
+    if not src.is_file() or src.stat().st_size == 0:
+        raise FileNotFoundError(f"missing upstream artefact: {src}")
+    dst = out_dir / dst_name
+    if dst.is_file() and dst.stat().st_size > 0:
+        print(f"[py] skip {dst_name} (already present)", flush=True)
+        return
+    print(f"[py] copy {src_name} → {dst_name}", flush=True)
+    shutil.copy2(src, dst)
+
+_copy_required("model.onnx", "model.onnx")
+_copy_required("model_quant.onnx", "model.int8.onnx")
+_copy_required("am.mvn", "am.mvn")
+
+# config.yaml is a debugging aid (not consumed by the Rust adapter),
+# so be lenient on absence — older / newer funasr exports may name it
+# differently.
+for cfg_candidate in ("config.yaml", "configuration.yaml"):
+    src = export_dir / cfg_candidate
+    if src.is_file():
+        shutil.copy2(src, out_dir / "config.yaml")
+        break
+
+# Find the SentencePiece BPE model. The upstream filename has changed
+# historically (`bpe.model`, `chn_jpn_yue_eng_ko_spectok.bpe.model`).
+bpe_candidates = [
+    export_dir / "chn_jpn_yue_eng_ko_spectok.bpe.model",
+    export_dir / "bpe.model",
+]
+bpe_path = next((p for p in bpe_candidates if p.is_file()), None)
+if bpe_path is None:
+    matches = list(export_dir.glob("*.bpe.model"))
+    if matches:
+        bpe_path = matches[0]
+if bpe_path is None or not bpe_path.is_file():
+    raise FileNotFoundError(
+        f"no SentencePiece *.bpe.model found under {export_dir}"
     )
-    sys.exit(2)
+print(f"[py] BPE model: {bpe_path}", flush=True)
 
-with open(out_path, "w", encoding="utf-8") as fh:
-    for i in range(n):
-        # `id_to_piece` gives back the piece string. SenseVoice's
-        # special markers (e.g. `<|en|>`, `<|HAPPY|>`) are stored as
-        # user-defined pieces in the BPE and round-trip verbatim.
-        fh.write(sp.id_to_piece(i))
-        fh.write("\n")
+# Dump tokens.txt (one piece per line, line index = id) so the Rust
+# adapter can read the vocab without depending on the SentencePiece
+# runtime. SenseVoice's special markers (e.g. `<|en|>`, `<|HAPPY|>`)
+# are user-defined pieces in the BPE and round-trip verbatim.
+tokens_path = out_dir / "tokens.txt"
+if not (tokens_path.is_file() and tokens_path.stat().st_size > 0):
+    sp = spm.SentencePieceProcessor()
+    sp.Load(str(bpe_path))
+    n = sp.GetPieceSize()
+    if n < 1000:
+        raise RuntimeError(
+            f"BPE size {n} is suspiciously small (expected ~25K)"
+        )
+    with tokens_path.open("w", encoding="utf-8") as fh:
+        for i in range(n):
+            fh.write(sp.id_to_piece(i))
+            fh.write("\n")
+    print(f"[py] wrote {n} tokens to {tokens_path}", flush=True)
 
-print(f"[ok] wrote {n} tokens to {out_path}")
-PY
-fi
-
-# Write metadata.json with the LID / textnorm / blank / LFR constants.
-# These values are baked into the upstream `model.py`
+# Write metadata.json. Constants are baked into the upstream model.py
 # (https://github.com/FunAudioLLM/SenseVoice/blob/main/model.py):
 #   self.lid_dict      = {"auto": 0, "zh": 3, "en": 4, "yue": 7,
 #                          "ja": 11, "ko": 12, "nospeech": 13}
 #   self.textnorm_dict = {"withitn": 14, "woitn": 15}
 #   blank_id           = 0  (CTC default in the upstream config)
 # LFR(7,6) is hard-coded in the FunASR frontend for SenseVoice.
-if [[ ! -s "$DIR/metadata.json" ]]; then
-    echo "[gen] metadata.json"
-    python3 - "$DIR/metadata.json" <<'PY'
-import json, sys
+metadata_path = out_dir / "metadata.json"
+if not (metadata_path.is_file() and metadata_path.stat().st_size > 0):
+    metadata = {
+        "lang2id": {
+            "auto": 0, "zh": 3, "en": 4, "yue": 7,
+            "ja": 11, "ko": 12, "nospeech": 13,
+        },
+        "with_itn_id": 14,
+        "without_itn_id": 15,
+        "blank_id": 0,
+        "lfr_m": 7,
+        "lfr_n": 6,
+    }
+    with metadata_path.open("w", encoding="utf-8") as fh:
+        json.dump(metadata, fh, ensure_ascii=False, indent=2)
+    print(f"[py] wrote metadata to {metadata_path}", flush=True)
 
-out_path = sys.argv[1]
-metadata = {
-    "lang2id": {
-        "auto": 0,
-        "zh": 3,
-        "en": 4,
-        "yue": 7,
-        "ja": 11,
-        "ko": 12,
-        "nospeech": 13,
-    },
-    "with_itn_id": 14,
-    "without_itn_id": 15,
-    "blank_id": 0,
-    "lfr_m": 7,
-    "lfr_n": 6,
-}
-with open(out_path, "w", encoding="utf-8") as fh:
-    json.dump(metadata, fh, ensure_ascii=False, indent=2)
-print(f"[ok] wrote metadata to {out_path}")
+print("[py] export complete.", flush=True)
 PY
-fi
 
 # Sanity: every adapter-required file must be present.
 for required in model.onnx model.int8.onnx am.mvn tokens.txt metadata.json; do
@@ -229,4 +234,5 @@ for required in model.onnx model.int8.onnx am.mvn tokens.txt metadata.json; do
     fi
 done
 
+df -h .
 echo "SENSEVOICE_DIR=$DIR"
