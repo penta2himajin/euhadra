@@ -358,7 +358,7 @@ fn normalize_korean_numerals(text: &str) -> String {
     // already has content.
     let mut last_was_token = false;
 
-    for c in text.chars() {
+    for (idx, c) in text.char_indices() {
         if is_kr_token(c) || c.is_ascii_digit() {
             run.push(c);
             last_was_token = true;
@@ -366,7 +366,12 @@ fn normalize_korean_numerals(text: &str) -> String {
             run.push(c);
             last_was_token = false;
         } else {
-            flush_kr_run(&mut out, &run, Some(c));
+            // The "follow-up" is the unconsumed suffix starting at
+            // c. We pass a string slice rather than a single char so
+            // the classifier check can match multi-char tokens like
+            // `세트` (English loanword "set", used as a unit
+            // classifier in scoring contexts).
+            flush_kr_run(&mut out, &run, Some(&text[idx..]));
             run.clear();
             last_was_token = false;
             out.push(c);
@@ -377,7 +382,7 @@ fn normalize_korean_numerals(text: &str) -> String {
     out
 }
 
-fn flush_kr_run(out: &mut String, run: &str, next_char: Option<char>) {
+fn flush_kr_run(out: &mut String, run: &str, follow_up: Option<&str>) {
     if run.is_empty() {
         return;
     }
@@ -402,14 +407,16 @@ fn flush_kr_run(out: &mut String, run: &str, next_char: Option<char>) {
     let segments = split_kr_run_at_korean_digit_boundaries(&cleaned);
     let n_segs = segments.len();
     for (i, seg) in segments.iter().enumerate() {
-        let seg_next: Option<char> = if i + 1 < n_segs {
-            // The next segment's first char is the immediate
-            // "follow-up" for classifier disambiguation.
-            segments[i + 1].chars().next()
+        let seg_follow_up: Option<&str> = if i + 1 < n_segs {
+            // For inter-segment classifier disambiguation, the
+            // next segment IS the follow-up — a single Korean
+            // digit char like `일`, which is fine for the
+            // single-char classifier check.
+            Some(segments[i + 1].as_str())
         } else {
-            next_char
+            follow_up
         };
-        flush_kr_segment(out, seg, seg_next);
+        flush_kr_segment(out, seg, seg_follow_up);
         if i + 1 < n_segs {
             // Synthetic separator between split segments. CER
             // strips whitespace before comparison, so this doesn't
@@ -439,7 +446,7 @@ fn split_kr_run_at_korean_digit_boundaries(cleaned: &str) -> Vec<String> {
     out
 }
 
-fn flush_kr_segment(out: &mut String, segment: &str, next_char: Option<char>) {
+fn flush_kr_segment(out: &mut String, segment: &str, follow_up: Option<&str>) {
     if segment.is_empty() {
         return;
     }
@@ -451,12 +458,17 @@ fn flush_kr_segment(out: &mut String, segment: &str, next_char: Option<char>) {
     if has_digit && has_unit {
         out.push_str(&parse_kr_positional(segment).to_string());
     } else if segment.chars().count() == 1
-        && next_char.map(is_kr_date_time_classifier).unwrap_or(false)
+        && follow_up
+            .map(starts_with_kr_classifier)
+            .unwrap_or(false)
     {
-        // Single-token segment followed by a Sino-Korean date / time
-        // classifier (년 / 월 / 일 / 시 / 분 / 초). Normalise the
-        // digit if it really is a Korean digit char; Arabic /
-        // unit / homograph cases fall through to verbatim.
+        // Single-token segment followed by a Korean classifier —
+        // either a single-char Sino-Korean date / time classifier
+        // (년 / 월 / 일 / 시 / 분 / 초) or a multi-char loanword
+        // classifier (`세트`, used in tennis-style score contexts
+        // like `이 세트` ↔ `2세트`). Normalise the digit when it
+        // is a Korean digit char; Arabic / unit / homograph cases
+        // fall through to verbatim.
         let single = segment.chars().next().unwrap();
         if let Some(d) = kr_digit_value(single) {
             out.push_str(&d.to_string());
@@ -470,6 +482,25 @@ fn flush_kr_segment(out: &mut String, segment: &str, next_char: Option<char>) {
         // Leave the original segment text intact.
         out.push_str(segment);
     }
+}
+
+fn starts_with_kr_classifier(s: &str) -> bool {
+    // Single-char date / time classifiers: 년 / 월 / 일 / 시 / 분 / 초.
+    if let Some(c) = s.chars().next() {
+        if is_kr_date_time_classifier(c) {
+            return true;
+        }
+    }
+    // Multi-char classifiers — only `세트` (English "set") so far,
+    // motivated by the FLEURS-ko tennis utterance fragment
+    // `이 세트` ↔ `2세트` / `2세트에서`. Korean particles after
+    // `세트` (가, 를, 에서, 의, …) are NOT excluded — they don't
+    // disambiguate "n sets" from anything else in practice. The
+    // residual false-positive surface (e.g. `이 세트장` =
+    // "this set venue") is small enough to accept; the homograph
+    // is rare in FLEURS-ko reference text and CER is bounded by
+    // utterance length.
+    s.starts_with("세트")
 }
 
 fn is_kr_date_time_classifier(c: char) -> bool {
@@ -1310,6 +1341,46 @@ mod tests {
         // disambiguation for the second segment. The 일 is treated
         // as digit 1 because 년 is a date classifier following it.
         assert_eq!(normalize_korean_numerals("십오일년"), "15 1년");
+    }
+
+    #[test]
+    fn normalize_korean_numerals_multi_char_classifier_set() {
+        // FLEURS-ko utterance 2 fragment: `이 세트` ↔ `2세트`.
+        // `세트` is an English loanword used as a unit classifier
+        // in scoring contexts (tennis sets, etc.). The follow-up
+        // check matches the multi-char prefix even though `세`
+        // alone is not in the single-char classifier whitelist.
+        assert_eq!(normalize_korean_numerals("이 세트"), "2 세트");
+        // Korean particles after `세트` don't disrupt the match.
+        assert_eq!(
+            normalize_korean_numerals("이 세트에서"),
+            "2 세트에서"
+        );
+        assert_eq!(
+            normalize_korean_numerals("이 세트가 끝나고"),
+            "2 세트가 끝나고"
+        );
+    }
+
+    #[test]
+    fn normalize_korean_numerals_bare_se_is_not_classifier() {
+        // `세` alone (without `트`) does NOT trigger the classifier
+        // path — `세` overlaps with the native Korean cardinal "3"
+        // and the noun 世 (world / age), so we don't want to
+        // normalise digits before it. Same goes for any Hangul
+        // syllable that isn't on the explicit allow-list.
+        assert_eq!(normalize_korean_numerals("이 세"), "이 세");
+        assert_eq!(normalize_korean_numerals("이 세상"), "이 세상");
+    }
+
+    #[test]
+    fn normalize_korean_numerals_classifier_skips_arabic_digit() {
+        // Arabic digit + classifier should stay verbatim — the
+        // ref form `2세트` already lacks the run-internal space
+        // and CER's whitespace strip collapses any output spacing
+        // anyway.
+        assert_eq!(normalize_korean_numerals("2 세트"), "2 세트");
+        assert_eq!(normalize_korean_numerals("2세트"), "2세트");
     }
 
     #[test]
