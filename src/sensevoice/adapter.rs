@@ -65,8 +65,22 @@ pub struct SenseVoiceConfig {
     /// override via `with_language`. `"ko"` matches the immediate
     /// integration goal; pass `"auto"` for upstream LID.
     pub default_language: String,
-    /// Apply ITN (e.g. "12" instead of "twelve"/"열두") on the raw
-    /// transcript. `true` matches the upstream `demo2.py` default.
+    /// Apply Inverse Text Normalisation on the raw transcript (e.g.
+    /// Arabic-numeral `12` instead of the spelt-out `twelve` / `열두`).
+    ///
+    /// Defaults to `false` to match the canonical upstream
+    /// [`demo2.py`](https://github.com/FunAudioLLM/SenseVoice/blob/main/demo2.py)
+    /// default and the `examples/industrial_data_pretraining/sense_voice/demo.py`
+    /// inference example — both pass `use_itn=False`. (Earlier
+    /// revisions of this adapter set `true` based on the
+    /// `AutoModel` README sample, but that's the outlier — the
+    /// in-repo demos and FLEURS-style evaluation references all
+    /// expect ITN OFF, and ITN ON measurably worsens CER on
+    /// reference text that mixes Hangul numerals with Arabic.)
+    ///
+    /// Dictation callers that want digit-style output (e.g. Cochlis
+    /// when the user says "send report at twelve") should opt in
+    /// explicitly via `SenseVoiceAdapter::with_use_itn(true)`.
     pub default_use_itn: bool,
 }
 
@@ -79,7 +93,7 @@ impl SenseVoiceConfig {
             tokens_filename: "tokens.txt".to_string(),
             metadata_filename: "metadata.json".to_string(),
             default_language: "ko".to_string(),
-            default_use_itn: true,
+            default_use_itn: false,
         }
     }
 
@@ -207,8 +221,10 @@ impl SenseVoiceAdapter {
         self
     }
 
-    /// Builder-style ITN override. Defaults to `true`, matching the
-    /// upstream demo behaviour.
+    /// Builder-style ITN override. The cfg default is `false`
+    /// (matching upstream `demo2.py`); pass `true` from a dictation
+    /// caller that wants digit-style output. See the doc comment on
+    /// `SenseVoiceConfig::default_use_itn` for the rationale.
     pub fn with_use_itn(mut self, use_itn: bool) -> Self {
         self.cfg.default_use_itn = use_itn;
         self
@@ -421,7 +437,10 @@ mod tests {
         assert_eq!(cfg.tokens_filename, "tokens.txt");
         assert_eq!(cfg.metadata_filename, "metadata.json");
         assert_eq!(cfg.default_language, "ko");
-        assert!(cfg.default_use_itn);
+        // ITN OFF by default — matches upstream demo2.py and the
+        // FLEURS-style reference text used by L1 eval. Dictation
+        // callers opt in via `with_use_itn(true)`.
+        assert!(!cfg.default_use_itn);
     }
 
     #[test]
