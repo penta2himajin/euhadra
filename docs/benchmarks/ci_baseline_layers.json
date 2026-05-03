@@ -25,6 +25,29 @@
         }
       }
     },
+    "es": {
+      "fixtures": 27,
+      "ablation": {
+        "full": 0.493,
+        "without_filler": 0.5306,
+        "without_punctuation": 0.079,
+        "without_self_correction": 0.6498
+      },
+      "layer_latency_us": {
+        "filler": {
+          "p50": 1.1,
+          "p95": 1.7
+        },
+        "punctuation": {
+          "p50": 0.3,
+          "p95": 0.4
+        },
+        "self_correction": {
+          "p50": 1.0,
+          "p95": 1.4
+        }
+      }
+    },
     "ja": {
       "fixtures": 23,
       "ablation": {

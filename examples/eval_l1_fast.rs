@@ -1,6 +1,6 @@
 //! L1 fast evaluation runner — Phase A-2.
 //!
-//! Replays per-language fixtures (`tests/evaluation/fixtures/{en,ja,zh}.jsonl`)
+//! Replays per-language fixtures (`tests/evaluation/fixtures/{en,ja,zh,es}.jsonl`)
 //! through the post-ASR pipeline using `MockAsr` to inject the
 //! pre-recorded hypothesis text. For each language we measure:
 //!
@@ -39,7 +39,7 @@ struct Cli {
     #[arg(long, default_value = "docs/benchmarks/ci_baseline_layers.json")]
     baseline: PathBuf,
 
-    #[arg(long, value_delimiter = ',', default_value = "en,ja,zh")]
+    #[arg(long, value_delimiter = ',', default_value = "en,ja,zh,es")]
     langs: Vec<String>,
 
     /// Number of warmup calls before timed μ-benchmark calls.
@@ -177,7 +177,7 @@ async fn evaluate_language(
     // language, so e.g. zh — which has no filter today — only reports
     // configurations that actually differ.
     let configs: Vec<LayerConfig> = match lang {
-        "en" | "ja" | "zh" => vec![FULL, WITHOUT_FILLER, WITHOUT_SELF_CORR, WITHOUT_PUNCT],
+        "en" | "ja" | "zh" | "es" => vec![FULL, WITHOUT_FILLER, WITHOUT_SELF_CORR, WITHOUT_PUNCT],
         other => return Err(format!("unsupported lang {other}")),
     };
 
@@ -232,7 +232,7 @@ async fn mean_error_rate(
         };
 
         let er = match lang {
-            "en" => wer(&fix.reference, text),
+            "en" | "es" => wer(&fix.reference, text),
             _ => cer(&fix.reference, text),
         };
         if !er.is_nan() {
@@ -259,6 +259,7 @@ fn build_pipeline(lang: &str, cfg: &LayerConfig, hypothesis: &str) -> Result<Pip
             "en" => builder.filter(SimpleFillerFilter::english()),
             "ja" => builder.filter(JapaneseFillerFilter::new()),
             "zh" => builder.filter(ChineseFillerFilter::new()),
+            "es" => builder.filter(SpanishFillerFilter::new()),
             other => return Err(format!("unsupported lang {other}")),
         };
     }
@@ -301,6 +302,13 @@ async fn bench_layer_latency(
         }
         "zh" => {
             let f = ChineseFillerFilter::new();
+            out.insert(
+                "filler".to_string(),
+                bench_filter(&f, fixtures, warmup, iters).await,
+            );
+        }
+        "es" => {
+            let f = SpanishFillerFilter::new();
             out.insert(
                 "filler".to_string(),
                 bench_filter(&f, fixtures, warmup, iters).await,
@@ -367,7 +375,8 @@ async fn bench_processor<P: TextProcessor>(
 
 fn print_language_result(lang: &str, r: &LanguageLayerBaseline) {
     println!("[{lang}] fixtures={}", r.fixtures);
-    let primary = if lang == "en" { "WER" } else { "CER" };
+    // en / es are whitespace-segmented → WER; ja / zh use CER.
+    let primary = if matches!(lang, "en" | "es") { "WER" } else { "CER" };
     for (cfg, er) in &r.ablation {
         println!("  ablation/{cfg:30}  {primary}={er:.4}");
     }

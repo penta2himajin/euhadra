@@ -1,0 +1,27 @@
+{"id":"es_filler_001","category":"pure_filler","reference":"vamos a desplegar ahora","asr_hypothesis":"e vamos a desplegar ahora"}
+{"id":"es_filler_002","category":"pure_filler","reference":"revisa los logs","asr_hypothesis":"eh revisa los logs"}
+{"id":"es_filler_003","category":"pure_filler","reference":"el build está corriendo","asr_hypothesis":"el build está eh corriendo"}
+{"id":"es_filler_004","category":"pure_filler","reference":"por favor revisa el parche","asr_hypothesis":"ehm por favor eh revisa el parche"}
+{"id":"es_filler_005","category":"pure_filler","reference":"el API devuelve un JSON","asr_hypothesis":"el API eh devuelve un JSON"}
+{"id":"es_filler_006","category":"pure_filler","reference":"voy a reiniciar el servidor","asr_hypothesis":"ah voy a reiniciar el servidor"}
+{"id":"es_filler_007","category":"pure_filler","reference":"necesitamos actualizar el esquema","asr_hypothesis":"necesitamos eh actualizar el esquema"}
+{"id":"es_filler_008","category":"pure_filler","reference":"esto parece correcto","asr_hypothesis":"esto mm parece correcto"}
+{"id":"es_filler_009","category":"contextual_filler","reference":"el test está pasando","asr_hypothesis":"o sea el test está pasando"}
+{"id":"es_filler_010","category":"contextual_filler","reference":"el despliegue terminó","asr_hypothesis":"o sea el despliegue terminó"}
+{"id":"es_correction_001","category":"self_correction","reference":"voy a desplegar a producción","asr_hypothesis":"voy a desplegar a staging perdón a producción"}
+{"id":"es_correction_002","category":"self_correction","reference":"el build pasó","asr_hypothesis":"el build falló digo el build pasó"}
+{"id":"es_correction_003","category":"self_correction","reference":"envía el reporte a Bob","asr_hypothesis":"envía el reporte a Alice perdón a Bob"}
+{"id":"es_correction_004","category":"self_correction","reference":"merge a la rama develop","asr_hypothesis":"merge a la rama main quiero decir a la rama develop"}
+{"id":"es_correction_005","category":"self_correction","reference":"la reunión es a las tres","asr_hypothesis":"la reunión es a las dos mejor dicho a las tres"}
+{"id":"es_correction_006","category":"self_correction","reference":"copia los artefactos","asr_hypothesis":"mueve los artefactos digo copia los artefactos"}
+{"id":"es_correction_007","category":"self_correction","reference":"sube al bucket de staging","asr_hypothesis":"sube al bucket de prod o sea al bucket de staging"}
+{"id":"es_clean_001","category":"clean","reference":"el API devuelve una respuesta JSON","asr_hypothesis":"el API devuelve una respuesta JSON"}
+{"id":"es_clean_002","category":"clean","reference":"configura la conexión a la base de datos","asr_hypothesis":"configura la conexión a la base de datos"}
+{"id":"es_clean_003","category":"clean","reference":"despliega después de que pasen los tests","asr_hypothesis":"despliega después de que pasen los tests"}
+{"id":"es_clean_004","category":"clean","reference":"revisa el log de errores para más detalles","asr_hypothesis":"revisa el log de errores para más detalles"}
+{"id":"es_clean_005","category":"clean","reference":"el algoritmo corre en tiempo lineal","asr_hypothesis":"el algoritmo corre en tiempo lineal"}
+{"id":"es_clean_006","category":"clean","reference":"haz merge del pull request después de la revisión","asr_hypothesis":"haz merge del pull request después de la revisión"}
+{"id":"es_clean_007","category":"clean","reference":"añade un índice para acelerar la consulta","asr_hypothesis":"añade un índice para acelerar la consulta"}
+{"id":"es_clean_008","category":"clean","reference":"necesitamos escalar los workers","asr_hypothesis":"necesitamos escalar los workers"}
+{"id":"es_clean_009","category":"clean","reference":"rota el certificado el próximo mes","asr_hypothesis":"rota el certificado el próximo mes"}
+{"id":"es_clean_010","category":"clean","reference":"la tasa de aciertos del caché es aceptable","asr_hypothesis":"la tasa de aciertos del caché es aceptable"}
