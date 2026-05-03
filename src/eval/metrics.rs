@@ -329,16 +329,26 @@ fn parse_positional(s: &str) -> u64 {
 ///   absorbed into the run; the parser strips it before positional
 ///   parse.
 ///
-/// To suppress homograph false positives — most digit chars
-/// (이/사/오/육/팔/...) and most unit chars (천/백/만/...) appear
-/// far more often as ordinary morphemes (`이것은`, `천천히`,
-/// `구매`, `만나다`) than as numerals — only runs that contain
-/// **both at least one digit char and at least one unit char**
-/// are normalised. Single-token runs like `팔` (could be the
-/// numeral 8 or the noun "arm") are left verbatim; the residual
-/// CER cost is small relative to the multi-token positional runs
-/// that this pass catches (`이천 십 일` → 2011 alone removes
-/// ~10 chars of unwarranted edit distance per FLEURS-ko utterance).
+/// Two normalisation paths:
+/// 1. **Multi-token positional** — runs that contain **both at
+///    least one digit char and at least one unit char** are
+///    parsed with the standard Sino-Korean scale rules. This is
+///    the high-confidence case that catches `이천 십 일 년` →
+///    2011 년.
+/// 2. **Single-digit + classifier** — if the run is exactly one
+///    Korean digit char (no unit) and the immediately following
+///    non-whitespace char is a Sino-Korean date / time
+///    classifier (년 / 월 / 일 / 시 / 분 / 초), the digit is
+///    normalised. This covers `팔 월` → `8 월` and `삼 월` →
+///    `3 월`. The classifier list is intentionally narrow —
+///    these six chars combine with Sino-Korean numerals in
+///    essentially all common contexts, so the homograph risk
+///    (e.g. 이 = "this" demonstrative) is dominated by the
+///    Hanja-classifier disambiguation.
+///
+/// Everything else (single-token runs without a classifier
+/// follower, runs of unit chars without digits like `천천히`)
+/// passes through verbatim.
 fn normalize_korean_numerals(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut run = String::new();
@@ -356,18 +366,18 @@ fn normalize_korean_numerals(text: &str) -> String {
             run.push(c);
             last_was_token = false;
         } else {
-            flush_kr_run(&mut out, &run);
+            flush_kr_run(&mut out, &run, Some(c));
             run.clear();
             last_was_token = false;
             out.push(c);
         }
     }
-    flush_kr_run(&mut out, &run);
+    flush_kr_run(&mut out, &run, None);
 
     out
 }
 
-fn flush_kr_run(out: &mut String, run: &str) {
+fn flush_kr_run(out: &mut String, run: &str, next_char: Option<char>) {
     if run.is_empty() {
         return;
     }
@@ -379,22 +389,91 @@ fn flush_kr_run(out: &mut String, run: &str) {
     }
 
     let cleaned: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
-    let has_digit = cleaned
-        .chars()
-        .any(|c| kr_digit_value(c).is_some() || c.is_ascii_digit());
-    let has_unit = cleaned.chars().any(is_kr_unit);
 
-    if has_digit && has_unit {
-        out.push_str(&parse_kr_positional(&cleaned).to_string());
-    } else {
-        // Either the run is a single token (`팔`, `만`, `15`) or a
-        // homograph candidate (`천천히` → `천천` after trimming the
-        // trailing 히). Leave the original run text intact so the
-        // downstream punctuation/whitespace pass and CER calculator
-        // see the verbatim input.
-        out.push_str(trimmed);
+    // Split the cleaned run at any "Korean-digit-after-Korean-digit"
+    // boundary. Sino-Korean numbers have at most one digit per slot
+    // between units, so a Korean digit immediately following another
+    // Korean digit signals the end of a numeric expression — usually
+    // the start of a Hanja classifier (especially `일` = day vs the
+    // homographic digit 1, where positional parsing would otherwise
+    // overwrite the value: `십오일` → 11 instead of "15日"). Arabic
+    // digits don't trigger the split since they're naturally
+    // multi-digit (`15만`, `2025년`).
+    let segments = split_kr_run_at_korean_digit_boundaries(&cleaned);
+    let n_segs = segments.len();
+    for (i, seg) in segments.iter().enumerate() {
+        let seg_next: Option<char> = if i + 1 < n_segs {
+            // The next segment's first char is the immediate
+            // "follow-up" for classifier disambiguation.
+            segments[i + 1].chars().next()
+        } else {
+            next_char
+        };
+        flush_kr_segment(out, seg, seg_next);
+        if i + 1 < n_segs {
+            // Synthetic separator between split segments. CER
+            // strips whitespace before comparison, so this doesn't
+            // change scoring; it does keep the WER-side output
+            // tokenisable.
+            out.push(' ');
+        }
     }
     out.push_str(trailing_ws);
+}
+
+fn split_kr_run_at_korean_digit_boundaries(cleaned: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut prev_was_korean_digit = false;
+    for c in cleaned.chars() {
+        let is_kr_digit = kr_digit_value(c).is_some();
+        if is_kr_digit && prev_was_korean_digit && !cur.is_empty() {
+            out.push(std::mem::take(&mut cur));
+        }
+        cur.push(c);
+        prev_was_korean_digit = is_kr_digit;
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+fn flush_kr_segment(out: &mut String, segment: &str, next_char: Option<char>) {
+    if segment.is_empty() {
+        return;
+    }
+    let has_digit = segment
+        .chars()
+        .any(|c| kr_digit_value(c).is_some() || c.is_ascii_digit());
+    let has_unit = segment.chars().any(is_kr_unit);
+
+    if has_digit && has_unit {
+        out.push_str(&parse_kr_positional(segment).to_string());
+    } else if segment.chars().count() == 1
+        && next_char.map(is_kr_date_time_classifier).unwrap_or(false)
+    {
+        // Single-token segment followed by a Sino-Korean date / time
+        // classifier (년 / 월 / 일 / 시 / 분 / 초). Normalise the
+        // digit if it really is a Korean digit char; Arabic /
+        // unit / homograph cases fall through to verbatim.
+        let single = segment.chars().next().unwrap();
+        if let Some(d) = kr_digit_value(single) {
+            out.push_str(&d.to_string());
+        } else {
+            out.push_str(segment);
+        }
+    } else {
+        // Either the segment is a single token without a classifier
+        // follower (`팔`, `만`, `15`) or a homograph candidate
+        // (`천천` after trimming the trailing non-numeric char).
+        // Leave the original segment text intact.
+        out.push_str(segment);
+    }
+}
+
+fn is_kr_date_time_classifier(c: char) -> bool {
+    matches!(c, '년' | '월' | '일' | '시' | '분' | '초')
 }
 
 fn is_kr_token(c: char) -> bool {
@@ -1155,11 +1234,82 @@ mod tests {
     }
 
     #[test]
-    fn normalize_korean_numerals_single_digit_token_skipped() {
+    fn normalize_korean_numerals_single_digit_alone_kept() {
         // "팔" alone could be 8 or "arm". Without surrounding
-        // numeric context we keep it verbatim.
+        // numeric context (no classifier, no other digit) we keep
+        // it verbatim.
         assert_eq!(normalize_korean_numerals("팔"), "팔");
-        assert_eq!(normalize_korean_numerals("팔 월"), "팔 월");
+    }
+
+    #[test]
+    fn normalize_korean_numerals_single_digit_with_date_classifier() {
+        // FLEURS-ko utterance 1 / 7 fragments: `팔 월` and `삼 월`
+        // remain as residual mismatches after the multi-token
+        // positional pass. The single-digit + classifier branch
+        // catches them — the classifier (월) is unambiguously
+        // Sino-Korean, so 팔 disambiguates to the numeral 8.
+        assert_eq!(normalize_korean_numerals("팔 월"), "8 월");
+        assert_eq!(normalize_korean_numerals("삼 월에"), "3 월에");
+        assert_eq!(normalize_korean_numerals("일 일"), "1 일");
+        assert_eq!(normalize_korean_numerals("오 시"), "5 시");
+        assert_eq!(normalize_korean_numerals("구 분"), "9 분");
+        assert_eq!(normalize_korean_numerals("육 초"), "6 초");
+        assert_eq!(normalize_korean_numerals("이 년"), "2 년");
+    }
+
+    #[test]
+    fn normalize_korean_numerals_classifier_only_widens_for_dates() {
+        // 명 / 개 / 대 / 호 etc are Korean classifiers but they
+        // aren't in the conservative date-time list. Keep them
+        // verbatim to avoid widening the false-positive surface.
+        assert_eq!(normalize_korean_numerals("팔 명"), "팔 명");
+        assert_eq!(normalize_korean_numerals("이 개"), "이 개");
+        assert_eq!(normalize_korean_numerals("삼 대"), "삼 대");
+    }
+
+    #[test]
+    fn normalize_korean_numerals_run_followed_by_classifier_unaffected() {
+        // Multi-token positional runs already win their digit case.
+        // A trailing classifier doesn't change the outcome.
+        assert_eq!(
+            normalize_korean_numerals("이천 십 일 년"),
+            "2011 년"
+        );
+    }
+
+    #[test]
+    fn normalize_korean_numerals_split_at_consecutive_korean_digits() {
+        // FLEURS-ko utterance 7 fragment: `십 오 일` literally means
+        // "15 + day", but a naïve positional parse would compute
+        // 0 + 10 + 1 = 11 because the trailing 일 (digit 1)
+        // overwrites 오 (digit 5) inside the same digit slot.
+        // Sino-Korean disallows two digits in a row without an
+        // intervening unit, so the split heuristic isolates `십 오`
+        // (→ 15) from `일` (→ classifier-tagged "day").
+        assert_eq!(normalize_korean_numerals("십 오 일"), "15 일");
+        assert_eq!(normalize_korean_numerals("십오일"), "15 일");
+    }
+
+    #[test]
+    fn normalize_korean_numerals_split_doesnt_break_normal_positional() {
+        // The split must NOT trigger when consecutive digits are
+        // separated by a unit char — `이천 십 일` is the year 2011,
+        // not 2010 + day.
+        assert_eq!(normalize_korean_numerals("이천 십 일"), "2011");
+        // And mixed Arabic + Korean unit forms must not split since
+        // `15` is one multi-digit Arabic block, not two Korean
+        // digits.
+        assert_eq!(normalize_korean_numerals("15만"), "150000");
+    }
+
+    #[test]
+    fn normalize_korean_numerals_split_with_classifier_followup() {
+        // `십오일년` (CTC-glued "15-day-year"?) is incoherent, but
+        // the run-split heuristic decomposes it into `15` + `일`,
+        // and the trailing `년` then provides the classifier
+        // disambiguation for the second segment. The 일 is treated
+        // as digit 1 because 년 is a date classifier following it.
+        assert_eq!(normalize_korean_numerals("십오일년"), "15 1년");
     }
 
     #[test]
