@@ -75,6 +75,8 @@ pub struct SelfCorrectionDetector {
     correction_cues_en: Vec<String>,
     correction_cues_ja: Vec<String>,
     correction_cues_es: Vec<String>,
+    correction_cues_zh: Vec<String>,
+    correction_cues_ko: Vec<String>,
 }
 
 impl SelfCorrectionDetector {
@@ -121,11 +123,42 @@ impl SelfCorrectionDetector {
         .collect();
         correction_cues_es.sort_by_key(|c| std::cmp::Reverse(c.chars().count()));
 
+        // Chinese cues — tokenisation by 、 / ， (no whitespace
+        // between words), parallel to Japanese. Sorted longest-first
+        // so 我的意思是 outranks 我是说 inside utterances that contain
+        // both fragments.
+        let mut correction_cues_zh: Vec<String> = vec![
+            "我的意思是", "确切地说", "应该说", "我是说",
+            "不对", "不是", "算了",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        correction_cues_zh.sort_by_key(|c| std::cmp::Reverse(c.chars().count()));
+
+        // Korean cues — eojeol-tokenised (whitespace) like en / es.
+        // Sorted longest-first so multi-eojeol cues (그게 아니라,
+        // 잘못 말했네) outrank their shorter prefixes (아니, 그게).
+        // The `아니` family overlaps with sentence-final negation
+        // particles (X-아니에요 = "is not X"); the word-boundary
+        // check in detect_korean handles that disambiguation.
+        let mut correction_cues_ko: Vec<String> = vec![
+            "그게 아니라", "그게 아니고", "잘못 말했다", "잘못 말했네",
+            "아 잠깐", "잠깐만",
+            "아니에요", "아니라", "아니야", "아니",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        correction_cues_ko.sort_by_key(|c| std::cmp::Reverse(c.chars().count()));
+
         Self {
             min_shared_words: 1,
             correction_cues_en,
             correction_cues_ja,
             correction_cues_es,
+            correction_cues_zh,
+            correction_cues_ko,
         }
     }
 
@@ -324,6 +357,152 @@ impl SelfCorrectionDetector {
         None
     }
 
+    /// Find self-correction patterns in Chinese text.
+    ///
+    /// Chinese, like Japanese, lacks inter-word whitespace and
+    /// commonly uses 、 / ， as clause separators in ASR output.
+    /// Detection mirrors `detect_japanese`: locate the cue, take
+    /// the last comma-segment of the pre-cue text as the
+    /// reparandum, and emit `<surviving prefix>，<repair>`.
+    fn detect_chinese(&self, text: &str) -> Option<(String, Correction)> {
+        for cue in &self.correction_cues_zh {
+            if let Some(cue_pos) = text.find(cue.as_str()) {
+                let trim_clause: &[char] = &['、', '，', ',', ' '];
+                let before = text[..cue_pos]
+                    .trim_end_matches(trim_clause)
+                    .trim_end();
+                let after = text[cue_pos + cue.len()..]
+                    .trim_start_matches(trim_clause)
+                    .trim_start();
+
+                if after.is_empty() || before.is_empty() {
+                    continue;
+                }
+
+                // Split before-text on either Chinese clause comma,
+                // since utterance ASR may emit either form.
+                let segments: Vec<&str> = before.split(['、', '，']).collect();
+                if segments.is_empty() {
+                    continue;
+                }
+
+                let reparandum = segments.last().unwrap().trim();
+                let kept_before = if segments.len() > 1 {
+                    segments[..segments.len() - 1].join("，")
+                } else {
+                    String::new()
+                };
+
+                let result = if kept_before.is_empty() {
+                    after.to_string()
+                } else {
+                    format!("{}，{}", kept_before, after)
+                };
+
+                return Some((
+                    result,
+                    Correction {
+                        kind: CorrectionKind::SelfCorrectionRemoved,
+                        original: format!("{}{}", reparandum, cue),
+                        replacement: String::new(),
+                    },
+                ));
+            }
+        }
+        None
+    }
+
+    /// Find self-correction patterns in Korean text.
+    ///
+    /// Korean ASR output is eojeol-tokenised (whitespace-separated)
+    /// but rarely carries inter-clause commas, so the en / es
+    /// shared-prefix overlap heuristic only catches a fraction of
+    /// the natural correction patterns. The closer fit is the
+    /// Japanese comma-segmentation strategy: locate the cue, take
+    /// the last `,` / `.` / `?` / `!` segment of the pre-cue text
+    /// as the reparandum (the whole pre-cue text when there are no
+    /// commas — the typical FLEURS-ko / SenseVoice case), and emit
+    /// `<surviving prefix>, <repair>`.
+    ///
+    /// Eojeol-boundary check on the cue prevents `아니` from firing
+    /// inside `아니에요` (sentence-final negation predicate) or
+    /// other Hangul compounds.
+    fn detect_korean(&self, text: &str) -> Option<(String, Correction)> {
+        for cue in &self.correction_cues_ko {
+            let mut from = 0usize;
+            while let Some(rel) = text[from..].find(cue.as_str()) {
+                let cue_pos = from + rel;
+                let cue_end = cue_pos + cue.len();
+
+                // Eojeol boundary check: chars on each side must be
+                // whitespace, punctuation, or out-of-bounds. A Hangul
+                // / alphanumeric char on either side means we are
+                // inside a larger word.
+                let left_ok = cue_pos == 0
+                    || text[..cue_pos]
+                        .chars()
+                        .last()
+                        .map(|c| !c.is_alphanumeric())
+                        .unwrap_or(true);
+                let right_ok = cue_end == text.len()
+                    || text[cue_end..]
+                        .chars()
+                        .next()
+                        .map(|c| !c.is_alphanumeric())
+                        .unwrap_or(true);
+                if !(left_ok && right_ok) {
+                    from = cue_pos + cue.chars().next().map_or(1, |c| c.len_utf8());
+                    continue;
+                }
+
+                let trim_chars: &[char] = &[',', '.', ';', ':', '!', '?', ' ', '\t'];
+                let before_cue = text[..cue_pos].trim_end_matches(trim_chars);
+                let after_cue = text[cue_end..].trim_start_matches(trim_chars);
+
+                if after_cue.is_empty() || before_cue.is_empty() {
+                    from = cue_end;
+                    continue;
+                }
+
+                // Mirror detect_japanese: split the pre-cue text on
+                // sentence-internal punctuation, treat the last
+                // segment as the reparandum, keep the rest. For
+                // FLEURS-ko / SenseVoice utterances (no internal
+                // commas) the whole pre-cue is one segment → drop
+                // it entirely → output is just the repair.
+                let segments: Vec<&str> =
+                    before_cue.split([',', '.', '!', '?', ';']).collect();
+                if segments.is_empty() {
+                    from = cue_end;
+                    continue;
+                }
+
+                let reparandum = segments.last().unwrap().trim();
+                let kept_before = if segments.len() > 1 {
+                    segments[..segments.len() - 1].join(",")
+                } else {
+                    String::new()
+                };
+
+                let result = if kept_before.is_empty() {
+                    after_cue.to_string()
+                } else {
+                    format!("{}, {}", kept_before.trim_end(), after_cue)
+                };
+
+                return Some((
+                    result,
+                    Correction {
+                        kind: CorrectionKind::SelfCorrectionRemoved,
+                        original: format!("{} {}", reparandum, cue),
+                        replacement: String::new(),
+                    },
+                ));
+            }
+        }
+        None
+    }
+
     /// Count how many words at the end of `before` match the beginning of
     /// `after` when lowercased.
     fn count_shared_prefix_from_end(before: &[&str], after: &[&str]) -> usize {
@@ -364,15 +543,33 @@ impl TextProcessor for SelfCorrectionDetector {
         text: &str,
         _context: &ContextSnapshot,
     ) -> Result<ProcessResult, ProcessError> {
-        // Try Japanese first (whole-text comma segmentation), then
-        // Spanish (whitespace tokenisation with closed-class cues),
-        // then English (also whitespace, but with a wider cue set).
-        // Order matters when a cue word exists in two languages —
-        // `no` is both a Spanish marker and an English one, but the
-        // English detector would happily match it on Spanish input
-        // and produce a worse split. Try Japanese first (no Latin
-        // overlap), then Spanish (the more restricted cue set), then
-        // fall through to English.
+        // Order matters when a cue word exists in two languages.
+        // We try the most specific / least-ambiguous detectors first:
+        //   1. Korean — Hangul syllables, no Latin overlap, eojeol
+        //      tokenisation. Cues (아니, 그게 아니라, 잠깐만, 잘못
+        //      말했다) don't appear in any other language we cover.
+        //   2. Chinese — Hanzi, comma-segmented. Cues (我是说, 不对,
+        //      我的意思是) are clean of Hangul / Latin overlap.
+        //   3. Japanese — Hiragana / Kanji, comma-segmented like zh
+        //      but with a different cue set (いや, ていうか).
+        //   4. Spanish — Latin, restricted closed-class cues
+        //      (perdón, digo, mejor dicho). Bare `no` overlaps with
+        //      English; the Spanish detector's stricter shared-prefix
+        //      check beats the English detector for genuinely
+        //      Spanish input.
+        //   5. English — fallback, widest cue set, runs last.
+        if let Some((result, correction)) = self.detect_korean(text) {
+            return Ok(ProcessResult {
+                text: result,
+                corrections: vec![correction],
+            });
+        }
+        if let Some((result, correction)) = self.detect_chinese(text) {
+            return Ok(ProcessResult {
+                text: result,
+                corrections: vec![correction],
+            });
+        }
         if let Some((result, correction)) = self.detect_japanese(text) {
             return Ok(ProcessResult {
                 text: result,
@@ -407,10 +604,64 @@ impl TextProcessor for SelfCorrectionDetector {
 ///
 /// This is a stopgap until a proper CNN-BiLSTM ONNX model is integrated.
 /// It handles the most common cases:
-/// - Capitalize first word of text
-/// - Ensure text ends with a period (if no terminal punctuation)
-/// - Capitalize after sentence-ending punctuation
+/// - Capitalize first word of text (Latin scripts only)
+/// - Ensure text ends with sentence-final punctuation
+/// - Capitalize after sentence-ending punctuation (Latin scripts)
+///
+/// Terminal punctuation choice is script-aware:
+/// - Latin (en / es / mixed): trailing `.`
+/// - Hangul (ko): trailing `.` (Korean conventionally uses the
+///   Western period in formal writing)
+/// - Hanzi (zh): trailing `。` (CJK fullwidth period)
+/// - Hiragana / Katakana / Kanji-only (ja): trailing `。`
 pub struct BasicPunctuationRestorer;
+
+/// Dominant-script classification for terminal-punctuation choice.
+/// Determined by counting characters in each Unicode block; the
+/// thresholds are deliberately permissive so a pure-Hangul utterance
+/// with one stray English brand name still classifies as Hangul.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DominantScript {
+    Latin,
+    Hangul,
+    Hanzi,
+    Kana,
+    Other,
+}
+
+fn classify_script(text: &str) -> DominantScript {
+    let mut latin = 0usize;
+    let mut hangul = 0usize;
+    let mut hanzi = 0usize;
+    let mut kana = 0usize;
+    for c in text.chars() {
+        if c.is_ascii_alphabetic() {
+            latin += 1;
+        } else if matches!(c as u32, 0xAC00..=0xD7A3 | 0x1100..=0x11FF | 0x3130..=0x318F) {
+            hangul += 1;
+        } else if matches!(c as u32, 0x4E00..=0x9FFF | 0x3400..=0x4DBF) {
+            hanzi += 1;
+        } else if matches!(c as u32, 0x3040..=0x30FF) {
+            kana += 1;
+        }
+    }
+    // Hiragana / Katakana presence dominates over Hanzi (since
+    // pure-Hanzi utterances have zero kana and Japanese always
+    // mixes the two). For Korean, Hangul presence dominates.
+    if kana > 0 && kana + hanzi >= latin && kana + hanzi >= hangul {
+        return DominantScript::Kana;
+    }
+    if hangul > latin && hangul > hanzi {
+        return DominantScript::Hangul;
+    }
+    if hanzi > latin && hanzi > hangul {
+        return DominantScript::Hanzi;
+    }
+    if latin > 0 {
+        return DominantScript::Latin;
+    }
+    DominantScript::Other
+}
 
 #[async_trait]
 impl TextProcessor for BasicPunctuationRestorer {
@@ -426,9 +677,12 @@ impl TextProcessor for BasicPunctuationRestorer {
             });
         }
 
+        let script = classify_script(text);
+        let capitalise = matches!(script, DominantScript::Latin);
+
         let mut result = String::with_capacity(text.len() + 8);
         let mut corrections = Vec::new();
-        let mut capitalize_next = true;
+        let mut capitalize_next = capitalise;
 
         for ch in text.chars() {
             if capitalize_next && ch.is_alphabetic() {
@@ -444,27 +698,39 @@ impl TextProcessor for BasicPunctuationRestorer {
                 capitalize_next = false;
             } else {
                 result.push(ch);
-                if ch == '.' || ch == '!' || ch == '?' {
+                if capitalise && (ch == '.' || ch == '!' || ch == '?') {
                     capitalize_next = true;
                 } else if ch == '。' {
-                    // Japanese sentence-ending — next sentence starts
-                    capitalize_next = false; // no capitalization in Japanese
+                    // Japanese / Chinese sentence-ending — next sentence starts
+                    capitalize_next = false; // no capitalization in CJK
                 }
             }
         }
 
-        // Ensure terminal punctuation (English only — check if text is Latin-based)
+        // Ensure terminal punctuation, picking the right form for
+        // the dominant script. Skip Other (mixed / non-script-class
+        // text — e.g. pure digits or punctuation-only) since we
+        // don't know what to append.
         let trimmed = result.trim_end();
         let last_char = trimmed.chars().last();
-        let is_latin = trimmed.chars().any(|c| c.is_ascii_alphabetic());
-        if is_latin {
+        let want_terminal = match script {
+            DominantScript::Latin | DominantScript::Hangul => Some('.'),
+            DominantScript::Hanzi | DominantScript::Kana => Some('。'),
+            DominantScript::Other => None,
+        };
+        if let Some(terminal) = want_terminal {
             if let Some(last) = last_char {
-                if !matches!(last, '.' | '!' | '?' | ')' | '"' | '\'') {
-                    result = format!("{}.", trimmed);
+                let already_terminated = match terminal {
+                    '.' => matches!(last, '.' | '!' | '?' | ')' | '"' | '\'' | '。'),
+                    '。' => matches!(last, '。' | '！' | '？' | '.' | '!' | '?'),
+                    _ => true,
+                };
+                if !already_terminated {
+                    result = format!("{}{}", trimmed, terminal);
                     corrections.push(Correction {
                         kind: CorrectionKind::PunctuationInserted,
                         original: String::new(),
-                        replacement: ".".to_string(),
+                        replacement: terminal.to_string(),
                     });
                 }
             }
@@ -723,6 +989,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn punctuation_appends_period_for_korean() {
+        // Hangul-dominant text gets a Western period (ko convention).
+        // Capitalisation does not apply to Hangul.
+        let proc = BasicPunctuationRestorer;
+        let result = proc
+            .process("내일 오후 세 시에 만나기로 했습니다", &empty_context())
+            .await
+            .unwrap();
+        assert_eq!(result.text, "내일 오후 세 시에 만나기로 했습니다.");
+    }
+
+    #[tokio::test]
+    async fn punctuation_appends_fullwidth_period_for_chinese() {
+        let proc = BasicPunctuationRestorer;
+        let result = proc
+            .process("会议在下午三点开始", &empty_context())
+            .await
+            .unwrap();
+        assert_eq!(result.text, "会议在下午三点开始。");
+    }
+
+    #[tokio::test]
+    async fn punctuation_appends_fullwidth_period_for_japanese() {
+        let proc = BasicPunctuationRestorer;
+        let result = proc
+            .process("今日は天気がいい", &empty_context())
+            .await
+            .unwrap();
+        assert_eq!(result.text, "今日は天気がいい。");
+    }
+
+    #[tokio::test]
+    async fn punctuation_does_not_double_terminal_for_korean() {
+        let proc = BasicPunctuationRestorer;
+        let result = proc
+            .process("이것은 정말 좋은 책입니다.", &empty_context())
+            .await
+            .unwrap();
+        // Already terminated, no second period.
+        assert_eq!(result.text, "이것은 정말 좋은 책입니다.");
+    }
+
+    #[tokio::test]
+    async fn punctuation_does_not_double_terminal_for_chinese() {
+        let proc = BasicPunctuationRestorer;
+        let result = proc
+            .process("这是一本很好的书。", &empty_context())
+            .await
+            .unwrap();
+        assert_eq!(result.text, "这是一本很好的书。");
+    }
+
+    #[tokio::test]
+    async fn punctuation_skips_capitalisation_for_hangul() {
+        // No Latin alpha → capitalize_next disabled. Hangul chars
+        // pass through unchanged.
+        let proc = BasicPunctuationRestorer;
+        let result = proc
+            .process("안녕하세요 반갑습니다", &empty_context())
+            .await
+            .unwrap();
+        // No capitalisation correction emitted.
+        assert!(
+            !result
+                .corrections
+                .iter()
+                .any(|c| matches!(c.kind, CorrectionKind::Capitalized)),
+            "{:?}",
+            result.corrections
+        );
+    }
+
+    #[tokio::test]
     async fn preserve_existing_punctuation() {
         let proc = BasicPunctuationRestorer;
         let result = proc
@@ -810,5 +1149,137 @@ mod tests {
             .unwrap();
         assert!(!result.text.contains("Boston"), "{}", result.text);
         assert!(result.text.contains("Denver"), "{}", result.text);
+    }
+
+    // -----------------------------------------------------------------
+    // Chinese self-correction — same comma-segmented pattern as ja.
+    // -----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn chinese_self_correction_with_bu_dui() {
+        // 不对 = "no, wrong" — drops the trailing comma-segment
+        // before the cue.
+        let detector = SelfCorrectionDetector::new();
+        let result = detector
+            .process("我们明天开会，不对，后天开会", &empty_context())
+            .await
+            .unwrap();
+        assert!(result.text.contains("后天"), "repair: {}", result.text);
+        assert!(!result.text.contains("明天"), "reparandum: {}", result.text);
+    }
+
+    #[tokio::test]
+    async fn chinese_self_correction_with_wo_shi_shuo() {
+        // 我是说 = "I mean".
+        let detector = SelfCorrectionDetector::new();
+        let result = detector
+            .process("会议室在三楼，我是说，在四楼", &empty_context())
+            .await
+            .unwrap();
+        assert!(result.text.contains("四楼"), "{}", result.text);
+        assert!(!result.text.contains("三楼"), "{}", result.text);
+    }
+
+    #[tokio::test]
+    async fn chinese_self_correction_with_bu_shi() {
+        let detector = SelfCorrectionDetector::new();
+        let result = detector
+            .process("我去上海，不是，我去北京", &empty_context())
+            .await
+            .unwrap();
+        assert!(result.text.contains("北京"), "{}", result.text);
+    }
+
+    #[tokio::test]
+    async fn chinese_no_self_correction_in_clean_text() {
+        let detector = SelfCorrectionDetector::new();
+        let result = detector
+            .process("会议在下午三点开始", &empty_context())
+            .await
+            .unwrap();
+        assert_eq!(result.text, "会议在下午三点开始");
+        assert_eq!(result.corrections.len(), 0);
+    }
+
+    // -----------------------------------------------------------------
+    // Korean self-correction — eojeol-tokenised with 1-eojeol fallback.
+    // -----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn korean_self_correction_single_eojeol_repair() {
+        // `8시 아니 9시에 만나자` — single-eojeol reparandum,
+        // 1-eojeol-fallback path.
+        let detector = SelfCorrectionDetector::new();
+        let result = detector
+            .process("8시 아니 9시에 만나자", &empty_context())
+            .await
+            .unwrap();
+        assert!(result.text.contains("9시"), "repair: {}", result.text);
+        assert!(!result.text.contains("8시"), "reparandum: {}", result.text);
+    }
+
+    #[tokio::test]
+    async fn korean_self_correction_with_geuge_anira() {
+        // `그게 아니라` = "that's not it, but…" — multi-eojeol cue
+        // outranks bare `아니` via longest-first sort.
+        let detector = SelfCorrectionDetector::new();
+        let result = detector
+            .process("내가 갈게 그게 아니라 네가 갈게", &empty_context())
+            .await
+            .unwrap();
+        assert!(result.text.contains("네가"), "{}", result.text);
+        assert!(!result.text.contains("내가"), "{}", result.text);
+    }
+
+    #[tokio::test]
+    async fn korean_self_correction_with_jamkkanman() {
+        let detector = SelfCorrectionDetector::new();
+        let result = detector
+            .process("회의실은 삼층 잠깐만 사층입니다", &empty_context())
+            .await
+            .unwrap();
+        assert!(result.text.contains("사층"), "{}", result.text);
+    }
+
+    #[tokio::test]
+    async fn korean_self_correction_with_shared_prefix_overlap() {
+        // En / es style shared-prefix path. The first word of the
+        // repair (`오늘`) appears in the reparandum (`오늘 갈게`),
+        // so count_shared_prefix_from_end returns 2 → drop both
+        // trailing eojeol from before, keep the after verbatim.
+        let detector = SelfCorrectionDetector::new();
+        let result = detector
+            .process("오늘 갈게 아니 오늘 안 갈게", &empty_context())
+            .await
+            .unwrap();
+        assert!(result.text.contains("안 갈게"), "{}", result.text);
+    }
+
+    #[tokio::test]
+    async fn korean_no_self_correction_in_clean_text() {
+        let detector = SelfCorrectionDetector::new();
+        let result = detector
+            .process("내일 오후 세 시에 만나기로 했습니다", &empty_context())
+            .await
+            .unwrap();
+        assert_eq!(result.text, "내일 오후 세 시에 만나기로 했습니다");
+        assert_eq!(result.corrections.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn korean_ani_inside_word_does_not_trigger() {
+        // `아니에요` is a sentence-final negation predicate
+        // ("is not"), not a cue. The 아니에요 cue itself IS in our
+        // list (so a bare "X 아니에요 Y" form would fire), but
+        // `이것은 아니에요` (= "this is not") is a clean sentence
+        // because there's no Y after the cue.
+        let detector = SelfCorrectionDetector::new();
+        let result = detector
+            .process("이것은 아니에요", &empty_context())
+            .await
+            .unwrap();
+        // Cue at end of utterance → after_cue is empty → detector
+        // skips this position.
+        assert_eq!(result.text, "이것은 아니에요");
     }
 }

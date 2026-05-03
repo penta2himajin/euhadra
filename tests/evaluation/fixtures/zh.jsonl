@@ -25,3 +25,8 @@
 {"id":"zh_contextual_filler_005","category":"contextual_filler","reference":"加一个索引就行了","asr_hypothesis":"怎么说，加一个索引就行了"}
 {"id":"zh_demonstrative_001","category":"clean","reference":"那个人是新来的同事","asr_hypothesis":"那个人是新来的同事"}
 {"id":"zh_demonstrative_002","category":"clean","reference":"这个项目下个月上线","asr_hypothesis":"这个项目下个月上线"}
+{"id":"zh_correction_001","category":"self_correction","reference":"我们后天开会","asr_hypothesis":"我们明天开会，不对，我们后天开会"}
+{"id":"zh_correction_002","category":"self_correction","reference":"在四楼开会","asr_hypothesis":"会议室在三楼，我是说，在四楼"}
+{"id":"zh_correction_003","category":"self_correction","reference":"我去北京","asr_hypothesis":"我去上海，不是，我去北京"}
+{"id":"zh_correction_004","category":"self_correction","reference":"用合并请求","asr_hypothesis":"直接推送，应该说，用合并请求"}
+{"id":"zh_correction_005","category":"self_correction","reference":"先重启服务","asr_hypothesis":"先重启数据库，不对，先重启服务"}

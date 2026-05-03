@@ -1,0 +1,27 @@
+{"id":"ko_filler_001","category":"pure_filler","reference":"회의 시간을 변경합시다","asr_hypothesis":"음 회의 시간을 변경합시다"}
+{"id":"ko_filler_002","category":"pure_filler","reference":"로그를 확인해 주세요","asr_hypothesis":"어 로그를 확인해 주세요"}
+{"id":"ko_filler_003","category":"pure_filler","reference":"빌드가 진행 중입니다","asr_hypothesis":"음 빌드가 진행 어 중입니다"}
+{"id":"ko_filler_004","category":"pure_filler","reference":"패치를 검토해 주세요","asr_hypothesis":"음 패치를 어 검토해 주세요"}
+{"id":"ko_filler_005","category":"pure_filler","reference":"API가 JSON을 반환합니다","asr_hypothesis":"API가 어 JSON을 반환합니다"}
+{"id":"ko_filler_006","category":"pure_filler","reference":"서버를 다시 시작하겠습니다","asr_hypothesis":"아 서버를 다시 시작하겠습니다"}
+{"id":"ko_filler_007","category":"pure_filler","reference":"스키마를 업데이트해야 합니다","asr_hypothesis":"스키마를 음 업데이트해야 합니다"}
+{"id":"ko_filler_008","category":"pure_filler","reference":"이건 맞는 것 같습니다","asr_hypothesis":"으 이건 맞는 것 같습니다"}
+{"id":"ko_filler_009","category":"contextual_filler","reference":"테스트가 통과되고 있습니다","asr_hypothesis":"그러니까 테스트가 통과되고 있습니다"}
+{"id":"ko_filler_010","category":"contextual_filler","reference":"배포가 완료되었습니다","asr_hypothesis":"그러니까 배포가 완료되었습니다"}
+{"id":"ko_correction_001","category":"self_correction","reference":"부산에 갈게","asr_hypothesis":"서울에 갈게 그게 아니라 부산에 갈게"}
+{"id":"ko_correction_002","category":"self_correction","reference":"빌드가 통과했습니다","asr_hypothesis":"빌드가 실패했습니다 잘못 말했네 빌드가 통과했습니다"}
+{"id":"ko_correction_003","category":"self_correction","reference":"보고서를 김 씨에게 보내세요","asr_hypothesis":"보고서를 박 씨에게 보내세요 아니 김 씨에게 보내세요"}
+{"id":"ko_correction_004","category":"self_correction","reference":"네 시에 만나자","asr_hypothesis":"세 시에 만나자 아니 네 시에 만나자"}
+{"id":"ko_correction_005","category":"self_correction","reference":"파일을 복사해 주세요","asr_hypothesis":"파일을 옮겨 주세요 아니라 복사해 주세요"}
+{"id":"ko_correction_006","category":"self_correction","reference":"스테이징 버킷에 업로드하세요","asr_hypothesis":"운영 버킷에 업로드하세요 잠깐만 스테이징 버킷에 업로드하세요"}
+{"id":"ko_correction_007","category":"self_correction","reference":"메인 브랜치에 머지합니다","asr_hypothesis":"개발 브랜치에 머지합니다 그게 아니라 메인 브랜치에 머지합니다"}
+{"id":"ko_clean_001","category":"clean","reference":"API가 JSON 응답을 반환합니다","asr_hypothesis":"API가 JSON 응답을 반환합니다"}
+{"id":"ko_clean_002","category":"clean","reference":"데이터베이스 연결을 설정하세요","asr_hypothesis":"데이터베이스 연결을 설정하세요"}
+{"id":"ko_clean_003","category":"clean","reference":"테스트가 통과한 후 배포하세요","asr_hypothesis":"테스트가 통과한 후 배포하세요"}
+{"id":"ko_clean_004","category":"clean","reference":"오류 로그에서 자세한 내용을 확인하세요","asr_hypothesis":"오류 로그에서 자세한 내용을 확인하세요"}
+{"id":"ko_clean_005","category":"clean","reference":"알고리즘은 선형 시간으로 실행됩니다","asr_hypothesis":"알고리즘은 선형 시간으로 실행됩니다"}
+{"id":"ko_clean_006","category":"clean","reference":"리뷰 후 풀 리퀘스트를 머지합니다","asr_hypothesis":"리뷰 후 풀 리퀘스트를 머지합니다"}
+{"id":"ko_clean_007","category":"clean","reference":"쿼리 속도를 높이려면 인덱스를 추가하세요","asr_hypothesis":"쿼리 속도를 높이려면 인덱스를 추가하세요"}
+{"id":"ko_clean_008","category":"clean","reference":"워커를 확장해야 합니다","asr_hypothesis":"워커를 확장해야 합니다"}
+{"id":"ko_clean_009","category":"clean","reference":"다음 달에 인증서를 갱신하세요","asr_hypothesis":"다음 달에 인증서를 갱신하세요"}
+{"id":"ko_clean_010","category":"clean","reference":"캐시 적중률은 허용 가능합니다","asr_hypothesis":"캐시 적중률은 허용 가능합니다"}

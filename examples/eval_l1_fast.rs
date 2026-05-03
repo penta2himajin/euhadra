@@ -1,6 +1,6 @@
 //! L1 fast evaluation runner — Phase A-2.
 //!
-//! Replays per-language fixtures (`tests/evaluation/fixtures/{en,ja,zh,es}.jsonl`)
+//! Replays per-language fixtures (`tests/evaluation/fixtures/{en,ja,zh,es,ko}.jsonl`)
 //! through the post-ASR pipeline using `MockAsr` to inject the
 //! pre-recorded hypothesis text. For each language we measure:
 //!
@@ -39,7 +39,7 @@ struct Cli {
     #[arg(long, default_value = "docs/benchmarks/ci_baseline_layers.json")]
     baseline: PathBuf,
 
-    #[arg(long, value_delimiter = ',', default_value = "en,ja,zh,es")]
+    #[arg(long, value_delimiter = ',', default_value = "en,ja,zh,es,ko")]
     langs: Vec<String>,
 
     /// Number of warmup calls before timed μ-benchmark calls.
@@ -177,7 +177,9 @@ async fn evaluate_language(
     // language, so e.g. zh — which has no filter today — only reports
     // configurations that actually differ.
     let configs: Vec<LayerConfig> = match lang {
-        "en" | "ja" | "zh" | "es" => vec![FULL, WITHOUT_FILLER, WITHOUT_SELF_CORR, WITHOUT_PUNCT],
+        "en" | "ja" | "zh" | "es" | "ko" => {
+            vec![FULL, WITHOUT_FILLER, WITHOUT_SELF_CORR, WITHOUT_PUNCT]
+        }
         other => return Err(format!("unsupported lang {other}")),
     };
 
@@ -260,6 +262,7 @@ fn build_pipeline(lang: &str, cfg: &LayerConfig, hypothesis: &str) -> Result<Pip
             "ja" => builder.filter(JapaneseFillerFilter::new()),
             "zh" => builder.filter(ChineseFillerFilter::new()),
             "es" => builder.filter(SpanishFillerFilter::new()),
+            "ko" => builder.filter(SimpleFillerFilter::korean()),
             other => return Err(format!("unsupported lang {other}")),
         };
     }
@@ -309,6 +312,13 @@ async fn bench_layer_latency(
         }
         "es" => {
             let f = SpanishFillerFilter::new();
+            out.insert(
+                "filler".to_string(),
+                bench_filter(&f, fixtures, warmup, iters).await,
+            );
+        }
+        "ko" => {
+            let f = SimpleFillerFilter::korean();
             out.insert(
                 "filler".to_string(),
                 bench_filter(&f, fixtures, warmup, iters).await,

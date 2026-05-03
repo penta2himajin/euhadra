@@ -234,6 +234,55 @@ impl SimpleFillerFilter {
         }
     }
 
+    /// Korean filler filter.
+    ///
+    /// Korean is whitespace-segmented at the eojeol level — same
+    /// tokenisation strategy as English / Spanish, not the
+    /// comma-segmentation used for Japanese / Chinese. Pure-filler
+    /// words (음 / 어 / 아 / 으) are removed at any position;
+    /// contextual fillers (그 / 저 / 그러니까 / 막 / 약간 / 뭐 /
+    /// 뭐랄까 / 저기 / 글쎄 / 어쨌든) only get stripped at
+    /// sentence-initial positions because every one of them doubles
+    /// as a content word mid-utterance (그 = "that" demonstrative,
+    /// 저 = "I / that", 막 = "just (intensifier)" / "block (verb)",
+    /// 뭐 = "what", etc.).
+    pub fn korean() -> Self {
+        Self {
+            pure_fillers: vec![
+                // Hesitation vowels — `음` / `어` / `아` / `으` are
+                // the canonical lone-vowel hesitations in spoken
+                // Korean. `엄` and `응` are softer variants that
+                // appear in some ASR transcripts.
+                "음", "어", "아", "으", "엄", "응",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
+
+            contextual_fillers: vec![
+                // Discourse markers — filler at sentence start, content
+                // word otherwise. `그` and `저` are the two most
+                // ambiguous; the rest read as fillers nearly any time
+                // they appear sentence-initial.
+                "그", "저", "막", "약간", "뭐", "저기", "글쎄",
+                "그러니까", "그니까", "그래서", "어쨌든",
+                "그게", "뭐랄까",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
+
+            multi_fillers: vec![
+                // CTC commonly emits these as two separated eojeol
+                // even when they pronounce as a single hesitation
+                // unit.
+                vec!["음".into(), "그러니까".into()],
+                vec!["그게".into(), "그러니까".into()],
+                vec!["뭐랄까".into(), "그".into()],
+            ],
+        }
+    }
+
     /// Returns true if position `i` is sentence-initial: either the first word,
     /// or preceded only by removed words / punctuation.
     fn is_sentence_initial(words: &[&str], idx: usize, removed_indices: &[bool]) -> bool {
@@ -1482,5 +1531,57 @@ mod tests {
         a.sort();
         b.sort();
         assert_eq!(a, b);
+    }
+
+    // -----------------------------------------------------------------
+    // Korean filler — full layer implementation parity with en / ja
+    // / zh / es. Issue #47 follow-up.
+    // -----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn korean_pure_filler_removed_at_start() {
+        let filter = SimpleFillerFilter::korean();
+        let result = filter.filter("음 회의 시간을 변경합시다").await.unwrap();
+        assert_eq!(result.text, "회의 시간을 변경합시다");
+        assert!(result.removed.contains(&"음".to_string()));
+    }
+
+    #[tokio::test]
+    async fn korean_pure_filler_removed_mid_utterance() {
+        let filter = SimpleFillerFilter::korean();
+        let result = filter.filter("회의 시간을 어 변경합시다").await.unwrap();
+        // `어` is a pure filler — removed regardless of position.
+        assert!(!result.text.split_whitespace().any(|t| t == "어"), "{}", result.text);
+        assert!(result.text.contains("회의"));
+        assert!(result.text.contains("변경합시다"));
+    }
+
+    #[tokio::test]
+    async fn korean_contextual_filler_removed_at_sentence_start() {
+        let filter = SimpleFillerFilter::korean();
+        let result = filter.filter("그러니까 다음 주에 만나자").await.unwrap();
+        assert_eq!(result.text, "다음 주에 만나자");
+    }
+
+    #[tokio::test]
+    async fn korean_contextual_filler_kept_mid_utterance() {
+        let filter = SimpleFillerFilter::korean();
+        // `그` mid-sentence is a demonstrative ("that"), not a filler.
+        let result = filter.filter("나는 그 사람을 만났다").await.unwrap();
+        assert!(result.text.contains("그 사람"), "{}", result.text);
+    }
+
+    #[tokio::test]
+    async fn korean_multi_word_filler_removed() {
+        let filter = SimpleFillerFilter::korean();
+        let result = filter.filter("음 그러니까 회의를 시작하자").await.unwrap();
+        assert_eq!(result.text, "회의를 시작하자");
+    }
+
+    #[tokio::test]
+    async fn korean_clean_text_unchanged() {
+        let filter = SimpleFillerFilter::korean();
+        let result = filter.filter("내일 오후 세 시에 만나기로 했습니다").await.unwrap();
+        assert_eq!(result.text, "내일 오후 세 시에 만나기로 했습니다");
     }
 }
