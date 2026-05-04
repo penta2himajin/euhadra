@@ -304,6 +304,127 @@ impl SimpleFillerFilter {
         }
         true
     }
+
+    /// Run the 3-pass filler detector and return the codepoint span
+    /// of every removed segment. Mirrors the Spanish filter's
+    /// `detect_spans` so the L3 direct-F1 evaluator can compare
+    /// emitted spans against the gold annotations in
+    /// `tests/evaluation/annotations/{en,ko}_filler.jsonl`.
+    pub fn detect_spans(&self, text: &str) -> Vec<crate::eval::f1::Span> {
+        let chars: Vec<char> = text.chars().collect();
+        let n_chars = chars.len();
+
+        // Tokenise on whitespace; codepoint-index spans match the
+        // schema used by `Span` everywhere else in the F1 module.
+        struct Tok {
+            cp_start: usize,
+            cp_end: usize,
+            clean_lower: String,
+            ends_with_terminal: bool,
+        }
+        let mut tokens: Vec<Tok> = Vec::new();
+        let mut i = 0;
+        while i < n_chars {
+            while i < n_chars && chars[i].is_whitespace() {
+                i += 1;
+            }
+            if i >= n_chars {
+                break;
+            }
+            let start = i;
+            while i < n_chars && !chars[i].is_whitespace() {
+                i += 1;
+            }
+            let surface: String = chars[start..i].iter().collect();
+            let lower = surface.to_lowercase();
+            let clean: String = lower
+                .chars()
+                .take_while(|c| c.is_alphanumeric())
+                .collect();
+            let ends_with_terminal = surface.ends_with('.')
+                || surface.ends_with('!')
+                || surface.ends_with('?')
+                || surface.ends_with(',');
+            tokens.push(Tok {
+                cp_start: start,
+                cp_end: i,
+                clean_lower: clean,
+                ends_with_terminal,
+            });
+        }
+
+        let n = tokens.len();
+        let mut removed = vec![false; n];
+        let mut detections: Vec<(usize, usize)> = Vec::new();
+
+        // Pass 1: 2-token multi-word fillers ("you know", "i mean", …)
+        let mut k = 0;
+        'outer: while k + 1 < n {
+            for mf in &self.multi_fillers {
+                if mf.len() == 2 && !removed[k] && !removed[k + 1]
+                    && tokens[k].clean_lower == mf[0]
+                    && tokens[k + 1].clean_lower == mf[1]
+                {
+                    removed[k] = true;
+                    removed[k + 1] = true;
+                    detections.push((k, k + 1));
+                    k += 2;
+                    continue 'outer;
+                }
+            }
+            k += 1;
+        }
+
+        // Pass 2: pure fillers (any position)
+        for j in 0..n {
+            if removed[j] {
+                continue;
+            }
+            if self.pure_fillers.contains(&tokens[j].clean_lower) {
+                removed[j] = true;
+                detections.push((j, j));
+            }
+        }
+
+        // Pass 3: contextual fillers — sentence-initial only.
+        // Inline the sentence-initial check here so it can read the
+        // token vector (the original `is_sentence_initial` works on
+        // `&[&str]` words). Walk backwards; the first non-removed
+        // predecessor decides.
+        let is_initial = |idx: usize, rem: &[bool]| -> bool {
+            if idx == 0 {
+                return true;
+            }
+            for jj in (0..idx).rev() {
+                if rem[jj] {
+                    continue;
+                }
+                return tokens[jj].ends_with_terminal;
+            }
+            true
+        };
+        for j in 0..n {
+            if removed[j] {
+                continue;
+            }
+            if self.contextual_fillers.contains(&tokens[j].clean_lower)
+                && is_initial(j, &removed)
+            {
+                removed[j] = true;
+                detections.push((j, j));
+            }
+        }
+
+        let mut spans: Vec<crate::eval::f1::Span> = detections
+            .iter()
+            .map(|(s, e)| crate::eval::f1::Span {
+                start: tokens[*s].cp_start,
+                end: tokens[*e].cp_end,
+            })
+            .collect();
+        spans.sort_by_key(|s| s.start);
+        spans
+    }
 }
 
 #[async_trait]
@@ -529,6 +650,120 @@ impl TextFilter for JapaneseFillerFilter {
     }
 }
 
+impl JapaneseFillerFilter {
+    /// Run the comma-segmented filler detector and return the
+    /// codepoint span of every removed segment. Mirrors the Spanish
+    /// filter's `detect_spans` so the L3 direct-F1 evaluator can
+    /// compare emitted spans against the gold annotations in
+    /// `tests/evaluation/annotations/ja_filler.jsonl`.
+    pub fn detect_spans(&self, text: &str) -> Vec<crate::eval::f1::Span> {
+        // Tokenise on 、, tracking each segment's codepoint span in
+        // the original text. The trimmed inner range is what the F1
+        // evaluator scores against, so we record both the outer
+        // segment boundaries and the inner trimmed boundaries.
+        let chars: Vec<char> = text.chars().collect();
+        let n_chars = chars.len();
+
+        struct Seg {
+            cp_inner_start: usize,
+            cp_inner_end: usize,
+            trimmed: String,
+            ends_with_terminal: bool,
+        }
+        let mut segs: Vec<Seg> = Vec::new();
+
+        let mut seg_start = 0usize;
+        let mut j = 0;
+        loop {
+            let at_terminator = j == n_chars || chars[j] == '、';
+            if at_terminator {
+                let inner = &chars[seg_start..j];
+                let mut tl = 0;
+                while tl < inner.len() && inner[tl].is_whitespace() {
+                    tl += 1;
+                }
+                let mut tr = inner.len();
+                while tr > tl && inner[tr - 1].is_whitespace() {
+                    tr -= 1;
+                }
+                let trimmed: String = inner[tl..tr].iter().collect();
+                let ends_with_terminal = trimmed.ends_with('。');
+                segs.push(Seg {
+                    cp_inner_start: seg_start + tl,
+                    cp_inner_end: seg_start + tr,
+                    trimmed,
+                    ends_with_terminal,
+                });
+                if j == n_chars {
+                    break;
+                }
+                seg_start = j + 1; // skip past 、
+            }
+            j += 1;
+        }
+
+        let n = segs.len();
+        let mut removed = vec![false; n];
+        let mut detections: Vec<usize> = Vec::new();
+
+        // Pass 1: pure fillers — unconditional.
+        for i in 0..n {
+            if segs[i].trimmed.is_empty() {
+                continue;
+            }
+            if self.pure_fillers.iter().any(|f| segs[i].trimmed == *f) {
+                removed[i] = true;
+                detections.push(i);
+            }
+        }
+
+        // Pass 2: contextual fillers at sentence-initial position or
+        // immediately after 。.
+        for i in 0..n {
+            if removed[i] || segs[i].trimmed.is_empty() {
+                continue;
+            }
+            let is_initial = (0..i).all(|k| removed[k] || segs[k].trimmed.is_empty());
+            let after_period = i > 0 && !removed[i - 1] && segs[i - 1].ends_with_terminal;
+            if self
+                .contextual_fillers
+                .iter()
+                .any(|f| segs[i].trimmed == *f)
+                && (is_initial || after_period)
+            {
+                removed[i] = true;
+                detections.push(i);
+            }
+        }
+
+        // Pass 3: standalone contextual fillers — segment IS the
+        // filler word in its entirety.
+        for i in 0..n {
+            if removed[i] || segs[i].trimmed.is_empty() {
+                continue;
+            }
+            if self
+                .contextual_fillers
+                .iter()
+                .any(|f| segs[i].trimmed == *f)
+            {
+                removed[i] = true;
+                detections.push(i);
+            }
+        }
+
+        let mut spans: Vec<crate::eval::f1::Span> = detections
+            .into_iter()
+            .map(|i| crate::eval::f1::Span {
+                start: segs[i].cp_inner_start,
+                end: segs[i].cp_inner_end,
+            })
+            .collect();
+        spans.sort_by_key(|s| s.start);
+        spans
+    }
+}
+
 // ---------------------------------------------------------------------------
 // ChineseFillerFilter — Mandarin Chinese rule-based filter
 // ---------------------------------------------------------------------------
@@ -669,6 +904,116 @@ impl TextFilter for ChineseFillerFilter {
             text: result.trim().to_string(),
             removed: removed_labels,
         })
+    }
+}
+
+impl ChineseFillerFilter {
+    /// Run the comma-segmented filler detector and return the
+    /// codepoint span of every removed segment. Mirrors the
+    /// Japanese filter's `detect_spans` with `，` as the segment
+    /// terminator instead of `、`. Used by the L3 direct-F1
+    /// evaluator in `eval_l3 --task filler --lang zh`.
+    pub fn detect_spans(&self, text: &str) -> Vec<crate::eval::f1::Span> {
+        let chars: Vec<char> = text.chars().collect();
+        let n_chars = chars.len();
+
+        struct Seg {
+            cp_inner_start: usize,
+            cp_inner_end: usize,
+            trimmed: String,
+            ends_with_terminal: bool,
+        }
+        let mut segs: Vec<Seg> = Vec::new();
+
+        let mut seg_start = 0usize;
+        let mut j = 0;
+        loop {
+            let at_terminator = j == n_chars || chars[j] == '，';
+            if at_terminator {
+                let inner = &chars[seg_start..j];
+                let mut tl = 0;
+                while tl < inner.len() && inner[tl].is_whitespace() {
+                    tl += 1;
+                }
+                let mut tr = inner.len();
+                while tr > tl && inner[tr - 1].is_whitespace() {
+                    tr -= 1;
+                }
+                let trimmed: String = inner[tl..tr].iter().collect();
+                let ends_with_terminal = trimmed.ends_with('。');
+                segs.push(Seg {
+                    cp_inner_start: seg_start + tl,
+                    cp_inner_end: seg_start + tr,
+                    trimmed,
+                    ends_with_terminal,
+                });
+                if j == n_chars {
+                    break;
+                }
+                seg_start = j + 1;
+            }
+            j += 1;
+        }
+
+        let n = segs.len();
+        let mut removed = vec![false; n];
+        let mut detections: Vec<usize> = Vec::new();
+
+        // Pass 1: pure fillers — unconditional.
+        for i in 0..n {
+            if segs[i].trimmed.is_empty() {
+                continue;
+            }
+            if self.pure_fillers.iter().any(|f| segs[i].trimmed == *f) {
+                removed[i] = true;
+                detections.push(i);
+            }
+        }
+
+        // Pass 2: contextual fillers at sentence-initial position or
+        // immediately after 。.
+        for i in 0..n {
+            if removed[i] || segs[i].trimmed.is_empty() {
+                continue;
+            }
+            let is_initial = (0..i).all(|k| removed[k] || segs[k].trimmed.is_empty());
+            let after_period = i > 0 && !removed[i - 1] && segs[i - 1].ends_with_terminal;
+            if self
+                .contextual_fillers
+                .iter()
+                .any(|f| segs[i].trimmed == *f)
+                && (is_initial || after_period)
+            {
+                removed[i] = true;
+                detections.push(i);
+            }
+        }
+
+        // Pass 3: standalone contextual fillers — segment IS the
+        // filler in its entirety.
+        for i in 0..n {
+            if removed[i] || segs[i].trimmed.is_empty() {
+                continue;
+            }
+            if self
+                .contextual_fillers
+                .iter()
+                .any(|f| segs[i].trimmed == *f)
+            {
+                removed[i] = true;
+                detections.push(i);
+            }
+        }
+
+        let mut spans: Vec<crate::eval::f1::Span> = detections
+            .into_iter()
+            .map(|i| crate::eval::f1::Span {
+                start: segs[i].cp_inner_start,
+                end: segs[i].cp_inner_end,
+            })
+            .collect();
+        spans.sort_by_key(|s| s.start);
+        spans
     }
 }
 

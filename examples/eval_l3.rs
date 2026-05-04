@@ -473,14 +473,30 @@ async fn run_filler(cli: &Cli) -> Result<(), String> {
     type SpanDetector = Box<dyn Fn(&str) -> Vec<Span>>;
     let lang = cli.lang.as_str();
     let detect_spans: SpanDetector = match lang {
+        "en" | "english" => {
+            let filter = SimpleFillerFilter::english();
+            Box::new(move |t| filter.detect_spans(t))
+        }
+        "ja" | "japanese" => {
+            let filter = JapaneseFillerFilter::new();
+            Box::new(move |t| filter.detect_spans(t))
+        }
+        "zh" | "chinese" => {
+            let filter = ChineseFillerFilter::new();
+            Box::new(move |t| filter.detect_spans(t))
+        }
         "es" | "spanish" => {
             let filter = SpanishFillerFilter::new();
             Box::new(move |t| filter.detect_spans(t))
         }
+        "ko" | "korean" => {
+            let filter = SimpleFillerFilter::korean();
+            Box::new(move |t| filter.detect_spans(t))
+        }
         other => {
             return Err(format!(
-                "filler task: --lang {other} not wired (es only in v1; \
-                 other filters lack a codepoint span emitter)"
+                "filler task: --lang {other} not wired \
+                 (expected one of: en, ja, zh, es, ko)"
             ));
         }
     };
