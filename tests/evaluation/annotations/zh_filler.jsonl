@@ -1,0 +1,22 @@
+{"utterance_id": "zh_filler_pure_001", "text": "嗯，我们需要更新数据库", "fillers": [{"start": 0, "end": 1, "label": "嗯"}]}
+{"utterance_id": "zh_filler_pure_002", "text": "呃，明天发布新版本", "fillers": [{"start": 0, "end": 1, "label": "呃"}]}
+{"utterance_id": "zh_filler_pure_003", "text": "哦，我懂了", "fillers": [{"start": 0, "end": 1, "label": "哦"}]}
+{"utterance_id": "zh_filler_pure_004", "text": "唉，又出问题了", "fillers": [{"start": 0, "end": 1, "label": "唉"}]}
+{"utterance_id": "zh_filler_pure_005", "text": "呀，差点忘了", "fillers": [{"start": 0, "end": 1, "label": "呀"}]}
+{"utterance_id": "zh_filler_pure_006", "text": "嗯，我觉得这样可以", "fillers": [{"start": 0, "end": 1, "label": "嗯"}]}
+{"utterance_id": "zh_filler_ctx_001", "text": "那个，测试全部通过了", "fillers": [{"start": 0, "end": 2, "label": "那个"}]}
+{"utterance_id": "zh_filler_ctx_002", "text": "这个，我们今天部署到生产环境", "fillers": [{"start": 0, "end": 2, "label": "这个"}]}
+{"utterance_id": "zh_filler_ctx_003", "text": "就是，先把日志收集好", "fillers": [{"start": 0, "end": 2, "label": "就是"}]}
+{"utterance_id": "zh_filler_ctx_004", "text": "然后，我们需要更新数据库", "fillers": [{"start": 0, "end": 2, "label": "然后"}]}
+{"utterance_id": "zh_filler_ctx_005", "text": "怎么说，加一个索引就行了", "fillers": [{"start": 0, "end": 3, "label": "怎么说"}]}
+{"utterance_id": "zh_filler_standalone_001", "text": "我觉得，那个，我们需要更新数据库", "fillers": [{"start": 4, "end": 6, "label": "那个"}]}
+{"utterance_id": "zh_filler_standalone_002", "text": "测试通过了，然后，可以合并代码", "fillers": [{"start": 6, "end": 8, "label": "然后"}]}
+{"utterance_id": "zh_filler_after_period_001", "text": "我们已经讨论过了。，那个，下次再说", "fillers": [{"start": 10, "end": 12, "label": "那个"}]}
+{"utterance_id": "zh_filler_clean_001", "text": "我们需要更新数据库以支持新功能"}
+{"utterance_id": "zh_filler_clean_002", "text": "明天发布新版本到生产环境"}
+{"utterance_id": "zh_filler_clean_003", "text": "测试全部通过了，可以合并代码"}
+{"utterance_id": "zh_filler_clean_004", "text": "请检查日志文件中的错误信息"}
+{"utterance_id": "zh_filler_clean_005", "text": "配置文件已经修改并提交到仓库"}
+{"utterance_id": "zh_filler_edge_001", "text": "那个人是新来的同事"}
+{"utterance_id": "zh_filler_edge_002", "text": "这个项目下个月上线"}
+{"utterance_id": "zh_filler_edge_003", "text": "我们先试试这个方案然后再决定"}

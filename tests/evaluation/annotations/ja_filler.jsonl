@@ -1,0 +1,25 @@
+{"utterance_id": "ja_filler_pure_001", "text": "えーと、明日の予定を確認しましょう", "fillers": [{"start": 0, "end": 3, "label": "えーと"}]}
+{"utterance_id": "ja_filler_pure_002", "text": "うーん、難しい問題ですね", "fillers": [{"start": 0, "end": 3, "label": "うーん"}]}
+{"utterance_id": "ja_filler_pure_003", "text": "あー、忘れていました", "fillers": [{"start": 0, "end": 2, "label": "あー"}]}
+{"utterance_id": "ja_filler_pure_004", "text": "えっと、来週の会議は何時ですか", "fillers": [{"start": 0, "end": 3, "label": "えっと"}]}
+{"utterance_id": "ja_filler_pure_005", "text": "うん、了解しました", "fillers": [{"start": 0, "end": 2, "label": "うん"}]}
+{"utterance_id": "ja_filler_pure_006", "text": "ああ、なるほど", "fillers": [{"start": 0, "end": 2, "label": "ああ"}]}
+{"utterance_id": "ja_filler_pure_007", "text": "ええ、その通りです", "fillers": [{"start": 0, "end": 2, "label": "ええ"}]}
+{"utterance_id": "ja_filler_pure_008", "text": "映像、会議室を予約しました", "fillers": [{"start": 0, "end": 2, "label": "映像"}]}
+{"utterance_id": "ja_filler_pure_009", "text": "映映、ちょっと待ってください", "fillers": [{"start": 0, "end": 2, "label": "映映"}]}
+{"utterance_id": "ja_filler_ctx_001", "text": "あの、お立ち合いの中に", "fillers": [{"start": 0, "end": 2, "label": "あの"}]}
+{"utterance_id": "ja_filler_ctx_002", "text": "まあ、なんとかなるでしょう", "fillers": [{"start": 0, "end": 2, "label": "まあ"}]}
+{"utterance_id": "ja_filler_ctx_003", "text": "なんか、変な動きしてる", "fillers": [{"start": 0, "end": 3, "label": "なんか"}]}
+{"utterance_id": "ja_filler_ctx_004", "text": "その、つまり、こういうことです", "fillers": [{"start": 0, "end": 2, "label": "その"}]}
+{"utterance_id": "ja_filler_ctx_005", "text": "ほら、思い出しましたか", "fillers": [{"start": 0, "end": 2, "label": "ほら"}]}
+{"utterance_id": "ja_filler_ctx_006", "text": "やっぱり、最初の案で進めましょう", "fillers": [{"start": 0, "end": 4, "label": "やっぱり"}]}
+{"utterance_id": "ja_filler_after_period_001", "text": "確認しました。あの、結果は問題ないです", "fillers": [{"start": 7, "end": 9, "label": "あの"}]}
+{"utterance_id": "ja_filler_after_period_002", "text": "テストが終わりました。まあ、もう一度走らせます", "fillers": [{"start": 11, "end": 13, "label": "まあ"}]}
+{"utterance_id": "ja_filler_standalone_001", "text": "拙者親方と申すは、あの、お立ち合いの中に", "fillers": [{"start": 9, "end": 11, "label": "あの"}]}
+{"utterance_id": "ja_filler_clean_001", "text": "明日の朝十時に駅前で待ち合わせしましょう"}
+{"utterance_id": "ja_filler_clean_002", "text": "新しいバージョンをリリースする前にテストを実行する"}
+{"utterance_id": "ja_filler_clean_003", "text": "データベースの接続設定を環境変数で管理する"}
+{"utterance_id": "ja_filler_clean_004", "text": "アルゴリズムは入力サイズに対して線形時間で動作する"}
+{"utterance_id": "ja_filler_clean_005", "text": "会議は午後三時に開始する予定です"}
+{"utterance_id": "ja_filler_edge_001", "text": "拙者親方と申すは、あの人が来た"}
+{"utterance_id": "ja_filler_edge_002", "text": "なんか嫌な予感がする"}
