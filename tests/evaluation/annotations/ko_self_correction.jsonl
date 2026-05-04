@@ -1,0 +1,36 @@
+{"utterance_id": "ko_self_corr_geuge_anira_001", "text": "내가 갈게 그게 아니라 네가 갈게", "repairs": [{"reparandum": {"start": 0, "end": 5}, "interregnum": {"start": 6, "end": 12}, "repair": {"start": 13, "end": 18}, "type": "substitution"}]}
+{"utterance_id": "ko_self_corr_geuge_anira_002", "text": "오늘 회의 그게 아니라 내일 회의", "repairs": [{"reparandum": {"start": 0, "end": 5}, "interregnum": {"start": 6, "end": 12}, "repair": {"start": 13, "end": 18}, "type": "substitution"}]}
+{"utterance_id": "ko_self_corr_geuge_anira_003", "text": "삼층에서 만나자 그게 아니라 사층에서 만나자", "repairs": [{"reparandum": {"start": 0, "end": 8}, "interregnum": {"start": 9, "end": 15}, "repair": {"start": 16, "end": 24}, "type": "substitution"}]}
+{"utterance_id": "ko_self_corr_geuge_anira_004", "text": "버그가 캐시에 있어 그게 아니라 큐에 있어", "repairs": [{"reparandum": {"start": 0, "end": 10}, "interregnum": {"start": 11, "end": 17}, "repair": {"start": 18, "end": 23}, "type": "substitution"}]}
+{"utterance_id": "ko_self_corr_geuge_anira_005", "text": "메인 브랜치에 머지 그게 아니라 개발 브랜치에 머지", "repairs": [{"reparandum": {"start": 0, "end": 10}, "interregnum": {"start": 11, "end": 17}, "repair": {"start": 18, "end": 28}, "type": "substitution"}]}
+{"utterance_id": "ko_self_corr_geuge_anigo_001", "text": "다섯 명이 와요 그게 아니고 일곱 명이 와요", "repairs": [{"reparandum": {"start": 0, "end": 8}, "interregnum": {"start": 9, "end": 15}, "repair": {"start": 16, "end": 24}, "type": "substitution"}]}
+{"utterance_id": "ko_self_corr_geuge_anigo_002", "text": "월요일 출시 그게 아니고 화요일 출시", "repairs": [{"reparandum": {"start": 0, "end": 6}, "interregnum": {"start": 7, "end": 13}, "repair": {"start": 14, "end": 20}, "type": "substitution"}]}
+{"utterance_id": "ko_self_corr_geuge_anigo_003", "text": "그 사람은 의사야 그게 아니고 그 사람은 변호사야", "repairs": [{"reparandum": {"start": 0, "end": 9}, "interregnum": {"start": 10, "end": 16}, "repair": {"start": 17, "end": 27}, "type": "substitution"}]}
+{"utterance_id": "ko_self_corr_jalmot_malhaetda_001", "text": "빌드가 실패했다 잘못 말했다 빌드가 통과했다", "repairs": [{"reparandum": {"start": 0, "end": 8}, "interregnum": {"start": 9, "end": 15}, "repair": {"start": 16, "end": 24}, "type": "substitution"}]}
+{"utterance_id": "ko_self_corr_jalmot_malhaetda_002", "text": "오후 두 시 잘못 말했다 오후 세 시", "repairs": [{"reparandum": {"start": 0, "end": 6}, "interregnum": {"start": 7, "end": 13}, "repair": {"start": 14, "end": 20}, "type": "substitution"}]}
+{"utterance_id": "ko_self_corr_jalmot_malhaetda_003", "text": "예산은 백만 원 잘못 말했다 예산은 이백만 원", "repairs": [{"reparandum": {"start": 0, "end": 8}, "interregnum": {"start": 9, "end": 15}, "repair": {"start": 16, "end": 25}, "type": "substitution"}]}
+{"utterance_id": "ko_self_corr_jalmot_malhaenne_001", "text": "수요일이야 잘못 말했네 목요일이야", "repairs": [{"reparandum": {"start": 0, "end": 5}, "interregnum": {"start": 6, "end": 12}, "repair": {"start": 13, "end": 18}, "type": "substitution"}]}
+{"utterance_id": "ko_self_corr_jalmot_malhaenne_002", "text": "한 시간 걸려 잘못 말했네 두 시간 걸려", "repairs": [{"reparandum": {"start": 0, "end": 7}, "interregnum": {"start": 8, "end": 14}, "repair": {"start": 15, "end": 22}, "type": "substitution"}]}
+{"utterance_id": "ko_self_corr_jamkkanman_001", "text": "회의실은 삼층 잠깐만 사층입니다", "repairs": [{"reparandum": {"start": 0, "end": 7}, "interregnum": {"start": 8, "end": 11}, "repair": {"start": 12, "end": 17}, "type": "substitution"}]}
+{"utterance_id": "ko_self_corr_jamkkanman_002", "text": "보고서는 김 씨에게 잠깐만 박 씨에게", "repairs": [{"reparandum": {"start": 0, "end": 10}, "interregnum": {"start": 11, "end": 14}, "repair": {"start": 15, "end": 20}, "type": "substitution"}]}
+{"utterance_id": "ko_self_corr_jamkkanman_003", "text": "내일 만나요 잠깐만 모레 만나요", "repairs": [{"reparandum": {"start": 0, "end": 6}, "interregnum": {"start": 7, "end": 10}, "repair": {"start": 11, "end": 17}, "type": "substitution"}]}
+{"utterance_id": "ko_self_corr_jamkkanman_004", "text": "다섯 시에 시작 잠깐만 여섯 시에 시작", "repairs": [{"reparandum": {"start": 0, "end": 8}, "interregnum": {"start": 9, "end": 12}, "repair": {"start": 13, "end": 21}, "type": "substitution"}]}
+{"utterance_id": "ko_self_corr_a_jamkkan_001", "text": "왼쪽으로 가세요 아 잠깐 오른쪽으로 가세요", "repairs": [{"reparandum": {"start": 0, "end": 8}, "interregnum": {"start": 9, "end": 13}, "repair": {"start": 14, "end": 23}, "type": "substitution"}]}
+{"utterance_id": "ko_self_corr_a_jamkkan_002", "text": "이메일 보냈어 아 잠깐 이메일 안 보냈어", "repairs": [{"reparandum": {"start": 0, "end": 7}, "interregnum": {"start": 8, "end": 12}, "repair": {"start": 13, "end": 22}, "type": "substitution"}]}
+{"utterance_id": "ko_self_corr_anira_001", "text": "파일을 옮겨 주세요 아니라 복사해 주세요", "repairs": [{"reparandum": {"start": 0, "end": 10}, "interregnum": {"start": 11, "end": 14}, "repair": {"start": 15, "end": 22}, "type": "substitution"}]}
+{"utterance_id": "ko_self_corr_anira_002", "text": "어제 출발 아니라 오늘 출발", "repairs": [{"reparandum": {"start": 0, "end": 5}, "interregnum": {"start": 6, "end": 9}, "repair": {"start": 10, "end": 15}, "type": "substitution"}]}
+{"utterance_id": "ko_self_corr_anira_003", "text": "그 영화는 재밌어 아니라 그 영화는 지루해", "repairs": [{"reparandum": {"start": 0, "end": 9}, "interregnum": {"start": 10, "end": 13}, "repair": {"start": 14, "end": 23}, "type": "substitution"}]}
+{"utterance_id": "ko_self_corr_aniya_001", "text": "스무 명이 왔어 아니야 서른 명이 왔어", "repairs": [{"reparandum": {"start": 0, "end": 8}, "interregnum": {"start": 9, "end": 12}, "repair": {"start": 13, "end": 21}, "type": "substitution"}]}
+{"utterance_id": "ko_self_corr_aniya_002", "text": "내가 한 일이야 아니야 네가 한 일이야", "repairs": [{"reparandum": {"start": 0, "end": 8}, "interregnum": {"start": 9, "end": 12}, "repair": {"start": 13, "end": 21}, "type": "substitution"}]}
+{"utterance_id": "ko_self_corr_ani_001", "text": "8시에 만나자 아니 9시에 만나자", "repairs": [{"reparandum": {"start": 0, "end": 7}, "interregnum": {"start": 8, "end": 10}, "repair": {"start": 11, "end": 18}, "type": "substitution"}]}
+{"utterance_id": "ko_self_corr_ani_002", "text": "서울에 갈게 아니 부산에 갈게", "repairs": [{"reparandum": {"start": 0, "end": 6}, "interregnum": {"start": 7, "end": 9}, "repair": {"start": 10, "end": 16}, "type": "substitution"}]}
+{"utterance_id": "ko_self_corr_ani_003", "text": "두 명이 와 아니 세 명이 와", "repairs": [{"reparandum": {"start": 0, "end": 6}, "interregnum": {"start": 7, "end": 9}, "repair": {"start": 10, "end": 16}, "type": "substitution"}]}
+{"utterance_id": "ko_self_corr_ani_004", "text": "오늘 갈게 아니 내일 갈게", "repairs": [{"reparandum": {"start": 0, "end": 5}, "interregnum": {"start": 6, "end": 8}, "repair": {"start": 9, "end": 14}, "type": "substitution"}]}
+{"utterance_id": "ko_clean_001", "text": "내일 오후 세 시에 회의를 시작하기로 했습니다", "repairs": []}
+{"utterance_id": "ko_clean_002", "text": "데이터베이스 연결을 환경 변수로 설정해 주세요", "repairs": []}
+{"utterance_id": "ko_clean_003", "text": "테스트가 모두 통과한 후에 배포를 진행합니다", "repairs": []}
+{"utterance_id": "ko_clean_004", "text": "오류 로그에서 자세한 원인을 확인할 수 있습니다", "repairs": []}
+{"utterance_id": "ko_clean_005", "text": "알고리즘은 입력 크기에 대해 선형 시간으로 동작합니다", "repairs": []}
+{"utterance_id": "ko_edge_001", "text": "이것은 제 가방이 아니에요", "repairs": []}
+{"utterance_id": "ko_edge_002", "text": "지식이 아니라 지혜가 필요합니다", "repairs": []}
+{"utterance_id": "ko_edge_003", "text": "그 분은 아니지만 비슷한 사람이에요", "repairs": []}

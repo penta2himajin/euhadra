@@ -1,0 +1,36 @@
+{"utterance_id": "zh_self_corr_bu_dui_001", "text": "我们明天开会，不对，后天开会", "repairs": [{"reparandum": {"start": 0, "end": 6}, "interregnum": {"start": 7, "end": 9}, "repair": {"start": 10, "end": 14}, "type": "substitution"}]}
+{"utterance_id": "zh_self_corr_bu_dui_002", "text": "会议室在三楼，不对，在四楼", "repairs": [{"reparandum": {"start": 0, "end": 6}, "interregnum": {"start": 7, "end": 9}, "repair": {"start": 10, "end": 13}, "type": "substitution"}]}
+{"utterance_id": "zh_self_corr_bu_dui_003", "text": "我去上海，不对，我去北京", "repairs": [{"reparandum": {"start": 0, "end": 4}, "interregnum": {"start": 5, "end": 7}, "repair": {"start": 8, "end": 12}, "type": "substitution"}]}
+{"utterance_id": "zh_self_corr_bu_dui_004", "text": "项目下个月发布，不对，下下个月发布", "repairs": [{"reparandum": {"start": 0, "end": 7}, "interregnum": {"start": 8, "end": 10}, "repair": {"start": 11, "end": 17}, "type": "substitution"}]}
+{"utterance_id": "zh_self_corr_bu_dui_005", "text": "需要五个人，不对，需要七个人", "repairs": [{"reparandum": {"start": 0, "end": 5}, "interregnum": {"start": 6, "end": 8}, "repair": {"start": 9, "end": 14}, "type": "substitution"}]}
+{"utterance_id": "zh_self_corr_bu_shi_001", "text": "他是医生，不是，他是工程师", "repairs": [{"reparandum": {"start": 0, "end": 4}, "interregnum": {"start": 5, "end": 7}, "repair": {"start": 8, "end": 13}, "type": "substitution"}]}
+{"utterance_id": "zh_self_corr_bu_shi_002", "text": "我去西安，不是，我去成都", "repairs": [{"reparandum": {"start": 0, "end": 4}, "interregnum": {"start": 5, "end": 7}, "repair": {"start": 8, "end": 12}, "type": "substitution"}]}
+{"utterance_id": "zh_self_corr_bu_shi_003", "text": "答案是十二，不是，答案是十三", "repairs": [{"reparandum": {"start": 0, "end": 5}, "interregnum": {"start": 6, "end": 8}, "repair": {"start": 9, "end": 14}, "type": "substitution"}]}
+{"utterance_id": "zh_self_corr_bu_shi_004", "text": "用 Python 实现，不是，用 Rust 实现", "repairs": [{"reparandum": {"start": 0, "end": 11}, "interregnum": {"start": 12, "end": 14}, "repair": {"start": 15, "end": 24}, "type": "substitution"}]}
+{"utterance_id": "zh_self_corr_bu_shi_005", "text": "下午三点开始，不是，下午四点开始", "repairs": [{"reparandum": {"start": 0, "end": 6}, "interregnum": {"start": 7, "end": 9}, "repair": {"start": 10, "end": 16}, "type": "substitution"}]}
+{"utterance_id": "zh_self_corr_wo_shi_shuo_001", "text": "我们星期二开会，我是说，我们星期三开会", "repairs": [{"reparandum": {"start": 0, "end": 7}, "interregnum": {"start": 8, "end": 11}, "repair": {"start": 12, "end": 19}, "type": "substitution"}]}
+{"utterance_id": "zh_self_corr_wo_shi_shuo_002", "text": "费用是一千元，我是说，费用是一千二百元", "repairs": [{"reparandum": {"start": 0, "end": 6}, "interregnum": {"start": 7, "end": 10}, "repair": {"start": 11, "end": 19}, "type": "substitution"}]}
+{"utterance_id": "zh_self_corr_wo_shi_shuo_003", "text": "请把报告发给小李，我是说，请把报告发给小王", "repairs": [{"reparandum": {"start": 0, "end": 8}, "interregnum": {"start": 9, "end": 12}, "repair": {"start": 13, "end": 21}, "type": "substitution"}]}
+{"utterance_id": "zh_self_corr_wo_shi_shuo_004", "text": "他在北京工作，我是说，他在上海工作", "repairs": [{"reparandum": {"start": 0, "end": 6}, "interregnum": {"start": 7, "end": 10}, "repair": {"start": 11, "end": 17}, "type": "substitution"}]}
+{"utterance_id": "zh_self_corr_wo_shi_shuo_005", "text": "会在四楼开，我是说，会在五楼开", "repairs": [{"reparandum": {"start": 0, "end": 5}, "interregnum": {"start": 6, "end": 9}, "repair": {"start": 10, "end": 15}, "type": "substitution"}]}
+{"utterance_id": "zh_self_corr_wo_de_yi_si_shi_001", "text": "测试通过了，我的意思是，测试失败了", "repairs": [{"reparandum": {"start": 0, "end": 5}, "interregnum": {"start": 6, "end": 11}, "repair": {"start": 12, "end": 17}, "type": "substitution"}]}
+{"utterance_id": "zh_self_corr_wo_de_yi_si_shi_002", "text": "他下个月来，我的意思是，他下下个月来", "repairs": [{"reparandum": {"start": 0, "end": 5}, "interregnum": {"start": 6, "end": 11}, "repair": {"start": 12, "end": 18}, "type": "substitution"}]}
+{"utterance_id": "zh_self_corr_wo_de_yi_si_shi_003", "text": "数据库出问题，我的意思是，缓存出问题", "repairs": [{"reparandum": {"start": 0, "end": 6}, "interregnum": {"start": 7, "end": 12}, "repair": {"start": 13, "end": 18}, "type": "substitution"}]}
+{"utterance_id": "zh_self_corr_wo_de_yi_si_shi_004", "text": "需要十台服务器，我的意思是，需要十二台服务器", "repairs": [{"reparandum": {"start": 0, "end": 7}, "interregnum": {"start": 8, "end": 13}, "repair": {"start": 14, "end": 22}, "type": "substitution"}]}
+{"utterance_id": "zh_self_corr_ying_gai_shuo_001", "text": "直接推送，应该说，用合并请求", "repairs": [{"reparandum": {"start": 0, "end": 4}, "interregnum": {"start": 5, "end": 8}, "repair": {"start": 9, "end": 14}, "type": "substitution"}]}
+{"utterance_id": "zh_self_corr_ying_gai_shuo_002", "text": "他是经理，应该说，他是总监", "repairs": [{"reparandum": {"start": 0, "end": 4}, "interregnum": {"start": 5, "end": 8}, "repair": {"start": 9, "end": 13}, "type": "substitution"}]}
+{"utterance_id": "zh_self_corr_ying_gai_shuo_003", "text": "结果不太好，应该说，结果非常糟糕", "repairs": [{"reparandum": {"start": 0, "end": 5}, "interregnum": {"start": 6, "end": 9}, "repair": {"start": 10, "end": 16}, "type": "substitution"}]}
+{"utterance_id": "zh_self_corr_ying_gai_shuo_004", "text": "项目已经完成，应该说，项目接近完成", "repairs": [{"reparandum": {"start": 0, "end": 6}, "interregnum": {"start": 7, "end": 10}, "repair": {"start": 11, "end": 17}, "type": "substitution"}]}
+{"utterance_id": "zh_self_corr_que_qie_de_shuo_001", "text": "今天很热，确切地说，今天三十五度", "repairs": [{"reparandum": {"start": 0, "end": 4}, "interregnum": {"start": 5, "end": 9}, "repair": {"start": 10, "end": 16}, "type": "substitution"}]}
+{"utterance_id": "zh_self_corr_que_qie_de_shuo_002", "text": "需要一段时间，确切地说，需要两个星期", "repairs": [{"reparandum": {"start": 0, "end": 6}, "interregnum": {"start": 7, "end": 11}, "repair": {"start": 12, "end": 18}, "type": "substitution"}]}
+{"utterance_id": "zh_self_corr_que_qie_de_shuo_003", "text": "不少人参加，确切地说，超过一百人参加", "repairs": [{"reparandum": {"start": 0, "end": 5}, "interregnum": {"start": 6, "end": 10}, "repair": {"start": 11, "end": 18}, "type": "substitution"}]}
+{"utterance_id": "zh_self_corr_suan_le_001", "text": "我们去看电影，算了，我们去吃饭", "repairs": [{"reparandum": {"start": 0, "end": 6}, "interregnum": {"start": 7, "end": 9}, "repair": {"start": 10, "end": 15}, "type": "substitution"}]}
+{"utterance_id": "zh_self_corr_suan_le_002", "text": "先重启数据库，算了，先重启服务", "repairs": [{"reparandum": {"start": 0, "end": 6}, "interregnum": {"start": 7, "end": 9}, "repair": {"start": 10, "end": 15}, "type": "substitution"}]}
+{"utterance_id": "zh_self_corr_suan_le_003", "text": "他来接你，算了，我自己开车", "repairs": [{"reparandum": {"start": 0, "end": 4}, "interregnum": {"start": 5, "end": 7}, "repair": {"start": 8, "end": 13}, "type": "substitution"}]}
+{"utterance_id": "zh_clean_001", "text": "我们需要更新数据库以支持新功能", "repairs": []}
+{"utterance_id": "zh_clean_002", "text": "明天发布新版本到生产环境", "repairs": []}
+{"utterance_id": "zh_clean_003", "text": "测试全部通过了，可以合并代码", "repairs": []}
+{"utterance_id": "zh_clean_004", "text": "请检查日志文件中的错误信息", "repairs": []}
+{"utterance_id": "zh_clean_005", "text": "配置文件已经修改并提交到仓库", "repairs": []}
+{"utterance_id": "zh_edge_001", "text": "这个答案不对", "repairs": []}
+{"utterance_id": "zh_edge_002", "text": "我不是工程师", "repairs": []}
