@@ -925,9 +925,19 @@ Robust 用の補助データ:
 L3 は **手動 / 研究レポート用途**。CI には乗せず、ローカルマシンでローカルアノテーション + ローカルデータに対して走らせる。Setup と評価実行を統合した単一の Cargo エイリアス経由で起動する:
 
 ```bash
-# C-1: ja self-correction 直接 F1 (commit 済 annotation を使用)
+# C-1a: filler 直接 F1 (en / ja / zh / es / ko、5 言語完備)
+cargo eval-l3 -- --task filler --lang ja \
+    --input tests/evaluation/annotations/ja_filler.jsonl
+
+# C-1b: self-correction 直接 F1 (en / ja / zh / es / ko、5 言語完備)
 cargo eval-l3 -- --task self-correction --lang ja \
     --input tests/evaluation/annotations/ja_self_correction.jsonl
+
+# C-1c: phoneme-correction 直接 F1 (en のみ、他言語は将来拡張)
+cargo eval-l3 -- --task phoneme-correction --lang en \
+    --input tests/evaluation/annotations/en_phoneme_correction.jsonl \
+    --dict tests/evaluation/annotations/en_phoneme_correction_dict.json \
+    --base-dict tests/evaluation/annotations/en_phoneme_correction_base_dict.json
 
 # C-2: 自然発話 fixture に対する layer ablation
 cargo eval-l3 -- --task ablation --lang ja \
@@ -936,15 +946,31 @@ cargo eval-l3 -- --task ablation --lang ja \
 
 #### Phase C-1 — L3 直接評価 (F1)
 
+実装状況マトリクス (2026-05 時点):
+
+| Task | en | ja | zh | es | ko |
+|---|---|---|---|---|---|
+| filler F1 | ✓ #55 | ✓ #55 | ✓ #55 | ✓ #21 | ✓ #55 |
+| self-correction F1 | ✓ #53 | ✓ | ✓ #51/#53 | ✓ | ✓ #51/#53 |
+| phoneme-correction F1 | ✓ #54 | — | — | — | — |
+| paragraph-split F1 | — | — | — | — | — |
+
+**filler / self-correction の現状**: 5 言語とも `cargo eval-l3 --task {filler,self-correction} --lang <code> --input …` が走る状態。es は CIEMPIESS Test (CC-BY-SA 4.0、download-only) ベース、他 4 言語は `scripts/build_<lang>_filler_annotations.py` / `scripts/build_<lang>_self_correction_annotations.py` の手作りシード (各 20–40 発話、Claude 下書き → 人手レビュー対象)。filter 実装の限界が F1 に surface する例 (例: ja の `X。あの、Y` recall 漏れ、ko の `그` demonstrative FP) は意図的に gold で正しく label し未満点として記録する方針。
+
+**phoneme-correction の現状**: en のみ。`PhonemeCorrector` は IPA 距離 + composite scoring 方式 (英語中心の CMUdict + DeepPhonemizer G2P が前提)。ja / zh / es / ko への展開には言語別 G2P + IPA 辞書 (or 派生スコアラ) が要るため別ワークストリーム。
+
+**未着手**: paragraph-split F1 (TED-LIUM 3 由来 en 段落境界が原案) は本体 ParagraphSplitter は実装済だが直接評価ハーネスが未実装。次の研究ターゲット候補。
+
+外部自然発話コーパスとの連携状況 (commit 済の合成 seed と並行で運用):
+
 | データセット | 言語 | 状態 | アクセス |
 |---|---|---|---|
-| **自社 ja self-correction** (35 発話) | ja | **✓ commit 済** (`tests/evaluation/annotations/ja_self_correction.jsonl`) | 自社制作、project license。Claude 下書き、人手レビュー予定 |
-| **CIEMPIESS Test filler** | es | **✓ harness 実装済** (PR #21、`cargo run --example eval_l3 -- --task filler --lang es --input <jsonl>`)。JSONL は `scripts/build_es_filler_annotations.py` で都度生成、git 追跡対象外 (download-only / SA 制約への対応) | HF `ciempiess/ciempiess_test` (CC-BY-SA 4.0) |
-| Buckeye filler | en | 未実装 | https://buckeyecorpus.osu.edu (要登録) |
-| MagicData-RAMC filler | zh | 未実装 (annotation loader 未対応) — `ChineseFillerFilter` は実装済 (PR #10) なので detector 自体の評価は可能、loader 実装後に F1 を出す | OpenSLR 123 (`scripts/download_l3_data.sh magicdata-ramc-info` で取得手順) |
-| CS2W filler text-only | zh | clone 済 (`scripts/download_l3_data.sh cs2w`)、loader 未実装 — `ChineseFillerFilter` 実装済のため text-only F1 を直接評価する手段が次の PR で追加される | https://github.com/guozishan/CS2W |
-| CEJC filler / self-correction | ja | 未実装 | NINJAL Corpus Portal (要申請) |
-| TED-LIUM 段落分割 F1 | en | 未実装 | OpenSLR 51 (~50 GB、`scripts/download_l3_data.sh tedlium3-test`) |
+| **CIEMPIESS Test filler** | es | **✓ harness 実装済** (PR #21、`scripts/build_es_filler_annotations.py` で都度生成、git 追跡対象外 — download-only / SA 制約) | HF `ciempiess/ciempiess_test` (CC-BY-SA 4.0) |
+| Buckeye filler | en | 未連携 (合成 seed `en_filler.jsonl` が PR #55 で commit 済、自然発話拡張は別ワーク) | https://buckeyecorpus.osu.edu (要登録) |
+| MagicData-RAMC filler | zh | 未連携 (annotation loader 未対応 — 合成 seed `zh_filler.jsonl` で `ChineseFillerFilter::detect_spans` の F1 は走る) | OpenSLR 123 (`scripts/download_l3_data.sh magicdata-ramc-info`) |
+| CS2W filler text-only | zh | clone 済 (`scripts/download_l3_data.sh cs2w`)、loader 未実装 | https://github.com/guozishan/CS2W |
+| CEJC filler / self-correction | ja | 未連携 (合成 seed で代替中) | NINJAL Corpus Portal (要申請) |
+| TED-LIUM 段落分割 F1 | en | 未実装 (ParagraphSplitter 自体は本体実装済、評価ハーネス側が未着手) | OpenSLR 51 (~50 GB、`scripts/download_l3_data.sh tedlium3-test`) |
 
 #### Phase C-2 — L3 Ablation (ΔWER/CER)
 
@@ -956,18 +982,28 @@ cargo eval-l3 -- --task ablation --lang ja \
 | ja | `tests/evaluation/fixtures-natural/ja.jsonl` (10 発話、同上) | **✓ commit 済** |
 | zh | `tests/evaluation/fixtures-natural/zh.jsonl` (10 発話、同上) | **✓ commit 済** |
 | es | `tests/evaluation/fixtures-natural/es.jsonl` (10 発話、FLEURS-es、`build_l3_natural_fixtures.py manifest --asr canary-es` で生成、Canary-180M-Flash hypothesis) | **✓ commit 済** |
+| ko | `tests/evaluation/fixtures-natural/ko.jsonl` (10 発話、FLEURS-ko、SenseVoice-Small hypothesis、PR #53) | **✓ commit 済** |
 
-現状の natural-speech fixtures は FLEURS (読み上げ音声) に whisper-tiny を通した小規模サンプル。**Tier 1 / Tier 2 self-correction の効果はほぼ見えない**ことを前提とする。本格的な自然発話 ablation には ReazonSpeech / WenetSpeech-meeting / TED-LIUM へ拡張が必要 (フォローアップ; ReazonSpeech は HF gated repo、TED-LIUM は ~50 GB)。
+現状の natural-speech fixtures は FLEURS (読み上げ音声) に whisper-tiny / Canary / SenseVoice を通した小規模サンプル。**Tier 1 / Tier 2 self-correction の効果はほぼ見えない**ことを前提とする。本格的な自然発話 ablation には ReazonSpeech / WenetSpeech-meeting / TED-LIUM へ拡張が必要 (フォローアップ; ReazonSpeech は HF gated repo、TED-LIUM は ~50 GB)。
 
 `scripts/build_l3_natural_fixtures.py` で fixtures を再生成可能。`source=manifest --manifest <path>` を渡せば任意の FLEURS フォーマット manifest から fixtures を生成する。
 
-#### Phase C-3 — 自前アノテ + 自己訂正 F1
+#### Phase C-3 — 自前アノテ (filler / self-correction / phoneme-correction)
+
+外部 disfluency コーパス (CSJ / CEJC / MagicData-RAMC / Buckeye 等) のライセンス・取得コスト・loader 実装が揃うまでの繋ぎとして、**Claude 下書き → 人手レビュー** の合成シードを `tests/evaluation/annotations/` に commit している。各 build script (`scripts/build_<lang>_<task>_annotations.py`) で再生成可能、`--verify-only` で span ドリフト検出。
 
 | 言語 | annotation | 状態 |
 |---|---|---|
-| **ja self-correction** (35 発話) | `tests/evaluation/annotations/ja_self_correction.jsonl` | **✓ Claude 下書き済、人手レビュー待ち** |
-| zh self-correction | — | 未実装 (§5.6 で ¥100–200k 見積) |
+| **ja self-correction** (40 発話、v0.2) | `tests/evaluation/annotations/ja_self_correction.jsonl` | **✓ Claude 下書き済、人手レビュー待ち**。`SelfCorrectionDetector` v0.2 評価で utterance / span F1 = 1.000 (cue 長さ降順マッチ修正後) |
+| **en self-correction** | `tests/evaluation/annotations/en_self_correction.jsonl` (PR #53) | **✓ Claude 下書き済、人手レビュー待ち** — `scripts/build_en_self_correction_annotations.py` で再生成可能 |
+| **zh self-correction** | `tests/evaluation/annotations/zh_self_correction.jsonl` (PR #51/#53) | **✓ Claude 下書き済、人手レビュー待ち** — `scripts/build_zh_self_correction_annotations.py` で再生成可能 |
+| **ko self-correction** | `tests/evaluation/annotations/ko_self_correction.jsonl` (PR #51/#53) | **✓ Claude 下書き済、人手レビュー待ち** — `scripts/build_ko_self_correction_annotations.py` で再生成可能 |
 | **es self-correction** (40 発話) | `tests/evaluation/annotations/es_self_correction.jsonl` | **✓ Claude 下書き済、人手レビュー待ち** — `cargo run --example eval_l3 -- --task self-correction --lang es ...` で F1 評価可 (現状 detector に対して 100 % だが、これは regression-style の合成コーパスのため。CIEMPIESS / MLS-es ベースの自然発話アノテは別ワークストリーム、§5.6 で ¥100–200k 見積)。 |
+| **en filler** | `tests/evaluation/annotations/en_filler.jsonl` (25 発話、PR #55) | **✓ Claude 下書き済、人手レビュー待ち** — `scripts/build_en_filler_annotations.py`、F1 = 1.000 |
+| **ja filler** | `tests/evaluation/annotations/ja_filler.jsonl` (25 発話、PR #55) | **✓ Claude 下書き済、人手レビュー待ち** — F1 = 0.941 (`X。あの、Y` 形式の after-period recall 漏れを意図的に gold で正しく label) |
+| **zh filler** | `tests/evaluation/annotations/zh_filler.jsonl` (22 発話、PR #55) | **✓ Claude 下書き済、人手レビュー待ち** — F1 = 1.000 |
+| **ko filler** | `tests/evaluation/annotations/ko_filler.jsonl` (29 発話、PR #55) | **✓ Claude 下書き済、人手レビュー待ち** — F1 = 0.977 (`그` demonstrative の sentence-initial FP を意図的に gold で正しく label) |
+| **en phoneme-correction** | `tests/evaluation/annotations/en_phoneme_correction.jsonl` + `*_dict.json` + `*_base_dict.json` (PR #54) | **✓ Claude 下書き済、人手レビュー待ち** — base_dict は CMUdict 代替 (34 entries)。ja / zh / es / ko 拡張は別ワーク (G2P + IPA 辞書要) |
 
 ja annotation のスキーマと判定ルールは `tests/evaluation/annotations/guidelines.md` を参照。
 PR レビューで以下を確認:

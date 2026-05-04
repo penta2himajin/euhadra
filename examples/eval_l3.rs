@@ -1,11 +1,20 @@
 //! L3 evaluation runner — Phase C (direct F1 + ablation).
 //!
-//! Two task modes (`--task`):
+//! Four task modes (`--task`):
 //!
+//! - **`filler`** (Phase C-1): runs the language-specific filler
+//!   filter's `detect_spans` against a token-span gold standard and
+//!   reports utterance- and span-level F1. Wired for `en` / `ja` /
+//!   `zh` / `es` / `ko`.
 //! - **`self-correction`** (Phase C-1): runs `SelfCorrectionDetector`
 //!   against an annotated JSONL file and reports utterance-level +
 //!   span-level F1. Used to measure how well the detector finds
-//!   reparandum boundaries on hand-curated gold data.
+//!   reparandum boundaries on hand-curated gold data. Wired for
+//!   `en` / `ja` / `zh` / `es` / `ko`.
+//! - **`phoneme-correction`** (Phase C-1): runs `PhonemeCorrector`
+//!   against a `(text → expected_text)` corpus with a domain-term
+//!   dictionary and reports correction F1. Currently `en` only —
+//!   non-English wiring needs language-specific G2P + IPA tables.
 //! - **`ablation`** (Phase C-2): replays a natural-speech fixture set
 //!   through the post-ASR pipeline with each layer toggled on/off and
 //!   reports ΔWER per configuration. Functionally identical to
