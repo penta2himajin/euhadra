@@ -41,10 +41,26 @@ struct Cli {
     #[arg(long, default_value = "ja")]
     lang: String,
 
-    /// Path to annotations JSONL (for `--task self-correction`) or
-    /// fixtures JSONL (for `--task ablation`).
+    /// Path to annotations JSONL (for `--task self-correction` /
+    /// `--task phoneme-correction`) or fixtures JSONL (for
+    /// `--task ablation`).
     #[arg(long)]
     input: PathBuf,
+
+    /// Path to the custom-dictionary JSON used by
+    /// `--task phoneme-correction`. Maps `{word: ipa_string}`. The
+    /// build script `build_en_phoneme_correction_annotations.py`
+    /// emits this file alongside the annotation JSONL.
+    #[arg(long)]
+    dict: Option<PathBuf>,
+
+    /// Path to the base-dictionary JSON used by
+    /// `--task phoneme-correction`. Maps `{word: ipa_string}` for
+    /// every input word the corrector needs to phonemize. Stands
+    /// in for CMUdict so the test runs without a 124K-word
+    /// download.
+    #[arg(long)]
+    base_dict: Option<PathBuf>,
 
     /// IoU threshold for span-level F1 (self-correction only).
     #[arg(long, default_value_t = 0.5)]
@@ -65,6 +81,7 @@ enum Task {
     SelfCorrection,
     Ablation,
     Filler,
+    PhonemeCorrection,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -81,6 +98,7 @@ async fn run() -> Result<(), String> {
         Task::SelfCorrection => run_self_correction(&cli).await,
         Task::Ablation => run_ablation(&cli).await,
         Task::Filler => run_filler(&cli).await,
+        Task::PhonemeCorrection => run_phoneme_correction(&cli).await,
     }
 }
 
@@ -565,6 +583,206 @@ async fn run_filler(cli: &Cli) -> Result<(), String> {
         if let Some(parent) = out.parent() {
             std::fs::create_dir_all(parent).ok();
         }
+        std::fs::write(out, serde_json::to_string_pretty(&report).unwrap())
+            .map_err(|e| format!("write {}: {e}", out.display()))?;
+        eprintln!("report written to {}", out.display());
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Task: phoneme-correction — Tier 2 direct F1 against a (text →
+// expected_text + correction-pair) gold standard. English only in v1.
+//
+// PhonemeCorrector is configured with an empty CMUdict and a small
+// hand-curated `{word: ipa}` dict shipped alongside the annotation
+// JSONL. No G2P / text-embedder backends are wired here so the eval
+// runs in default (non-onnx) builds; the alpha=1.0 phoneme-only
+// scoring path handles every test case in the bundled annotation
+// corpus.
+// ---------------------------------------------------------------------------
+
+async fn run_phoneme_correction(cli: &Cli) -> Result<(), String> {
+    let lang = cli.lang.as_str();
+    if !matches!(lang, "en" | "english") {
+        return Err(format!(
+            "phoneme-correction task: --lang {lang} not wired \
+             (en only in v1)"
+        ));
+    }
+
+    let dict_path = cli
+        .dict
+        .as_ref()
+        .ok_or_else(|| "phoneme-correction task requires --dict <path>".to_string())?;
+    let dict_raw = std::fs::read_to_string(dict_path)
+        .map_err(|e| format!("loading dict {}: {e}", dict_path.display()))?;
+    let dict_map: BTreeMap<String, String> = serde_json::from_str(&dict_raw)
+        .map_err(|e| format!("parsing dict {}: {e}", dict_path.display()))?;
+    if dict_map.is_empty() {
+        return Err(format!("dict {} is empty", dict_path.display()));
+    }
+
+    let custom_entries: Vec<euhadra::phoneme::CustomEntry> = dict_map
+        .iter()
+        .map(|(word, phonemes)| euhadra::phoneme::CustomEntry {
+            word: word.clone(),
+            phonemes: phonemes.clone(),
+            embedding: None,
+        })
+        .collect();
+    let base_dict = match cli.base_dict.as_ref() {
+        Some(path) => euhadra::phoneme::IpaDictionary::load(path)
+            .map_err(|e| format!("loading base dict {}: {}", path.display(), e.message))?,
+        None => euhadra::phoneme::IpaDictionary::empty(),
+    };
+    let corrector = euhadra::phoneme::PhonemeCorrector::new(base_dict, custom_entries);
+    let ctx = ContextSnapshot::default();
+
+    let annotations = load_annotations(&cli.input)
+        .map_err(|e| format!("loading {}: {e}", cli.input.display()))?;
+    if annotations.is_empty() {
+        return Err(format!("annotation file {} is empty", cli.input.display()));
+    }
+
+    // Utterance-level F1: did the corrector produce expected_text?
+    let mut utt_tp = 0usize; // expected fire AND output == expected
+    let mut utt_fp = 0usize; // no expected fire BUT output changed
+    let mut utt_fn = 0usize; // expected fire BUT output != expected
+    let mut utt_tn = 0usize; // no expected fire AND output unchanged
+
+    // Correction-pair F1: multiset comparison of (original, replacement)
+    // pairs across all utterances.
+    let mut pair_tp = 0usize;
+    let mut pair_fp = 0usize;
+    let mut pair_fn = 0usize;
+
+    for anno in &annotations {
+        let result = corrector
+            .process(&anno.text, &ctx)
+            .await
+            .map_err(|e| format!("corrector on {}: {e}", anno.utterance_id))?;
+
+        let expected_text = anno.expected_text.as_deref().unwrap_or(&anno.text);
+        let output_text = result.text.as_str();
+
+        // Utterance-level: comparison is exact on whitespace-stripped
+        // form so trailing spaces from word-rebuild don't bias the
+        // metric. (PhonemeCorrector::process re-joins surviving words
+        // with single spaces — leading / trailing whitespace from the
+        // input would already have been collapsed.)
+        let output_norm = output_text.trim();
+        let expected_norm = expected_text.trim();
+        match (
+            !anno.corrections.is_empty(),
+            output_norm == expected_norm,
+        ) {
+            (true, true) => utt_tp += 1,
+            (true, false) => utt_fn += 1,
+            (false, true) => utt_tn += 1,
+            (false, false) => utt_fp += 1,
+        }
+
+        // Correction-pair multiset diff. Build sorted Vec rather than
+        // HashMap so the comparison is order-independent without
+        // requiring Hash on CorrectionAnnotation.
+        let mut predicted_pairs: Vec<(String, String)> = result
+            .corrections
+            .iter()
+            .filter(|c| {
+                matches!(c.kind, euhadra::processor::CorrectionKind::DictionaryMatch)
+            })
+            .map(|c| (c.original.clone(), c.replacement.clone()))
+            .collect();
+        predicted_pairs.sort();
+        let mut gold_pairs: Vec<(String, String)> = anno
+            .corrections
+            .iter()
+            .map(|c| (c.original.clone(), c.replacement.clone()))
+            .collect();
+        gold_pairs.sort();
+
+        // Walk both sorted lists in lock-step.
+        let (mut pi, mut gi) = (0usize, 0usize);
+        while pi < predicted_pairs.len() && gi < gold_pairs.len() {
+            match predicted_pairs[pi].cmp(&gold_pairs[gi]) {
+                std::cmp::Ordering::Equal => {
+                    pair_tp += 1;
+                    pi += 1;
+                    gi += 1;
+                }
+                std::cmp::Ordering::Less => {
+                    pair_fp += 1;
+                    pi += 1;
+                }
+                std::cmp::Ordering::Greater => {
+                    pair_fn += 1;
+                    gi += 1;
+                }
+            }
+        }
+        pair_fp += predicted_pairs.len() - pi;
+        pair_fn += gold_pairs.len() - gi;
+
+        if cli.verbose && (output_norm != expected_norm || predicted_pairs != gold_pairs) {
+            println!(
+                "  [diff] {} text={:?}\n         predicted_text={:?}\n         expected_text={:?}\n         predicted_pairs={:?}\n         gold_pairs={:?}",
+                anno.utterance_id,
+                anno.text,
+                output_norm,
+                expected_norm,
+                predicted_pairs,
+                gold_pairs,
+            );
+        }
+    }
+
+    let utt_f1 = F1Stats::from_counts(utt_tp, utt_fp, utt_fn);
+    let pair_f1 = F1Stats::from_counts(pair_tp, pair_fp, pair_fn);
+
+    println!("=== L3 phoneme-correction direct F1 ({}) ===", cli.lang);
+    println!("annotations: {}", annotations.len());
+    println!("dict words:  {}", dict_map.len());
+    println!(
+        "utterance-level   tp={} fp={} fn={} tn={}",
+        utt_tp, utt_fp, utt_fn, utt_tn
+    );
+    println!(
+        "  precision={}  recall={}  F1={}",
+        fmt_pct(utt_f1.precision),
+        fmt_pct(utt_f1.recall),
+        fmt_pct(utt_f1.f1),
+    );
+    println!(
+        "correction-pair   tp={} fp={} fn={}",
+        pair_tp, pair_fp, pair_fn
+    );
+    println!(
+        "  precision={}  recall={}  F1={}",
+        fmt_pct(pair_f1.precision),
+        fmt_pct(pair_f1.recall),
+        fmt_pct(pair_f1.f1),
+    );
+
+    if let Some(out) = &cli.output {
+        let report = serde_json::json!({
+            "task": "phoneme-correction",
+            "lang": cli.lang,
+            "annotations": annotations.len(),
+            "dict_words": dict_map.len(),
+            "utterance": {
+                "tp": utt_tp, "fp": utt_fp, "fn": utt_fn, "tn": utt_tn,
+                "precision": utt_f1.precision,
+                "recall": utt_f1.recall,
+                "f1": utt_f1.f1,
+            },
+            "correction_pair": {
+                "tp": pair_tp, "fp": pair_fp, "fn": pair_fn,
+                "precision": pair_f1.precision,
+                "recall": pair_f1.recall,
+                "f1": pair_f1.f1,
+            },
+        });
         std::fs::write(out, serde_json::to_string_pretty(&report).unwrap())
             .map_err(|e| format!("write {}: {e}", out.display()))?;
         eprintln!("report written to {}", out.display());

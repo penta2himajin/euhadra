@@ -1,6 +1,6 @@
 //! Annotation schema for L3 direct evaluation (`§5.6.1`).
 //!
-//! JSON-Lines, one utterance per line, two flavours:
+//! JSON-Lines, one utterance per line, three flavours:
 //!
 //! - **Filler annotation** (`fillers` field): `[{start, end, label}]`
 //!   spans within `text` that mark closed-class fillers (え, えーと,
@@ -8,9 +8,13 @@
 //! - **Self-correction annotation** (`repairs` field): `[{reparandum,
 //!   interregnum, repair, type}]` reparandum/interregnum/repair span
 //!   triples. Used as gold for `SelfCorrectionDetector` F1.
+//! - **Phoneme-correction annotation** (`expected_text` and / or
+//!   `corrections` fields): the post-correction transcript +
+//!   `[{original, replacement}]` token-replacement pairs. Used as
+//!   gold for `PhonemeCorrector` F1.
 //!
-//! A single utterance can carry both `fillers` and `repairs`; either
-//! may be empty.
+//! A single utterance may carry any combination of the three; each
+//! field defaults to empty if absent.
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -25,6 +29,17 @@ pub struct Annotation {
     pub fillers: Vec<FillerSpan>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub repairs: Vec<RepairAnnotation>,
+    /// Expected transcript after `PhonemeCorrector` runs over `text`
+    /// with the test-suite custom dictionary. `None` for utterances
+    /// that aren't phoneme-correction tests; for phoneme-correction
+    /// tests, equal to `text` when no correction should fire.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_text: Option<String>,
+    /// Token-level replacement pairs the corrector is expected to
+    /// emit. Compared against `Correction { original, replacement }`
+    /// pairs returned by `PhonemeCorrector::process` as a multiset.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub corrections: Vec<CorrectionAnnotation>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,6 +85,16 @@ impl SpanField {
             end: self.end,
         }
     }
+}
+
+/// One expected `(original, replacement)` pair for a phoneme-correction
+/// test case. The pair is matched against `processor::Correction`
+/// values returned by `PhonemeCorrector::process` as a multiset (order
+/// doesn't matter, duplicates do).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CorrectionAnnotation {
+    pub original: String,
+    pub replacement: String,
 }
 
 pub fn load_jsonl(path: &Path) -> std::io::Result<Vec<Annotation>> {
@@ -151,6 +176,8 @@ mod tests {
                 repair: SpanField { start: 18, end: 21 },
                 r#type: "substitution".into(),
             }],
+            expected_text: None,
+            corrections: vec![],
         };
         let json = serde_json::to_string(&a).unwrap();
         let parsed: Annotation = serde_json::from_str(&json).unwrap();

@@ -1,0 +1,25 @@
+{"utterance_id": "en_phon_useeffect_001", "text": "the use effect hook is part of react", "expected_text": "the useEffect hook is part of react", "corrections": [{"original": "use effect", "replacement": "useEffect"}]}
+{"utterance_id": "en_phon_usestate_001", "text": "wrap it in use state for reactive updates", "expected_text": "wrap it in useState for reactive updates", "corrections": [{"original": "use state", "replacement": "useState"}]}
+{"utterance_id": "en_phon_usememo_001", "text": "memoise the result with use memo", "expected_text": "memoise the result with useMemo", "corrections": [{"original": "use memo", "replacement": "useMemo"}]}
+{"utterance_id": "en_phon_useref_001", "text": "store the dom node in a use ref", "expected_text": "store the dom node in a useRef", "corrections": [{"original": "use ref", "replacement": "useRef"}]}
+{"utterance_id": "en_phon_useeffect_002", "text": "remember to clean up inside use effect", "expected_text": "remember to clean up inside useEffect", "corrections": [{"original": "use effect", "replacement": "useEffect"}]}
+{"utterance_id": "en_phon_cocoapods_001", "text": "we manage iOS dependencies with cocoa pods", "expected_text": "we manage iOS dependencies with Cocoapods", "corrections": [{"original": "cocoa pods", "replacement": "Cocoapods"}]}
+{"utterance_id": "en_phon_tailscale_001", "text": "the laptop is on the tail scale network", "expected_text": "the laptop is on the Tailscale network", "corrections": [{"original": "tail scale", "replacement": "Tailscale"}]}
+{"utterance_id": "en_phon_kubernetes_001", "text": "the cluster runs on cuber netties", "expected_text": "the cluster runs on Kubernetes", "corrections": [{"original": "cuber netties", "replacement": "Kubernetes"}]}
+{"utterance_id": "en_phon_json_001", "text": "the api returns Jason responses", "expected_text": "the api returns JSON responses", "corrections": [{"original": "Jason", "replacement": "JSON"}]}
+{"utterance_id": "en_phon_oauth_001", "text": "we authenticate with oh auth", "expected_text": "we authenticate with OAuth", "corrections": [{"original": "oh auth", "replacement": "OAuth"}]}
+{"utterance_id": "en_phon_cors_001", "text": "we hit a course error in the browser", "expected_text": "we hit a course error in the browser"}
+{"utterance_id": "en_phon_hyrum_001", "text": "ping Hiram about the merge conflict", "expected_text": "ping Hyrum about the merge conflict", "corrections": [{"original": "Hiram", "replacement": "Hyrum"}]}
+{"utterance_id": "en_phon_hyrum_002", "text": "ask Hiram which version we deployed", "expected_text": "ask Hyrum which version we deployed", "corrections": [{"original": "Hiram", "replacement": "Hyrum"}]}
+{"utterance_id": "en_phon_postgres_001", "text": "the database is post gress", "expected_text": "the database is Postgres", "corrections": [{"original": "post gress", "replacement": "Postgres"}]}
+{"utterance_id": "en_phon_postgres_002", "text": "we migrated from mysql to post grass", "expected_text": "we migrated from mysql to Postgres", "corrections": [{"original": "post grass", "replacement": "Postgres"}]}
+{"utterance_id": "en_phon_multi_001", "text": "the use state hook returns Jason serialisable values", "expected_text": "the useState hook returns JSON serialisable values", "corrections": [{"original": "use state", "replacement": "useState"}, {"original": "Jason", "replacement": "JSON"}]}
+{"utterance_id": "en_phon_multi_002", "text": "ping Hiram about the cocoa pods upgrade", "expected_text": "ping Hyrum about the Cocoapods upgrade", "corrections": [{"original": "Hiram", "replacement": "Hyrum"}, {"original": "cocoa pods", "replacement": "Cocoapods"}]}
+{"utterance_id": "en_phon_clean_001", "text": "the database connection pool is configured correctly", "expected_text": "the database connection pool is configured correctly"}
+{"utterance_id": "en_phon_clean_002", "text": "deploy the new version after all tests pass", "expected_text": "deploy the new version after all tests pass"}
+{"utterance_id": "en_phon_clean_003", "text": "check the error log for the root cause", "expected_text": "check the error log for the root cause"}
+{"utterance_id": "en_phon_clean_004", "text": "the meeting was rescheduled to next thursday", "expected_text": "the meeting was rescheduled to next thursday"}
+{"utterance_id": "en_phon_clean_005", "text": "the algorithm runs in linear time", "expected_text": "the algorithm runs in linear time"}
+{"utterance_id": "en_phon_edge_001", "text": "i need some rest before the next sprint", "expected_text": "i need some rest before the next sprint"}
+{"utterance_id": "en_phon_edge_002", "text": "the core team handles the release process", "expected_text": "the core team handles the release process"}
+{"utterance_id": "en_phon_edge_003", "text": "Jason offered to take notes during the meeting", "expected_text": "JSON offered to take notes during the meeting", "corrections": [{"original": "Jason", "replacement": "JSON"}]}
