@@ -461,11 +461,7 @@ fn build_pipeline(
         "ja" => builder.filter(JapaneseFillerFilter::new()),
         "zh" => builder.filter(ChineseFillerFilter::new()),
         "es" => builder.filter(SpanishFillerFilter::new()),
-        // Korean filler filter is a follow-up. The English filter's
-        // dictionary (um / uh / well / …) shares no surface form
-        // with Hangul fillers (음 / 어 / 그 / …), so it acts as a
-        // safe pass-through for Korean transcripts.
-        "ko" => builder.filter(SimpleFillerFilter::english()),
+        "ko" => builder.filter(SimpleFillerFilter::korean()),
         other => return Err(format!("unsupported language: {other}")),
     };
 
