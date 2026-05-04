@@ -235,13 +235,33 @@ async fn run_self_correction(cli: &Cli) -> Result<(), String> {
 
 fn cue_set_for(lang: &str) -> Result<Vec<&'static str>, String> {
     match lang {
+        "en" | "english" => Ok(en_cue_set()),
         "ja" | "japanese" => Ok(ja_cue_set()),
+        "zh" | "chinese" => Ok(zh_cue_set()),
         "es" | "spanish" => Ok(es_cue_set()),
+        "ko" | "korean" => Ok(ko_cue_set()),
         other => Err(format!(
             "self-correction task: --lang {other} not wired \
-             (expected one of: ja, es)"
+             (expected one of: en, ja, zh, es, ko)"
         )),
     }
+}
+
+/// Mirrors `SelfCorrectionDetector::correction_cues_en` in
+/// `src/processor.rs`. Order is unspecified — `trim_trailing_cue`
+/// re-sorts longest-first internally so that `no wait` outranks
+/// `no` and `or rather` outranks `rather`.
+fn en_cue_set() -> Vec<&'static str> {
+    vec![
+        "no wait",
+        "or rather",
+        "i mean",
+        "actually",
+        "rather",
+        "sorry",
+        "wait",
+        "no",
+    ]
 }
 
 fn ja_cue_set() -> Vec<&'static str> {
@@ -253,6 +273,21 @@ fn ja_cue_set() -> Vec<&'static str> {
         "ていうか",
         "っていうか",
         "じゃない",
+    ]
+}
+
+/// Mirrors `SelfCorrectionDetector::correction_cues_zh` in
+/// `src/processor.rs`. Sorted longest-first so 我的意思是 outranks
+/// 我是说 and 确切地说 outranks 应该说.
+fn zh_cue_set() -> Vec<&'static str> {
+    vec![
+        "我的意思是",
+        "确切地说",
+        "应该说",
+        "我是说",
+        "不对",
+        "不是",
+        "算了",
     ]
 }
 
@@ -270,6 +305,25 @@ fn es_cue_set() -> Vec<&'static str> {
         "digo",
         "no es",
         "no",
+    ]
+}
+
+/// Mirrors `SelfCorrectionDetector::correction_cues_ko` in
+/// `src/processor.rs`. Sorted longest-first so multi-eojeol cues
+/// (그게 아니라, 잘못 말했다) outrank their shorter prefixes
+/// (아니, 그게).
+fn ko_cue_set() -> Vec<&'static str> {
+    vec![
+        "그게 아니라",
+        "그게 아니고",
+        "잘못 말했다",
+        "잘못 말했네",
+        "아 잠깐",
+        "잠깐만",
+        "아니에요",
+        "아니라",
+        "아니야",
+        "아니",
     ]
 }
 
@@ -337,10 +391,16 @@ fn trim_trailing_cue(input: &str, raw: Span, cues: &[&str]) -> Span {
     }
 
     let is_sep = |c: char| {
-        // JA separator + Spanish/English whitespace and punctuation
-        // that the detector treats as a token boundary in its
-        // shared-prefix check (see `detect_spanish` trim_chars).
-        c == '、' || c.is_whitespace() || matches!(c, ',' | '.' | ';' | ':' | '!' | '?')
+        // CJK clause separators (、 ja, ， zh fullwidth, 。 ja/zh
+        // sentence-final, ？！fullwidth), Latin whitespace +
+        // punctuation that any of the detectors treat as a token
+        // boundary (see `detect_spanish` / `detect_chinese` /
+        // `detect_korean` trim_chars). Without `，` here, zh strict
+        // F1 collapsed to zero because the comma between cue and
+        // repair stayed inside the predicted span.
+        matches!(c, '、' | '，' | '。' | '？' | '！')
+            || c.is_whitespace()
+            || matches!(c, ',' | '.' | ';' | ':' | '!' | '?')
     };
 
     // Step 1: strip trailing separators.
@@ -590,7 +650,9 @@ async fn evaluate_ablation_for_lang(
     fixtures: &[Fixture],
 ) -> Result<LanguageLayerBaseline, String> {
     let configs: Vec<LayerConfig> = match lang {
-        "en" | "ja" | "zh" | "es" => vec![FULL, WITHOUT_FILLER, WITHOUT_SC, WITHOUT_PUNCT],
+        "en" | "ja" | "zh" | "es" | "ko" => {
+            vec![FULL, WITHOUT_FILLER, WITHOUT_SC, WITHOUT_PUNCT]
+        }
         other => return Err(format!("unsupported lang {other}")),
     };
 
@@ -663,6 +725,7 @@ fn build_pipeline(lang: &str, cfg: &LayerConfig, hypothesis: &str) -> Result<Pip
             "ja" => builder.filter(JapaneseFillerFilter::new()),
             "zh" => builder.filter(ChineseFillerFilter::new()),
             "es" => builder.filter(SpanishFillerFilter::new()),
+            "ko" => builder.filter(SimpleFillerFilter::korean()),
             other => return Err(format!("unsupported lang {other}")),
         };
     }
@@ -706,6 +769,13 @@ async fn bench_layer_latency(
         }
         "es" => {
             let f = SpanishFillerFilter::new();
+            out.insert(
+                "filler".to_string(),
+                bench_filter(&f, fixtures, warmup, iters).await,
+            );
+        }
+        "ko" => {
+            let f = SimpleFillerFilter::korean();
             out.insert(
                 "filler".to_string(),
                 bench_filter(&f, fixtures, warmup, iters).await,
