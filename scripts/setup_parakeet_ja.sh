@@ -20,6 +20,16 @@
 # Japanese audio). The dedicated `parakeet-tdt_ctc-0.6b-ja` (Hybrid
 # TDT-CTC, 80-mel preprocessor, ReazonSpeech-trained) achieves
 # ~3–9% CER on FLEURS / JSUT vs whisper-tiny's ~42% on the same audio.
+#
+# Licensing (informational — defer to upstream URLs for authoritative text;
+# see docs/model-licenses.md for the consolidated table):
+#   - nvidia/parakeet-tdt_ctc-0.6b-ja (model card): CC-BY-4.0
+#     https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja
+#   - sunilmahendrakar/parakeet-tdt-0.6b-ja-onnx (ONNX mirror): CC-BY-4.0
+#     (inherited from upstream)
+#     https://huggingface.co/sunilmahendrakar/parakeet-tdt-0.6b-ja-onnx
+#   Attribution required: credit NVIDIA, provide a link to the
+#   CC-BY-4.0 text, and indicate modifications if any.
 
 set -euo pipefail
 

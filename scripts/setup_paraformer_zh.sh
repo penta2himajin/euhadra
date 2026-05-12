@@ -25,11 +25,16 @@
 # dropping it into $PARAFORMER_ZH_DIR — the script will skip the
 # download.
 #
-# Licensing: the FunASR runtime is MIT
-# (https://github.com/FunAudioLLM/SenseVoice/blob/main/LICENSE).
-# The model weights are released under the FunASR Model License
-# (https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE),
-# which permits academic + commercial use with attribution.
+# Licensing (informational — defer to upstream URLs for authoritative text;
+# see docs/model-licenses.md for the consolidated table):
+#   - FunASR runtime: MIT
+#     https://github.com/modelscope/FunASR/blob/main/LICENSE
+#   - Paraformer-large model weights: FunASR Model License v1.1
+#     (custom Alibaba license)
+#     https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE
+#     Attribution required (source + author + model name retention).
+#     Commercial use is not explicitly prohibited but the license is not
+#     OSI-approved; consult counsel for commercial distribution.
 
 set -euo pipefail
 

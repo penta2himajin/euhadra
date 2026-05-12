@@ -12,6 +12,13 @@
 #   $WHISPER_DIR/build/bin/whisper-cli
 #   $WHISPER_DIR/models/ggml-tiny.en.bin
 #   $WHISPER_DIR/models/ggml-tiny.bin
+#
+# Licensing (informational — defer to upstream URLs for authoritative text;
+# see docs/model-licenses.md for the consolidated table):
+#   - whisper.cpp runtime (ggerganov): MIT
+#     https://github.com/ggerganov/whisper.cpp/blob/master/LICENSE
+#   - OpenAI Whisper model weights (incl. ggml-* conversions): Apache 2.0
+#     https://github.com/openai/whisper/blob/main/LICENSE
 
 set -euo pipefail
 
