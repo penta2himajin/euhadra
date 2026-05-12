@@ -36,6 +36,20 @@
 #   scripts/setup_canary.sh                          # INT8, default dir
 #   CANARY_FP32=1 scripts/setup_canary.sh            # full-precision
 #   CANARY_DIR=/path scripts/setup_canary.sh         # custom location
+#
+# Licensing (informational — defer to upstream URLs for authoritative text;
+# see docs/model-licenses.md for the consolidated table):
+#   - nvidia/canary-180m-flash: CC-BY-4.0
+#     Declaration: https://huggingface.co/nvidia/canary-180m-flash
+#       (model-card YAML: `license: cc-by-4.0`)
+#   - istupakov/canary-180m-flash-onnx (ONNX mirror, what this script
+#     actually downloads): CC-BY-4.0 (inherited)
+#     Declaration: https://huggingface.co/istupakov/canary-180m-flash-onnx
+#       (model-card YAML: `license: cc-by-4.0`)
+#   - Canonical CC-BY-4.0 text:
+#     https://creativecommons.org/licenses/by/4.0/legalcode.en
+#   Attribution required: credit NVIDIA, provide a link to the
+#   CC-BY-4.0 text, and indicate modifications if any.
 
 set -euo pipefail
 

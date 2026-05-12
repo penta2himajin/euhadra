@@ -33,12 +33,23 @@
 # Python deps (install before running):
 #   pip install funasr modelscope onnx onnxruntime sentencepiece torch torchaudio
 #
-# Licensing:
+# Licensing (informational — defer to upstream URLs for authoritative text;
+# see docs/model-licenses.md for the consolidated table):
 #   - FunASR runtime: MIT
-#     (https://github.com/modelscope/FunASR/blob/main/LICENSE)
-#   - SenseVoice model weights: CC-BY-NC-4.0 / SenseVoice MODEL_LICENSE
-#     (https://github.com/FunAudioLLM/SenseVoice/blob/main/MODEL_LICENSE)
-#     — non-commercial use only without explicit upstream permission.
+#     Declaration + text: https://github.com/modelscope/FunASR/blob/main/LICENSE
+#   - SenseVoice-Small model weights: FunASR Model License v1.1
+#     Declaration: https://huggingface.co/FunAudioLLM/SenseVoiceSmall
+#       (model-card YAML: `license: other`, `license_name: model-license`,
+#        `license_link: https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE`;
+#        the repo's own LICENSE file is a 1-line redirect to the same URL)
+#     Canonical text: https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE
+#     Attribution required (source + author + model name retention, §2.2).
+#     Commercial use is NOT explicitly prohibited (§2.1 "free to use,
+#     copy, modify, and share"), but the license is not OSI-approved and
+#     upstream has not publicly confirmed commercial use
+#     (FunAudioLLM/SenseVoice issues #277, #279 unanswered as of 2026-01).
+#     Earlier comments here described this as "CC-BY-NC-4.0 /
+#     non-commercial only" — that was incorrect.
 
 # `inherit_errexit` propagates `set -e` into command substitutions so
 # a Python failure inside `$(python3 - <<PY ... PY)` no longer leaves
