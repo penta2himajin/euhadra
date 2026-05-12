@@ -302,6 +302,12 @@ jobs:
           # Setting it at job scope keeps the two slots symmetric and
           # makes the variant explicit in the CI log.
           CANARY_INT8: "1"
+          # Force INT8 for the ko SenseVoice-Small slot (issue #59).
+          # `model.int8.onnx` (~234 MB) is already exported alongside the
+          # FP32 `model.onnx` (~895 MB) by `scripts/setup_sensevoice.sh`
+          # and shares the same `vendor/sensevoice` cache key, so no
+          # cache bump is required.
+          SENSEVOICE_INT8: "1"
           # ORT per-op profile JSONs for both Canary sessions (en + es,
           # encoder + decoder = 4 traces total, named
           # `canary-{encoder,decoder}_<timestamp>.json`). Uploaded as

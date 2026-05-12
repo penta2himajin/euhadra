@@ -36,7 +36,7 @@ use euhadra::parakeet::ParakeetAdapter;
 #[cfg(feature = "onnx")]
 use euhadra::paraformer::ParaformerAdapter;
 #[cfg(feature = "onnx")]
-use euhadra::sensevoice::SenseVoiceAdapter;
+use euhadra::sensevoice::{SenseVoiceAdapter, SenseVoiceConfig};
 use euhadra::prelude::*;
 use euhadra::whisper_local::{WhisperLocal, read_wav};
 
@@ -523,9 +523,7 @@ fn build_pipeline(
             #[cfg(feature = "onnx")]
             {
                 let dir = sensevoice_dir.unwrap();
-                let asr = SenseVoiceAdapter::load(dir)
-                    .map_err(|e| format!("load sensevoice from {}: {e}", dir.display()))?
-                    .with_language("ko");
+                let asr = load_sensevoice_adapter(dir)?;
                 builder.asr(asr)
             }
             #[cfg(not(feature = "onnx"))]
@@ -607,6 +605,25 @@ fn load_canary_adapter(dir: &Path, lang: &str) -> Result<CanaryAdapter, String> 
     let adapter = CanaryAdapter::load_with_config(dir, cfg)
         .map_err(|e| format!("load canary {lang} from {}: {e}", dir.display()))?
         .with_language(lang);
+    Ok(adapter)
+}
+
+// SenseVoice-Small ko loader. `SENSEVOICE_INT8=1|true|TRUE|yes` swaps the
+// FP32 `model.onnx` (~895 MB) for the INT8 `model.int8.onnx` (~234 MB);
+// both files are exported by `scripts/setup_sensevoice.sh` and share the
+// same vocab/CMVN/metadata sidecars. Mirrors the `CANARY_INT8` toggle.
+#[cfg(feature = "onnx")]
+fn load_sensevoice_adapter(dir: &Path) -> Result<SenseVoiceAdapter, String> {
+    let mut cfg = SenseVoiceConfig::default();
+    let int8 = std::env::var("SENSEVOICE_INT8")
+        .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes"))
+        .unwrap_or(false);
+    if int8 {
+        cfg = cfg.with_int8_weights();
+    }
+    let adapter = SenseVoiceAdapter::load_with_config(dir, cfg)
+        .map_err(|e| format!("load sensevoice from {}: {e}", dir.display()))?
+        .with_language("ko");
     Ok(adapter)
 }
 
