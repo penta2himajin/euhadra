@@ -291,6 +291,9 @@ jobs:
       - name: Build eval binary (with onnx for Parakeet/Paraformer/Canary/SenseVoice adapters)
         run: cargo build --release --example eval_l1_smoke --features onnx --locked
 
+      - name: Prepare ORT profile output dir
+        run: mkdir -p "${{ github.workspace }}/canary-profile"
+
       - name: Run L1 smoke evaluation
         env:
           # Force INT8 for both `en` and `es` canary slots. `en` already
@@ -299,6 +302,16 @@ jobs:
           # Setting it at job scope keeps the two slots symmetric and
           # makes the variant explicit in the CI log.
           CANARY_INT8: "1"
+          # ORT per-op profile JSONs for both Canary sessions (en + es,
+          # encoder + decoder = 4 traces total, named
+          # `canary-{encoder,decoder}_<timestamp>.json`). Uploaded as
+          # an artifact by the next step. Used to diagnose whether the
+          # ORT runtime is picking INT8 GEMM kernels
+          # (`MatMulIntegerToFloat` / `QLinearMatMul`) or falling back
+          # to dequantize-then-FP32 on runners without AVX-VNNI. See
+          # `src/canary/profiling.rs` and issue #58 PR #64 for the
+          # investigation context.
+          CANARY_PROFILE_DIR: ${{ github.workspace }}/canary-profile
         run: |
           ./target/release/examples/eval_l1_smoke \
             --whisper-cli vendor/whisper.cpp/build/bin/whisper-cli \
@@ -313,6 +326,19 @@ jobs:
             --langs en,ja,zh,es,ko \
             --baseline docs/benchmarks/ci_baseline.json \
             --dump-utterances
+
+      - name: List captured Canary profile traces
+        if: always()
+        run: ls -la "${{ github.workspace }}/canary-profile" || true
+
+      - name: Upload Canary ORT profile traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canary-ort-profile-${{ github.run_id }}
+          path: ${{ github.workspace }}/canary-profile/*.json
+          if-no-files-found: warn
+          retention-days: 7
 
   # L1 fast layer ablation + per-layer μ-benchmark (§1.1 / §3.8 Phase A-2).
   # Replays committed text fixtures through MockAsr → post-ASR layers,

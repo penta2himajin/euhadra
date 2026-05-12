@@ -575,22 +575,31 @@ pub struct CanaryDecoder {
     mems_layers: usize,
     /// `decoder_mems` last-axis size (per-layer hidden dim).
     mems_hidden: usize,
+    /// True iff ORT profiling was enabled at load time via
+    /// `CANARY_PROFILE_DIR`. See `CanaryEncoder` for the rationale.
+    profiling: bool,
 }
 
 impl CanaryDecoder {
     pub fn load(path: impl AsRef<Path>) -> Result<Self, AsrError> {
         let path = path.as_ref();
-        let session = Session::builder()
-            .and_then(|mut b| b.commit_from_file(path))
+        let builder = Session::builder().map_err(|e| AsrError {
+            message: format!("Canary decoder builder {}: {e}", path.display()),
+        })?;
+        let (mut builder, profiling) = crate::canary::profiling::apply(builder, "decoder")
             .map_err(|e| AsrError {
-                message: format!("load Canary decoder {}: {e}", path.display()),
+                message: format!("Canary decoder profiling {}: {e}", path.display()),
             })?;
+        let session = builder.commit_from_file(path).map_err(|e| AsrError {
+            message: format!("load Canary decoder {}: {e}", path.display()),
+        })?;
         validate_decoder_io(&session, path)?;
         let (mems_layers, mems_hidden) = read_mems_shape(&session, path)?;
         Ok(Self {
             session: Mutex::new(session),
             mems_layers,
             mems_hidden,
+            profiling,
         })
     }
 
@@ -788,6 +797,14 @@ impl CanaryDecoder {
             tokens: kept,
             logprobs: kept_logprobs,
         })
+    }
+}
+
+impl Drop for CanaryDecoder {
+    fn drop(&mut self) {
+        if self.profiling {
+            crate::canary::profiling::flush(&self.session, "decoder");
+        }
     }
 }
 

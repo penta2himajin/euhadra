@@ -25,5 +25,6 @@ pub mod vocab;
 pub mod encoder;
 pub mod decoder;
 pub mod adapter;
+pub(crate) mod profiling;
 
 pub use adapter::{CanaryAdapter, CanaryConfig};
