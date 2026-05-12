@@ -7,16 +7,23 @@
 # full-precision pair instead (encoder ~463 MB, decoder ~316 MB,
 # total ~779 MB).
 #
+# `canary-180m-flash` is a single multilingual checkpoint covering
+# en / de / fr / es — the same bundle services every language the
+# adapter speaks, so this script is intentionally language-agnostic
+# and the caller picks the install path via `CANARY_DIR`. The legacy
+# `CANARY_ES_DIR` variable is honoured as a fallback for the period
+# when only `es` was wired up.
+#
 # The directory layout the resulting bundle produces matches what
 # `CanaryAdapter::load` expects:
 #
-#   <CANARY_ES_DIR>/
+#   <CANARY_DIR>/
 #     encoder-model.onnx       (or encoder-model.int8.onnx by default)
 #     decoder-model.onnx       (or decoder-model.int8.onnx by default)
 #     vocab.txt
 #
-# Idempotent: skips files that already exist. Pass `CANARY_ES_DIR`
-# to override the default location.
+# Idempotent: skips files that already exist. Pass `CANARY_DIR`
+# (or legacy `CANARY_ES_DIR`) to override the default location.
 #
 # Why istupakov over the upstream nvidia/canary-180m-flash repo:
 # NeMo's `model.export()` doesn't support Canary (open issue
@@ -26,13 +33,13 @@
 # decision log.
 #
 # Usage:
-#   scripts/setup_canary_es.sh                       # INT8, default dir
-#   CANARY_FP32=1 scripts/setup_canary_es.sh         # full-precision
-#   CANARY_ES_DIR=/path scripts/setup_canary_es.sh   # custom location
+#   scripts/setup_canary.sh                          # INT8, default dir
+#   CANARY_FP32=1 scripts/setup_canary.sh            # full-precision
+#   CANARY_DIR=/path scripts/setup_canary.sh         # custom location
 
 set -euo pipefail
 
-DIR="${CANARY_ES_DIR:-models/canary-180m-flash-onnx}"
+DIR="${CANARY_DIR:-${CANARY_ES_DIR:-models/canary-180m-flash-onnx}}"
 HF_REPO="https://huggingface.co/istupakov/canary-180m-flash-onnx/resolve/main"
 
 if [[ "${CANARY_FP32:-0}" == "1" ]]; then
@@ -92,4 +99,4 @@ for required in "$ENCODER_FILE" "$DECODER_FILE" vocab.txt; do
     fi
 done
 
-echo "CANARY_ES_DIR=$DIR"
+echo "CANARY_DIR=$DIR"

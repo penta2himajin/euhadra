@@ -17,7 +17,7 @@
 //! `docs/canary-integration.md`.
 //!
 //! Distribution: ONNX weights are downloaded by the user via
-//! `scripts/setup_canary_es.sh`; this crate ships none of them.
+//! `scripts/setup_canary.sh`; this crate ships none of them.
 //! Upstream license is CC-BY-4.0.
 
 pub mod frontend;

@@ -20,7 +20,7 @@
 //!   vocab.txt
 //! ```
 //!
-//! `scripts/setup_canary_es.sh` populates that layout from HuggingFace.
+//! `scripts/setup_canary.sh` populates that layout from HuggingFace.
 
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
