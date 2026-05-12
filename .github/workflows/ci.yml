@@ -94,7 +94,12 @@ jobs:
   evaluate-asr:
     name: evaluate (ASR live smoke)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Warm-cache runs finish in ~4 min, but a cold SenseVoice export
+    # (cache miss after a key bump) alone takes ~27 min on
+    # ubuntu-latest. 45 min gives enough headroom to survive a cold
+    # run plus the eval itself; subsequent runs hit cache and exit
+    # well under the original 30 min budget.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
