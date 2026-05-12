@@ -89,6 +89,11 @@ pub fn pack_mel_for_encoder(
 /// borrowing it mutably for `run`.
 pub struct CanaryEncoder {
     session: Mutex<Session>,
+    /// True iff ORT profiling was enabled at load time via
+    /// `CANARY_PROFILE_DIR`. When set, `Drop` calls `end_profiling`
+    /// so the JSON trace gets flushed to disk before the session
+    /// vanishes.
+    profiling: bool,
 }
 
 impl CanaryEncoder {
@@ -96,14 +101,20 @@ impl CanaryEncoder {
     /// expose I/O names matching `ENCODER_INPUT_*` / `ENCODER_OUTPUT_*`.
     pub fn load(path: impl AsRef<Path>) -> Result<Self, AsrError> {
         let path = path.as_ref();
-        let session = Session::builder()
-            .and_then(|mut b| b.commit_from_file(path))
+        let builder = Session::builder().map_err(|e| AsrError {
+            message: format!("Canary encoder builder {}: {e}", path.display()),
+        })?;
+        let (mut builder, profiling) = crate::canary::profiling::apply(builder, "encoder")
             .map_err(|e| AsrError {
-                message: format!("load Canary encoder {}: {e}", path.display()),
+                message: format!("Canary encoder profiling {}: {e}", path.display()),
             })?;
+        let session = builder.commit_from_file(path).map_err(|e| AsrError {
+            message: format!("load Canary encoder {}: {e}", path.display()),
+        })?;
         validate_encoder_io(&session, path)?;
         Ok(Self {
             session: Mutex::new(session),
+            profiling,
         })
     }
 
@@ -171,6 +182,14 @@ impl CanaryEncoder {
             })?;
 
         Ok(EncoderOutput { embeddings, mask })
+    }
+}
+
+impl Drop for CanaryEncoder {
+    fn drop(&mut self) {
+        if self.profiling {
+            crate::canary::profiling::flush(&self.session, "encoder");
+        }
     }
 }
 
