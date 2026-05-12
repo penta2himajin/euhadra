@@ -162,27 +162,28 @@ jobs:
         env:
           PARAFORMER_ZH_DIR: vendor/paraformer_zh
 
-      - name: Cache canary-es ONNX bundle (~779 MB FP32)
+      - name: Cache canary-es ONNX bundle (~213 MB INT8)
         id: canary-es-cache
         uses: actions/cache@v4
         with:
           path: vendor/canary_es
-          key: canary-180m-flash-istupakov-fp32-v1
+          key: canary-180m-flash-istupakov-es-int8-v1
 
       - name: Download canary-es model (cache miss only)
         if: steps.canary-es-cache.outputs.cache-hit != 'true'
         run: bash scripts/setup_canary.sh
         env:
           CANARY_DIR: vendor/canary_es
-          CANARY_FP32: "1"
 
       # canary-en uses the SAME `canary-180m-flash` multilingual
-      # checkpoint as canary-es — only the weight variant differs
-      # (INT8 vs FP32) and the per-language adapter config. We keep
-      # the bundles in separate vendor dirs / cache slots so that
-      # FP32 ↔ INT8 sweeps for the Phase 2 measurement (issue #57)
-      # don't clobber each other, and so the FP32 cache key can stay
-      # pinned at `…-fp32-v1` across the swap.
+      # checkpoint as canary-es — both now run on the INT8 weights
+      # (issue #58 flipped es from FP32 → INT8, matching en's Phase 2
+      # swap in issue #57). The bundles still live in separate vendor
+      # dirs / cache slots because the adapter is configured per
+      # language (e.g. language tag, prompt format) and we don't want
+      # one language's hypothesis-time mutation to clobber the other's
+      # cache entry. The cache keys are kept distinct (`-es-int8-v1`
+      # vs `-int8-v1`) so the two slots can be evicted independently.
       - name: Cache canary-en ONNX bundle (~213 MB INT8)
         id: canary-en-cache
         uses: actions/cache@v4
@@ -268,6 +269,13 @@ jobs:
         run: cargo build --release --example eval_l1_smoke --features onnx --locked
 
       - name: Run L1 smoke evaluation
+        env:
+          # Force INT8 for both `en` and `es` canary slots. `en` already
+          # defaults to INT8 in `load_canary_adapter` (issue #57), so this
+          # is a no-op for `en` and the actual flip for `es` (issue #58).
+          # Setting it at job scope keeps the two slots symmetric and
+          # makes the variant explicit in the CI log.
+          CANARY_INT8: "1"
         run: |
           ./target/release/examples/eval_l1_smoke \
             --whisper-cli vendor/whisper.cpp/build/bin/whisper-cli \
