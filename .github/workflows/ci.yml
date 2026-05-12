@@ -182,10 +182,30 @@ jobs:
 
       - name: Download canary-es model (cache miss only)
         if: steps.canary-es-cache.outputs.cache-hit != 'true'
-        run: bash scripts/setup_canary_es.sh
+        run: bash scripts/setup_canary.sh
         env:
-          CANARY_ES_DIR: vendor/canary_es
+          CANARY_DIR: vendor/canary_es
           CANARY_FP32: "1"
+
+      # canary-en uses the SAME `canary-180m-flash` multilingual
+      # checkpoint as canary-es — only the weight variant differs
+      # (INT8 vs FP32) and the per-language adapter config. We keep
+      # the bundles in separate vendor dirs / cache slots so that
+      # FP32 ↔ INT8 sweeps for the Phase 2 measurement (issue #57)
+      # don't clobber each other, and so the FP32 cache key can stay
+      # pinned at `…-fp32-v1` across the swap.
+      - name: Cache canary-en ONNX bundle (~213 MB INT8)
+        id: canary-en-cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/canary_en
+          key: canary-180m-flash-istupakov-int8-v1
+
+      - name: Download canary-en model (cache miss only)
+        if: steps.canary-en-cache.outputs.cache-hit != 'true'
+        run: bash scripts/setup_canary.sh
+        env:
+          CANARY_DIR: vendor/canary_en
 
       # SenseVoice-Small ONNX bundle (~1.1 GB total: ~895 MB FP32 +
       # ~234 MB INT8 + sidecars). Self-exported from the official

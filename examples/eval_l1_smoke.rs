@@ -106,9 +106,24 @@ struct Cli {
     /// — Canary-180M-Flash reports MLS-Spanish WER 3.17 % on the
     /// official model card, vs. whisper-tiny in the ~50 % range.
     /// Requires `--features onnx` at build time. Populate via
-    /// `scripts/setup_canary_es.sh`.
+    /// `scripts/setup_canary.sh`.
     #[arg(long, env = "CANARY_ES_DIR")]
     canary_es_dir: Option<PathBuf>,
+
+    /// Optional path to an `istupakov/canary-180m-flash-onnx` bundle
+    /// for English. `canary-180m-flash` is a single multilingual
+    /// checkpoint covering en / de / fr / es, so the same bundle the
+    /// `--canary-es-dir` flag uses works here too — they may point at
+    /// the same directory. When provided, the `en` language is run
+    /// through `CanaryAdapter` instead of `--parakeet-en-dir` /
+    /// whisper-tiny.en (canary-en wins when both are passed). INT8
+    /// weights are selected by default to honour the size target
+    /// behind issue #57 (~213 MB vs Parakeet-v3's ~2.4 GB); set
+    /// `CANARY_INT8=0` (or any non-truthy value) to force FP32.
+    /// Requires `--features onnx` at build time. Populate via
+    /// `scripts/setup_canary.sh`.
+    #[arg(long, env = "CANARY_EN_DIR")]
+    canary_en_dir: Option<PathBuf>,
 
     /// Optional path to a `FunAudioLLM/SenseVoiceSmall` ONNX bundle
     /// (`model.onnx` or `model.int8.onnx`, `am.mvn`, `tokens.txt`,
@@ -178,6 +193,7 @@ async fn run() -> Result<(), String> {
 
     let mut used_parakeet_ja = false;
     let mut used_parakeet_en = false;
+    let mut used_canary_en = false;
     let mut used_paraformer_zh = false;
     let mut used_sensevoice_ko = false;
 
@@ -200,12 +216,17 @@ async fn run() -> Result<(), String> {
             cli.parakeet_en_dir.as_deref(),
             cli.paraformer_zh_dir.as_deref(),
             cli.canary_es_dir.as_deref(),
+            cli.canary_en_dir.as_deref(),
             cli.sensevoice_dir.as_deref(),
         )?;
         if lang == "ja" && cli.parakeet_ja_dir.is_some() {
             used_parakeet_ja = true;
         }
-        if lang == "en" && cli.parakeet_en_dir.is_some() {
+        // canary-en wins over parakeet-en when both are set —
+        // matches the precedence in `build_pipeline`.
+        if lang == "en" && cli.canary_en_dir.is_some() {
+            used_canary_en = true;
+        } else if lang == "en" && cli.parakeet_en_dir.is_some() {
             used_parakeet_en = true;
         }
         if lang == "zh" && cli.paraformer_zh_dir.is_some() {
@@ -231,7 +252,13 @@ async fn run() -> Result<(), String> {
 
     let asr_model_label = format!(
         "{en_model} (en) / {ja_model} (ja) / {zh_model} (zh) / {ko_model} (ko)",
-        en_model = if used_parakeet_en { "parakeet-tdt-0.6b-v3" } else { "ggml-tiny.en" },
+        en_model = if used_canary_en {
+            "canary-180m-flash-int8"
+        } else if used_parakeet_en {
+            "parakeet-tdt-0.6b-v3"
+        } else {
+            "ggml-tiny.en"
+        },
         ja_model = if used_parakeet_ja { "parakeet-tdt_ctc-0.6b-ja" } else { "ggml-tiny" },
         zh_model = if used_paraformer_zh { "paraformer-large-zh" } else { "ggml-tiny" },
         ko_model = if used_sensevoice_ko { "sensevoice-small" } else { "ggml-tiny" },
@@ -446,6 +473,7 @@ fn build_pipeline(
     parakeet_en_dir: Option<&Path>,
     paraformer_zh_dir: Option<&Path>,
     canary_es_dir: Option<&Path>,
+    canary_en_dir: Option<&Path>,
     sensevoice_dir: Option<&Path>,
 ) -> Result<Pipeline, String> {
     // Build the post-ASR stack first; ASR is bolted on per-language
@@ -479,6 +507,24 @@ fn build_pipeline(
             {
                 return Err(
                     "--parakeet-ja-dir requires --features onnx at build time".into(),
+                );
+            }
+        }
+        // canary-en wins over parakeet-en when both are set — the
+        // INT8 Canary bundle is the ~11× smaller successor per
+        // issue #57 and the parakeet route is kept only as fallback
+        // until Phase 2 measurement clears the switch.
+        "en" if canary_en_dir.is_some() => {
+            #[cfg(feature = "onnx")]
+            {
+                let dir = canary_en_dir.unwrap();
+                let asr = load_canary_adapter(dir, "en")?;
+                builder.asr(asr)
+            }
+            #[cfg(not(feature = "onnx"))]
+            {
+                return Err(
+                    "--canary-en-dir requires --features onnx at build time".into(),
                 );
             }
         }
@@ -537,49 +583,7 @@ fn build_pipeline(
             #[cfg(feature = "onnx")]
             {
                 let dir = canary_es_dir.unwrap();
-                // Honour `CANARY_PREFIX_FORMAT={onnx-asr,nemo-canary2}`
-                // so callers can sweep the prefix layout without a
-                // rebuild. When unset, the cfg-default applies — that
-                // default is `NemoCanary2` per `DEFAULT_PREFIX_FORMAT`.
-                let mut cfg = CanaryConfig::istupakov_default();
-                if let Ok(raw) = std::env::var("CANARY_PREFIX_FORMAT") {
-                    cfg.prefix_format = match raw.as_str() {
-                        "nemo-canary2" | "nemo_canary2" | "NemoCanary2" => {
-                            PrefixFormat::NemoCanary2
-                        }
-                        "onnx-asr" | "onnx_asr" | "OnnxAsr" => PrefixFormat::OnnxAsr,
-                        other => {
-                            return Err(format!(
-                                "unknown CANARY_PREFIX_FORMAT={other:?}; expected onnx-asr | nemo-canary2"
-                            ));
-                        }
-                    };
-                }
-                // INT8 toggle — used by the post-v8 INT8
-                // re-assessment sweep. When unset, FP32 weights are
-                // loaded (the cfg default). Truthy values enable the
-                // INT8 encoder + decoder weight bundles.
-                if let Ok(raw) = std::env::var("CANARY_INT8") {
-                    let truthy = matches!(raw.as_str(), "1" | "true" | "TRUE" | "yes");
-                    if truthy {
-                        cfg = cfg.with_int8_weights();
-                    }
-                }
-                // Beam-search knobs — used by the post-v8 length-penalty
-                // sweep. When unset, cfg-defaults apply (greedy).
-                if let Ok(raw) = std::env::var("CANARY_BEAM_SIZE") {
-                    cfg.beam_size = raw
-                        .parse()
-                        .map_err(|e| format!("CANARY_BEAM_SIZE: {e}"))?;
-                }
-                if let Ok(raw) = std::env::var("CANARY_LENGTH_PENALTY") {
-                    cfg.length_penalty = raw
-                        .parse()
-                        .map_err(|e| format!("CANARY_LENGTH_PENALTY: {e}"))?;
-                }
-                let asr = CanaryAdapter::load_with_config(dir, cfg)
-                    .map_err(|e| format!("load canary es from {}: {e}", dir.display()))?
-                    .with_language("es");
+                let asr = load_canary_adapter(dir, "es")?;
                 builder.asr(asr)
             }
             #[cfg(not(feature = "onnx"))]
@@ -593,6 +597,61 @@ fn build_pipeline(
     };
 
     builder.build().map_err(|e| format!("build pipeline: {e}"))
+}
+
+// Build a `CanaryAdapter` from `<dir>` for the given language, honouring
+// the shared env-var conventions used by the post-v8 INT8 / beam-search /
+// prefix-format sweeps. Both --canary-en-dir and --canary-es-dir route
+// through this helper so the two call sites can't drift apart.
+//
+// Per-language INT8 defaults follow issue #57: en defaults to INT8
+// (~213 MB; the whole point of swapping out parakeet-v3's ~2.4 GB), es
+// keeps its historical FP32 default (matches the v2 baseline numbers).
+// `CANARY_INT8=1` / `=0` overrides either default symmetrically.
+#[cfg(feature = "onnx")]
+fn load_canary_adapter(dir: &Path, lang: &str) -> Result<CanaryAdapter, String> {
+    let mut cfg = CanaryConfig::istupakov_default();
+
+    // Honour `CANARY_PREFIX_FORMAT={onnx-asr,nemo-canary2}` so callers
+    // can sweep the prefix layout without a rebuild. When unset, the
+    // cfg-default applies — that default is `NemoCanary2` per
+    // `DEFAULT_PREFIX_FORMAT`.
+    if let Ok(raw) = std::env::var("CANARY_PREFIX_FORMAT") {
+        cfg.prefix_format = match raw.as_str() {
+            "nemo-canary2" | "nemo_canary2" | "NemoCanary2" => PrefixFormat::NemoCanary2,
+            "onnx-asr" | "onnx_asr" | "OnnxAsr" => PrefixFormat::OnnxAsr,
+            other => {
+                return Err(format!(
+                    "unknown CANARY_PREFIX_FORMAT={other:?}; expected onnx-asr | nemo-canary2"
+                ));
+            }
+        };
+    }
+
+    // INT8 toggle. Per-language default + symmetric env override.
+    let int8_default = lang == "en";
+    let int8_env = std::env::var("CANARY_INT8").ok().map(|raw| {
+        matches!(raw.as_str(), "1" | "true" | "TRUE" | "yes")
+    });
+    if int8_env.unwrap_or(int8_default) {
+        cfg = cfg.with_int8_weights();
+    }
+
+    // Beam-search knobs — used by the post-v8 length-penalty sweep.
+    // When unset, cfg-defaults apply (greedy).
+    if let Ok(raw) = std::env::var("CANARY_BEAM_SIZE") {
+        cfg.beam_size = raw.parse().map_err(|e| format!("CANARY_BEAM_SIZE: {e}"))?;
+    }
+    if let Ok(raw) = std::env::var("CANARY_LENGTH_PENALTY") {
+        cfg.length_penalty = raw
+            .parse()
+            .map_err(|e| format!("CANARY_LENGTH_PENALTY: {e}"))?;
+    }
+
+    let adapter = CanaryAdapter::load_with_config(dir, cfg)
+        .map_err(|e| format!("load canary {lang} from {}: {e}", dir.display()))?
+        .with_language(lang);
+    Ok(adapter)
 }
 
 fn print_language_result(lang: &str, r: &LanguageBaseline) {

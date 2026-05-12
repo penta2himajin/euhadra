@@ -48,7 +48,7 @@ reference.
 | Encoder ONNX call | `nemo.py` | ~50 lines, `ort` crate | `src/canary/encoder.rs` |
 | Autoregressive decoder loop with KV cache | `nemo.py` `_decode` | ~120 lines | `src/canary/decoder.rs` |
 | `CanaryAdapter` impl `AsrAdapter` trait | new | ~80 lines | `src/canary/adapter.rs` |
-| Setup script (download ONNX) | new | ~40 lines bash | `scripts/setup_canary_es.sh` |
+| Setup script (download ONNX) | new | ~40 lines bash | `scripts/setup_canary.sh` |
 
 ### Mel preprocessor parameters (verbatim from `onnx-asr`)
 ```
@@ -162,7 +162,7 @@ strand the whole effort.
 ### v1 — 10-utt smoke (initial integration check)
 
 First live run against the istupakov bundle on a FLEURS-es 10-utterance
-subset (`scripts/setup_canary_es.sh` + `--canary-es-dir`, INT8):
+subset (`scripts/setup_canary.sh` + `--canary-es-dir`, INT8):
 
 ```
 [es] n=10  CER=0.0975  RTF=0.091
