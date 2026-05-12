@@ -4,12 +4,17 @@
 # the ONNX bundle layout that `SenseVoiceAdapter::load` expects:
 #
 #   <DIR>/
-#     model.onnx          ← FP32 export
-#     model.int8.onnx     ← INT8 quantised export
+#     model.int8.onnx     ← INT8 quantised export (~234 MB)
 #     am.mvn              ← global CMVN statistics (Kaldi-NNet text format)
 #     tokens.txt          ← one SentencePiece piece per line, line = id
 #     metadata.json       ← lang2id / with_itn_id / blank_id / lfr_m / lfr_n
 #     config.yaml         ← kept for reference / debugging
+#
+# FP32 `model.onnx` (~895 MB) is produced by upstream `funasr` as a
+# side-effect of `quantize=True` but intentionally NOT copied into the
+# bundle: CER drift from INT8 is <1pp on FLEURS-ko (issue #59) and
+# dropping FP32 saves ~660 MB of CI cache. If you need FP32 weights,
+# re-run upstream `funasr` export manually.
 #
 # Idempotent: skips outputs that already exist. Pass
 # `SENSEVOICE_DIR` to override the default location.
@@ -60,7 +65,7 @@ require python3
 
 # Refuse to start if every output is already in place — saves a 200MB
 # checkpoint download + minutes of CPU on a re-run.
-if [[ -s "$DIR/model.onnx" && -s "$DIR/model.int8.onnx" \
+if [[ -s "$DIR/model.int8.onnx" \
         && -s "$DIR/am.mvn" && -s "$DIR/tokens.txt" \
         && -s "$DIR/metadata.json" ]]; then
     echo "[skip] $DIR already populated"
@@ -138,7 +143,8 @@ print(f"[py] export_dir contents: {sorted(p.name for p in export_dir.iterdir())}
 
 # Copy ONNX + sidecars under our naming convention. We rename
 # `model_quant.onnx` to `model.int8.onnx` to match the Canary adapter
-# convention (`with_int8_weights()` swaps `model.onnx` → `model.int8.onnx`).
+# layout. FP32 `model.onnx` is produced by upstream as a quantisation
+# input but intentionally not copied (issue #59 Phase 2).
 def _copy_required(src_name: str, dst_name: str):
     src = export_dir / src_name
     if not src.is_file() or src.stat().st_size == 0:
@@ -150,7 +156,6 @@ def _copy_required(src_name: str, dst_name: str):
     print(f"[py] copy {src_name} → {dst_name}", flush=True)
     shutil.copy2(src, dst)
 
-_copy_required("model.onnx", "model.onnx")
 _copy_required("model_quant.onnx", "model.int8.onnx")
 _copy_required("am.mvn", "am.mvn")
 
@@ -227,7 +232,7 @@ print("[py] export complete.", flush=True)
 PY
 
 # Sanity: every adapter-required file must be present.
-for required in model.onnx model.int8.onnx am.mvn tokens.txt metadata.json; do
+for required in model.int8.onnx am.mvn tokens.txt metadata.json; do
     if [[ ! -s "$DIR/$required" ]]; then
         echo "[error] $DIR is missing $required" >&2
         exit 4

@@ -608,20 +608,12 @@ fn load_canary_adapter(dir: &Path, lang: &str) -> Result<CanaryAdapter, String> 
     Ok(adapter)
 }
 
-// SenseVoice-Small ko loader. `SENSEVOICE_INT8=1|true|TRUE|yes` swaps the
-// FP32 `model.onnx` (~895 MB) for the INT8 `model.int8.onnx` (~234 MB);
-// both files are exported by `scripts/setup_sensevoice.sh` and share the
-// same vocab/CMVN/metadata sidecars. Mirrors the `CANARY_INT8` toggle.
+// SenseVoice-Small ko loader. Always uses INT8 weights — the FP32 export
+// was retired in issue #59 Phase 2 and `SenseVoiceConfig::default()` now
+// points at `model.int8.onnx` directly.
 #[cfg(feature = "onnx")]
 fn load_sensevoice_adapter(dir: &Path) -> Result<SenseVoiceAdapter, String> {
-    let mut cfg = SenseVoiceConfig::default();
-    let int8 = std::env::var("SENSEVOICE_INT8")
-        .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes"))
-        .unwrap_or(false);
-    if int8 {
-        cfg = cfg.with_int8_weights();
-    }
-    let adapter = SenseVoiceAdapter::load_with_config(dir, cfg)
+    let adapter = SenseVoiceAdapter::load_with_config(dir, SenseVoiceConfig::default())
         .map_err(|e| format!("load sensevoice from {}: {e}", dir.display()))?
         .with_language("ko");
     Ok(adapter)
