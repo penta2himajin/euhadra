@@ -285,7 +285,7 @@ jobs:
             --model-en vendor/whisper.cpp/models/ggml-tiny.en.bin \
             --model-multi vendor/whisper.cpp/models/ggml-tiny.bin \
             --data-dir data/fleurs_subset \
-            --parakeet-en-dir vendor/parakeet_en \
+            --canary-en-dir vendor/canary_en \
             --parakeet-ja-dir vendor/parakeet_ja \
             --paraformer-zh-dir vendor/paraformer_zh \
             --canary-es-dir vendor/canary_es \
