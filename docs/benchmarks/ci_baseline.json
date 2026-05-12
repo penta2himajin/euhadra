@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated": "epoch:1777196100",
-  "asr_model": "canary-180m-flash-int8 (en) / parakeet-tdt_ctc-0.6b-ja (ja) / paraformer-large-zh (zh) / sensevoice-small (ko)",
+  "asr_model": "canary-180m-flash-int8 (en) / parakeet-tdt_ctc-0.6b-ja (ja) / paraformer-large-zh (zh) / canary-180m-flash-int8 (es) / sensevoice-small (ko)",
   "languages": {
     "en": {
       "samples": 10,
