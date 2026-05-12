@@ -136,8 +136,9 @@ Parakeet-v3-multi is:
 2. Add a `ParakeetMultiAdapter::load_es(...)` constructor in the
    existing `src/parakeet.rs`, downloading
    [`istupakov/parakeet-tdt-0.6b-v3-onnx`](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx).
-3. Update `scripts/setup_parakeet_es.sh` (analogous to
-   `setup_parakeet_en.sh`).
+3. Add `scripts/setup_parakeet_es.sh` modeled on
+   `scripts/setup_parakeet_ja.sh` (the parakeet-en script was
+   retired in issue #57 along with the en swap to Canary INT8).
 4. Switch the CLI auto-select branch for `--language es` to the new
    adapter.
 

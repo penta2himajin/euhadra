@@ -73,17 +73,19 @@ jobs:
       - name: Clippy (onnx)
         run: cargo clippy --features onnx --all-targets --locked -- -D warnings
 
-  # L1 ASR live smoke (§1.1 / §3.8): runs Parakeet (en + ja),
-  # Paraformer-large (zh), Canary-180M-Flash (es), SenseVoice-Small
-  # (ko), and whisper-tiny (fallback) on a 10-utterance FLEURS subset
-  # per language, measures WER/CER + ASR/E2E latency + RTF, and gates
+  # L1 ASR live smoke (§1.1 / §3.8): runs Canary-180M-Flash (en + es),
+  # Parakeet (ja), Paraformer-large (zh), SenseVoice-Small (ko), and
+  # whisper-tiny (fallback) on a 10-utterance FLEURS subset per
+  # language, measures WER/CER + ASR/E2E latency + RTF, and gates
   # against docs/benchmarks/ci_baseline.json. All large artefacts
-  # (whisper.cpp build, GGML models, FLEURS subset, parakeet en + ja
-  # ONNX bundles, paraformer-zh ONNX bundle, canary-es ONNX bundle,
-  # sensevoice ONNX bundle) are cached so warm runs finish in a couple
-  # of minutes.
+  # (whisper.cpp build, GGML models, FLEURS subset, parakeet-ja
+  # ONNX bundle, paraformer-zh ONNX bundle, canary en + es ONNX
+  # bundles, sensevoice ONNX bundle) are cached so warm runs finish
+  # in a couple of minutes.
   # Parakeet-ja replaced whisper-tiny for `ja` in PR #11 (CER 42% → 3.3%).
-  # Parakeet-v3 replaced whisper-tiny.en for `en` in PR #12 (WER 8.4% → 7.5%).
+  # Parakeet-v3 replaced whisper-tiny.en for `en` in PR #12 (WER 8.4% → 7.5%),
+  # then Canary-180M-Flash INT8 replaced Parakeet-v3 for `en` in
+  # PR #61 / issue #57 (WER 7.5% → 4.4%, ~2.4 GB → ~213 MB).
   # Paraformer-large replaced whisper-tiny for `zh` in PR #14
   # (CER 37% → ~5%; baseline numbers recalibrated in a follow-up commit).
   # SenseVoice-Small added `ko` in PR #45 — first run after merge has
@@ -146,19 +148,6 @@ jobs:
         run: bash scripts/setup_parakeet_ja.sh
         env:
           PARAKEET_JA_DIR: vendor/parakeet_ja
-
-      - name: Cache parakeet-en ONNX bundle (~2.4 GB)
-        id: parakeet-en-cache
-        uses: actions/cache@v4
-        with:
-          path: vendor/parakeet_en
-          key: parakeet-tdt-0.6b-v3-istupakov-v1
-
-      - name: Download parakeet-en model (cache miss only)
-        if: steps.parakeet-en-cache.outputs.cache-hit != 'true'
-        run: bash scripts/setup_parakeet_en.sh
-        env:
-          PARAKEET_EN_DIR: vendor/parakeet_en
 
       - name: Cache paraformer-zh ONNX bundle (~240 MB)
         id: paraformer-zh-cache
