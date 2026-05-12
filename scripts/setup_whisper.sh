@@ -16,9 +16,10 @@
 # Licensing (informational — defer to upstream URLs for authoritative text;
 # see docs/model-licenses.md for the consolidated table):
 #   - whisper.cpp runtime (ggerganov): MIT
-#     https://github.com/ggerganov/whisper.cpp/blob/master/LICENSE
-#   - OpenAI Whisper model weights (incl. ggml-* conversions): Apache 2.0
-#     https://github.com/openai/whisper/blob/main/LICENSE
+#     Declaration + text: https://github.com/ggerganov/whisper.cpp/blob/master/LICENSE
+#   - OpenAI Whisper model weights (incl. ggml-* conversions): Apache-2.0
+#     Declaration: https://github.com/openai/whisper/blob/main/LICENSE
+#     Canonical text: https://www.apache.org/licenses/LICENSE-2.0.txt
 
 set -euo pipefail
 

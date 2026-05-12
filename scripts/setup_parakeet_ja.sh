@@ -23,11 +23,15 @@
 #
 # Licensing (informational — defer to upstream URLs for authoritative text;
 # see docs/model-licenses.md for the consolidated table):
-#   - nvidia/parakeet-tdt_ctc-0.6b-ja (model card): CC-BY-4.0
-#     https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja
-#   - sunilmahendrakar/parakeet-tdt-0.6b-ja-onnx (ONNX mirror): CC-BY-4.0
-#     (inherited from upstream)
-#     https://huggingface.co/sunilmahendrakar/parakeet-tdt-0.6b-ja-onnx
+#   - nvidia/parakeet-tdt_ctc-0.6b-ja: CC-BY-4.0
+#     Declaration: https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja
+#       (model-card YAML: `license: cc-by-4.0`)
+#   - sunilmahendrakar/parakeet-tdt-0.6b-ja-onnx (ONNX mirror, what this
+#     script actually downloads): CC-BY-4.0 (inherited)
+#     Declaration: https://huggingface.co/sunilmahendrakar/parakeet-tdt-0.6b-ja-onnx
+#       (model-card YAML: `license: cc-by-4.0`)
+#   - Canonical CC-BY-4.0 text:
+#     https://creativecommons.org/licenses/by/4.0/legalcode.en
 #   Attribution required: credit NVIDIA, provide a link to the
 #   CC-BY-4.0 text, and indicate modifications if any.
 

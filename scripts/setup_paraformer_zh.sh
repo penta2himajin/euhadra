@@ -28,13 +28,16 @@
 # Licensing (informational — defer to upstream URLs for authoritative text;
 # see docs/model-licenses.md for the consolidated table):
 #   - FunASR runtime: MIT
-#     https://github.com/modelscope/FunASR/blob/main/LICENSE
-#   - Paraformer-large model weights: FunASR Model License v1.1
-#     (custom Alibaba license)
-#     https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE
-#     Attribution required (source + author + model name retention).
-#     Commercial use is not explicitly prohibited but the license is not
-#     OSI-approved; consult counsel for commercial distribution.
+#     Declaration + text: https://github.com/modelscope/FunASR/blob/main/LICENSE
+#   - Paraformer-large model weights: Apache-2.0 (per HF mirror metadata)
+#     Declaration: https://huggingface.co/funasr/Paraformer-large
+#       (model-card YAML: `license: apache-2.0`)
+#     Canonical text: https://www.apache.org/licenses/LICENSE-2.0.txt
+#     Note: the FunASR project README claims pretrained models are
+#     governed by https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE
+#     (custom Alibaba license). The HuggingFace distribution we pull
+#     from instead declares Apache-2.0, so this script treats that as
+#     authoritative. See docs/model-licenses.md note ¹ for context.
 
 set -euo pipefail
 
