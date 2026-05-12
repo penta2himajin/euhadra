@@ -81,15 +81,6 @@ struct Cli {
     #[arg(long, env = "PARAKEET_JA_DIR")]
     parakeet_ja_dir: Option<PathBuf>,
 
-    /// Optional path to a `parakeet-tdt-0.6b-v3` ONNX model directory
-    /// (encoder-model.onnx, decoder_joint-model.onnx, vocab.txt,
-    /// *.data). When provided, the `en` language is run through
-    /// ParakeetAdapter (default 128-mel) instead of whisper-tiny.en.
-    /// Smaller WER (~7.5% vs ~8.4%) and roughly 1.5× faster. Requires
-    /// `--features onnx`.
-    #[arg(long, env = "PARAKEET_EN_DIR")]
-    parakeet_en_dir: Option<PathBuf>,
-
     /// Optional path to a FunASR Paraformer-large ONNX bundle
     /// (`model.onnx`, `am.mvn`, `tokens.json`). When provided, the
     /// `zh` language is run through `ParaformerAdapter` instead of
@@ -115,12 +106,13 @@ struct Cli {
     /// checkpoint covering en / de / fr / es, so the same bundle the
     /// `--canary-es-dir` flag uses works here too — they may point at
     /// the same directory. When provided, the `en` language is run
-    /// through `CanaryAdapter` instead of `--parakeet-en-dir` /
-    /// whisper-tiny.en (canary-en wins when both are passed). INT8
-    /// weights are selected by default to honour the size target
-    /// behind issue #57 (~213 MB vs Parakeet-v3's ~2.4 GB); set
-    /// `CANARY_INT8=0` (or any non-truthy value) to force FP32.
-    /// Requires `--features onnx` at build time. Populate via
+    /// through `CanaryAdapter` instead of whisper-tiny.en (the
+    /// previous Parakeet-v3 `--parakeet-en-dir` route was retired in
+    /// issue #57 — Canary INT8 is the default and only ONNX en route
+    /// in CI). INT8 weights are selected by default to honour the
+    /// size target behind issue #57 (~213 MB vs Parakeet-v3's
+    /// ~2.4 GB); set `CANARY_INT8=0` to force FP32. Requires
+    /// `--features onnx` at build time. Populate via
     /// `scripts/setup_canary.sh`.
     #[arg(long, env = "CANARY_EN_DIR")]
     canary_en_dir: Option<PathBuf>,
@@ -192,7 +184,6 @@ async fn run() -> Result<(), String> {
     let mut measured: BTreeMap<String, LanguageBaseline> = BTreeMap::new();
 
     let mut used_parakeet_ja = false;
-    let mut used_parakeet_en = false;
     let mut used_canary_en = false;
     let mut used_paraformer_zh = false;
     let mut used_sensevoice_ko = false;
@@ -213,7 +204,6 @@ async fn run() -> Result<(), String> {
             model,
             lang,
             cli.parakeet_ja_dir.as_deref(),
-            cli.parakeet_en_dir.as_deref(),
             cli.paraformer_zh_dir.as_deref(),
             cli.canary_es_dir.as_deref(),
             cli.canary_en_dir.as_deref(),
@@ -222,12 +212,8 @@ async fn run() -> Result<(), String> {
         if lang == "ja" && cli.parakeet_ja_dir.is_some() {
             used_parakeet_ja = true;
         }
-        // canary-en wins over parakeet-en when both are set —
-        // matches the precedence in `build_pipeline`.
         if lang == "en" && cli.canary_en_dir.is_some() {
             used_canary_en = true;
-        } else if lang == "en" && cli.parakeet_en_dir.is_some() {
-            used_parakeet_en = true;
         }
         if lang == "zh" && cli.paraformer_zh_dir.is_some() {
             used_paraformer_zh = true;
@@ -252,13 +238,7 @@ async fn run() -> Result<(), String> {
 
     let asr_model_label = format!(
         "{en_model} (en) / {ja_model} (ja) / {zh_model} (zh) / {ko_model} (ko)",
-        en_model = if used_canary_en {
-            "canary-180m-flash-int8"
-        } else if used_parakeet_en {
-            "parakeet-tdt-0.6b-v3"
-        } else {
-            "ggml-tiny.en"
-        },
+        en_model = if used_canary_en { "canary-180m-flash-int8" } else { "ggml-tiny.en" },
         ja_model = if used_parakeet_ja { "parakeet-tdt_ctc-0.6b-ja" } else { "ggml-tiny" },
         zh_model = if used_paraformer_zh { "paraformer-large-zh" } else { "ggml-tiny" },
         ko_model = if used_sensevoice_ko { "sensevoice-small" } else { "ggml-tiny" },
@@ -470,7 +450,6 @@ fn build_pipeline(
     model: &Path,
     lang: &str,
     parakeet_ja_dir: Option<&Path>,
-    parakeet_en_dir: Option<&Path>,
     paraformer_zh_dir: Option<&Path>,
     canary_es_dir: Option<&Path>,
     canary_en_dir: Option<&Path>,
@@ -510,10 +489,6 @@ fn build_pipeline(
                 );
             }
         }
-        // canary-en wins over parakeet-en when both are set — the
-        // INT8 Canary bundle is the ~11× smaller successor per
-        // issue #57 and the parakeet route is kept only as fallback
-        // until Phase 2 measurement clears the switch.
         "en" if canary_en_dir.is_some() => {
             #[cfg(feature = "onnx")]
             {
@@ -525,25 +500,6 @@ fn build_pipeline(
             {
                 return Err(
                     "--canary-en-dir requires --features onnx at build time".into(),
-                );
-            }
-        }
-        "en" if parakeet_en_dir.is_some() => {
-            #[cfg(feature = "onnx")]
-            {
-                let dir = parakeet_en_dir.unwrap();
-                // parakeet-tdt-0.6b-v3 (multilingual European, en included)
-                // ships with the default 128-mel preprocessor — no
-                // feature_size override needed; `load(dir)` does it.
-                let asr = ParakeetAdapter::load(dir).map_err(|e| {
-                    format!("load parakeet en from {}: {e}", dir.display())
-                })?;
-                builder.asr(asr)
-            }
-            #[cfg(not(feature = "onnx"))]
-            {
-                return Err(
-                    "--parakeet-en-dir requires --features onnx at build time".into(),
                 );
             }
         }
