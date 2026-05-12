@@ -16,12 +16,14 @@
 //!
 //! ```text
 //! <model_dir>/
-//!   model.onnx           (FP32, ~895 MB) or
 //!   model.int8.onnx      (INT8, ~234 MB)
 //!   am.mvn               (Kaldi-NNet text format, 80*7=560 dims)
 //!   tokens.txt           (one SentencePiece piece per line, line = id)
 //!   metadata.json        (lang2id, with_itn_id, blank_id, lfr_m/n)
 //! ```
+//!
+//! FP32 `model.onnx` (~895 MB) is no longer shipped by the setup
+//! script (issue #59 Phase 2); INT8 CER drift on FLEURS-ko is <1pp.
 //!
 //! The model is shipped under the SenseVoice MODEL_LICENSE (CC-BY-NC
 //! 4.0); this Rust port re-implements only the inference logic and
@@ -52,8 +54,9 @@ use super::metadata::SenseVoiceMetadata;
 use super::vocab::{ctc_collapse, decode_tokens, ids_to_tokens, load_tokens_txt};
 
 /// File-name overrides + per-utterance defaults. The defaults match
-/// the FP32 bundle layout produced by `scripts/setup_sensevoice.sh`;
-/// switch to the INT8 weights via `with_int8_weights()`.
+/// the INT8 bundle layout produced by `scripts/setup_sensevoice.sh`.
+/// FP32 `model.onnx` is no longer shipped (issue #59 Phase 2); set
+/// `model_filename` manually if you have a custom FP32 export.
 #[derive(Debug, Clone)]
 pub struct SenseVoiceConfig {
     pub fbank: FbankOpts,
@@ -71,21 +74,10 @@ pub struct SenseVoiceConfig {
 }
 
 impl SenseVoiceConfig {
-    pub fn fp32_default() -> Self {
-        Self {
-            fbank: FbankOpts::paraformer_default(),
-            model_filename: "model.onnx".to_string(),
-            cmvn_filename: "am.mvn".to_string(),
-            tokens_filename: "tokens.txt".to_string(),
-            metadata_filename: "metadata.json".to_string(),
-            default_language: "ko".to_string(),
-            default_use_itn: true,
-        }
-    }
-
-    /// Switch the model filename to the INT8 quantised export
-    /// (`model.int8.onnx`). The vocabulary, CMVN, and metadata are
-    /// shared between the two precisions.
+    /// Idempotent on the current default (which already points to
+    /// `model.int8.onnx`). Kept as a builder helper so callers can be
+    /// explicit about precision intent, and so a future FP32 default
+    /// switch wouldn't require API changes downstream.
     pub fn with_int8_weights(mut self) -> Self {
         self.model_filename = "model.int8.onnx".to_string();
         self
@@ -94,7 +86,15 @@ impl SenseVoiceConfig {
 
 impl Default for SenseVoiceConfig {
     fn default() -> Self {
-        Self::fp32_default()
+        Self {
+            fbank: FbankOpts::paraformer_default(),
+            model_filename: "model.int8.onnx".to_string(),
+            cmvn_filename: "am.mvn".to_string(),
+            tokens_filename: "tokens.txt".to_string(),
+            metadata_filename: "metadata.json".to_string(),
+            default_language: "ko".to_string(),
+            default_use_itn: true,
+        }
     }
 }
 
@@ -135,7 +135,7 @@ const ONNX_INPUT_TEXT_NORM: &str = "textnorm";
 
 impl SenseVoiceAdapter {
     /// Load a model bundle laid out as
-    /// `<dir>/{model.onnx, am.mvn, tokens.txt, metadata.json}`.
+    /// `<dir>/{model.int8.onnx, am.mvn, tokens.txt, metadata.json}`.
     pub fn load(model_dir: impl AsRef<Path>) -> Result<Self, AsrError> {
         Self::load_with_config(model_dir, SenseVoiceConfig::default())
     }
@@ -415,8 +415,10 @@ mod tests {
 
     #[test]
     fn config_default_filenames_match_setup_script() {
+        // Default tracks the INT8-only bundle layout produced by
+        // `scripts/setup_sensevoice.sh` after issue #59 Phase 2.
         let cfg = SenseVoiceConfig::default();
-        assert_eq!(cfg.model_filename, "model.onnx");
+        assert_eq!(cfg.model_filename, "model.int8.onnx");
         assert_eq!(cfg.cmvn_filename, "am.mvn");
         assert_eq!(cfg.tokens_filename, "tokens.txt");
         assert_eq!(cfg.metadata_filename, "metadata.json");
@@ -426,6 +428,9 @@ mod tests {
 
     #[test]
     fn with_int8_weights_swaps_only_model_filename() {
+        // Default already targets INT8 after issue #59 Phase 2, so
+        // `with_int8_weights()` is idempotent — the assertion still
+        // holds and the rest of the bundle stays untouched.
         let cfg = SenseVoiceConfig::default().with_int8_weights();
         assert_eq!(cfg.model_filename, "model.int8.onnx");
         // Sidecars are precision-agnostic so they survive the override.

@@ -94,7 +94,12 @@ jobs:
   evaluate-asr:
     name: evaluate (ASR live smoke)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Warm-cache runs finish in ~4 min, but a cold SenseVoice export
+    # (cache miss after a key bump) alone takes ~27 min on
+    # ubuntu-latest. 45 min gives enough headroom to survive a cold
+    # run plus the eval itself; subsequent runs hit cache and exit
+    # well under the original 30 min budget.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -226,12 +231,13 @@ jobs:
       # third-party pre-export. The cache key is bumped whenever the
       # bundle layout changes; warm runs skip the heavy Python deps
       # entirely.
-      - name: Cache sensevoice ONNX bundle (~1.1 GB)
+      - name: Cache sensevoice ONNX bundle (~234 MB INT8)
         id: sensevoice-cache
         uses: actions/cache@v4
         with:
           path: vendor/sensevoice
-          key: sensevoice-small-funaudiollm-fp32-int8-v1
+          # v2 drops FP32 `model.onnx` (~660 MB savings) — issue #59 Phase 2.
+          key: sensevoice-small-funaudiollm-int8-v2
 
       - name: Install Python deps for SenseVoice export (cache miss only)
         if: steps.sensevoice-cache.outputs.cache-hit != 'true'
@@ -302,12 +308,6 @@ jobs:
           # Setting it at job scope keeps the two slots symmetric and
           # makes the variant explicit in the CI log.
           CANARY_INT8: "1"
-          # Force INT8 for the ko SenseVoice-Small slot (issue #59).
-          # `model.int8.onnx` (~234 MB) is already exported alongside the
-          # FP32 `model.onnx` (~895 MB) by `scripts/setup_sensevoice.sh`
-          # and shares the same `vendor/sensevoice` cache key, so no
-          # cache bump is required.
-          SENSEVOICE_INT8: "1"
           # ORT per-op profile JSONs for both Canary sessions (en + es,
           # encoder + decoder = 4 traces total, named
           # `canary-{encoder,decoder}_<timestamp>.json`). Uploaded as
