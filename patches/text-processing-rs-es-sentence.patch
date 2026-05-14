@@ -1,0 +1,178 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 8d74965..e40d534 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1033,6 +1033,106 @@ pub fn normalize_sentence_with_options(input: &str, options: NormalizeOptions) -
+     )
+ }
+ 
++/// Normalize a full sentence (ITN) for a specific language.
++///
++/// The ITN counterpart of [`tn_normalize_sentence_lang`]. Routing:
++/// - `en` (or `""`) — the English sentence scanner ([`normalize_sentence`]).
++/// - `es` — the Spanish span-loop scanner (taggers in `itn::es`).
++/// - `ja` / `zh` (and `ko`, when that module is present) — delegated to
++///   [`normalize_with_lang`], whose CJK paths are already sentence-level
++///   in-place scanners.
++/// - any other code, incl. `de` / `fr` / `hi` — also delegated to
++///   [`normalize_with_lang`], i.e. whole-input expression matching.
++///   Those languages have no span-loop parser yet; adding one is a
++///   matter of writing a `parse_span_<lang>` like [`parse_span_es`].
++///
++/// ```
++/// use text_processing_rs::normalize_sentence_with_lang;
++///
++/// assert_eq!(
++///     normalize_sentence_with_lang("tengo veinticinco años", "es"),
++///     "tengo 25 años"
++/// );
++/// assert_eq!(
++///     normalize_sentence_with_lang("hola mundo", "es"),
++///     "hola mundo"
++/// );
++/// ```
++pub fn normalize_sentence_with_lang(input: &str, lang: &str) -> String {
++    match lang {
++        "en" | "" => normalize_sentence(input),
++        "es" => {
++            let trimmed = input.trim();
++            if trimmed.is_empty() {
++                return trimmed.to_string();
++            }
++            let pretokens = pretokenize(trimmed);
++            sentence_loop(&pretokens, DEFAULT_MAX_SPAN_TOKENS, parse_span_es)
++        }
++        // ja / zh are already sentence-level in-place scanners under
++        // normalize_with_lang (as is ko, when its module is present).
++        // de / fr / hi have no span-loop parser yet and fall back to
++        // whole-input expression matching — unchanged prior behaviour.
++        _ => normalize_with_lang(input, lang),
++    }
++}
++
++/// ITN span parser for Spanish, used by [`normalize_sentence_with_lang`].
++///
++/// Mirrors [`parse_span`] (the English span parser) but dispatches to the
++/// `itn::es` taggers. As in English sentence mode, `word` and `telephone`
++/// are excluded — they over-fire on natural-language spans — and the
++/// broad `cardinal` fallback is gated to short spans. Returns
++/// `(replacement, priority_score)` so [`sentence_loop`] can pick the
++/// highest-confidence span.
++fn parse_span_es(span: &str) -> Option<(String, u8)> {
++    let token_count = span.split_whitespace().count();
++    if token_count == 0 {
++        return None;
++    }
++
++    if let Some(result) = custom_rules::parse(span) {
++        return Some((result, 110));
++    }
++    if let Some(result) = itn::es::whitelist::parse(span) {
++        return Some((result, 100));
++    }
++    if let Some(result) = itn::es::punctuation::parse(span) {
++        return Some((result, 98));
++    }
++    if let Some(result) = itn::es::money::parse(span) {
++        return Some((result, 95));
++    }
++    if let Some(result) = itn::es::measure::parse(span) {
++        return Some((result, 90));
++    }
++    if let Some(result) = itn::es::date::parse(span) {
++        return Some((result, 88));
++    }
++    if let Some(result) = itn::es::time::parse(span) {
++        return Some((result, 85));
++    }
++    if let Some(result) = itn::es::electronic::parse(span) {
++        return Some((result, 82));
++    }
++    if let Some(result) = itn::es::decimal::parse(span) {
++        return Some((result, 80));
++    }
++    if let Some(result) = itn::es::fraction::parse(span) {
++        return Some((result, 78));
++    }
++    if let Some(result) = itn::es::ordinal::parse(span) {
++        return Some((result, 75));
++    }
++    if token_count <= 4 {
++        if let Some(result) = itn::es::cardinal::parse(span) {
++            return Some((result, 70));
++        }
++    }
++
++    None
++}
++
+ /// Per-pretoken record: the token text plus the original separator that
+ /// preceded it (`" "` for whitespace, `""` if the token came from a
+ /// punctuation split or starts the input).
+@@ -1514,4 +1614,66 @@ mod tests {
+         assert_eq!(tn_normalize_sentence("hello world"), "hello world");
+         assert_eq!(tn_normalize_sentence(""), "");
+     }
++
++    // ── normalize_sentence_with_lang (ITN) ──────────────────────────────
++
++    #[test]
++    fn test_itn_sentence_es_cardinal() {
++        assert_eq!(
++            normalize_sentence_with_lang("tengo veinticinco años", "es"),
++            "tengo 25 años"
++        );
++        assert_eq!(
++            normalize_sentence_with_lang(
++                "vivo en el piso doscientos cincuenta y uno",
++                "es"
++            ),
++            "vivo en el piso 251"
++        );
++    }
++
++    #[test]
++    fn test_itn_sentence_es_time_money_date() {
++        assert_eq!(
++            normalize_sentence_with_lang("el tren sale a las nueve y media", "es"),
++            "el tren sale a las 9:30"
++        );
++        assert_eq!(
++            normalize_sentence_with_lang("pagué cinco euros", "es"),
++            "pagué €5"
++        );
++        assert_eq!(
++            normalize_sentence_with_lang("nací el quince de marzo", "es"),
++            "nací el 15 de marzo"
++        );
++    }
++
++    #[test]
++    fn test_itn_sentence_es_passthrough() {
++        assert_eq!(normalize_sentence_with_lang("hola mundo", "es"), "hola mundo");
++        assert_eq!(normalize_sentence_with_lang("", "es"), "");
++    }
++
++    #[test]
++    fn test_itn_sentence_en_delegates() {
++        // "en" routes through the existing English sentence scanner.
++        assert_eq!(
++            normalize_sentence_with_lang("I have twenty one apples", "en"),
++            "I have 21 apples"
++        );
++        assert_eq!(
++            normalize_sentence_with_lang("I have twenty one apples", ""),
++            "I have 21 apples"
++        );
++    }
++
++    #[test]
++    fn test_itn_sentence_unknown_lang_falls_back() {
++        // Unrecognised codes fall back to normalize_with_lang, which
++        // itself defaults to English for unknown languages.
++        assert_eq!(
++            normalize_sentence_with_lang("two hundred", "xx"),
++            "200"
++        );
++    }
+ }

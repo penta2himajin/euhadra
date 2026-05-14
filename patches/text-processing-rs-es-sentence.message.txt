@@ -1,0 +1,54 @@
+Spanish sentence-level ITN patch for FluidInference/text-processing-rs
+=====================================================================
+
+Adds `normalize_sentence_with_lang` (ITN) plus a Spanish span-loop
+parser to the upstream `text-processing-rs` crate. Staged here because
+euhadra's GitHub tooling is scoped to penta2himajin/euhadra only.
+
+Why
+---
+The ITN side had no language-aware sentence entry point: `normalize_sentence`
+is English-only, and `normalize_with_lang(_, "es")` matches the *whole
+input* as one expression, so it never rewrites numerals inside a running
+sentence ("tengo veinticinco años" was returned unchanged). The TN side
+already solved this with `tn_normalize_sentence_lang` / `tn_parse_span_lang`;
+this patch brings the ITN side to parity for Spanish.
+
+How to apply
+------------
+  git clone https://github.com/FluidInference/text-processing-rs
+  cd text-processing-rs
+  git checkout -b feat/itn-sentence-with-lang
+  git apply /path/to/euhadra/patches/text-processing-rs-es-sentence.patch
+  cargo test && cargo clippy --all-targets
+  git add src/lib.rs
+  git commit   # use the message below
+
+Then push to your fork and open a PR against
+FluidInference/text-processing-rs:main.
+
+Suggested commit message / PR body
+----------------------------------
+feat: add normalize_sentence_with_lang (ITN), Spanish span scanner
+
+The ITN side has no language-aware sentence entry point. `normalize_sentence`
+is English-only and `normalize_with_lang(_, "es")` matches the whole input
+as a single expression, so numerals inside a running Spanish sentence are
+never rewritten. The TN side already has `tn_normalize_sentence_lang` /
+`tn_parse_span_lang`; this brings the ITN side to parity.
+
+- `normalize_sentence_with_lang(input, lang)`:
+  - "en" / "" -> existing English sentence scanner
+  - "es" -> new `parse_span_es` driven by the shared `sentence_loop`
+  - "ja" / "zh" (and "ko" when present) -> `normalize_with_lang`, whose
+    CJK paths are already sentence-level in-place scanners
+  - de / fr / hi -> `normalize_with_lang` fallback (whole-input), unchanged;
+    a span-loop parser can be added later the same way as `parse_span_es`
+- `parse_span_es`: mirrors the English `parse_span` against the `itn::es`
+  taggers; excludes `word` / `telephone` (over-fire on natural language)
+  and gates the broad `cardinal` fallback to short spans.
+
+Tested: "tengo veinticinco años" -> "tengo 25 años", "el tren sale a las
+nueve y media" -> "el tren sale a las 9:30", "nací el quince de marzo" ->
+"nací el 15 de marzo". 5 new unit tests + 1 doctest; `cargo test` (733
+lib + integration) and `cargo clippy` clean.
