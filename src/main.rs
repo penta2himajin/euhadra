@@ -9,7 +9,9 @@ use euhadra::filter::{
 use euhadra::mic::{self, MicConfig};
 use euhadra::mock::{MockContextProvider, MockRefiner, StdoutEmitter};
 use euhadra::pipeline::Pipeline;
-use euhadra::processor::{BasicPunctuationRestorer, SelfCorrectionDetector};
+use euhadra::processor::{
+    BasicPunctuationRestorer, InverseTextNormalizer, SelfCorrectionDetector,
+};
 use euhadra::whisper_local::{self, WhisperLocal};
 
 #[derive(Parser)]
@@ -175,6 +177,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if !no_process {
                 builder = builder
                     .processor(SelfCorrectionDetector::new())
+                    .processor(InverseTextNormalizer::new(
+                        language.as_deref().unwrap_or("en"),
+                    ))
                     .processor(BasicPunctuationRestorer);
             }
 
@@ -243,6 +248,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if !no_process {
                 builder = builder
                     .processor(SelfCorrectionDetector::new())
+                    .processor(InverseTextNormalizer::new(
+                        language.as_deref().unwrap_or("en"),
+                    ))
                     .processor(BasicPunctuationRestorer);
             }
 
