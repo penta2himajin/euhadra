@@ -41,6 +41,7 @@ pub enum CorrectionKind {
     SelfCorrectionRemoved,
     ListFormatted,
     DictionaryMatch,
+    NumeralNormalized,
 }
 
 #[derive(Debug, Clone)]
@@ -744,6 +745,85 @@ impl TextProcessor for BasicPunctuationRestorer {
 }
 
 // ---------------------------------------------------------------------------
+// InverseTextNormalizer
+// ---------------------------------------------------------------------------
+
+/// Inverse text normalization: rewrites spoken-form numerals into
+/// written form ("twenty five" → "25", "二十五" → "25") using the
+/// `text-processing-rs` crate. A non-LLM Tier-2 processor.
+///
+/// Language support tracks the upstream crate's *sentence-level* ITN
+/// API, which today covers only en / ja / zh:
+///
+/// - `en` — `normalize_sentence` (English sentence scanner).
+/// - `ja` / `zh` — `normalize_with_lang` (CJK in-place span scanner).
+/// - everything else, incl. `es` and `ko` — pass through unchanged.
+///   `es` has no sentence-level entry point upstream yet, and `ko` is
+///   a pending upstream PR (FluidInference/text-processing-rs). When
+///   either lands, add its arm to [`InverseTextNormalizer::new`].
+pub struct InverseTextNormalizer {
+    backend: ItnBackend,
+}
+
+enum ItnBackend {
+    /// English sentence scanner (`normalize_sentence`).
+    EnglishSentence,
+    /// CJK sentence scanner (`normalize_with_lang`) for the given code.
+    Lang(&'static str),
+    /// Language not yet supported upstream — pass through unchanged.
+    Passthrough,
+}
+
+impl InverseTextNormalizer {
+    /// Build a normalizer for `lang` (a BCP-47-ish code like "en").
+    /// Unsupported languages produce a passthrough normalizer.
+    pub fn new(lang: &str) -> Self {
+        let backend = match lang {
+            "en" => ItnBackend::EnglishSentence,
+            "ja" => ItnBackend::Lang("ja"),
+            "zh" => ItnBackend::Lang("zh"),
+            _ => ItnBackend::Passthrough,
+        };
+        Self { backend }
+    }
+}
+
+#[async_trait]
+impl TextProcessor for InverseTextNormalizer {
+    async fn process(
+        &self,
+        text: &str,
+        _context: &ContextSnapshot,
+    ) -> Result<ProcessResult, ProcessError> {
+        let normalized = match self.backend {
+            ItnBackend::EnglishSentence => text_processing_rs::normalize_sentence(text),
+            ItnBackend::Lang(lang) => text_processing_rs::normalize_with_lang(text, lang),
+            ItnBackend::Passthrough => {
+                return Ok(ProcessResult {
+                    text: text.to_string(),
+                    corrections: vec![],
+                });
+            }
+        };
+
+        let corrections = if normalized != text {
+            vec![Correction {
+                kind: CorrectionKind::NumeralNormalized,
+                original: text.to_string(),
+                replacement: normalized.clone(),
+            }]
+        } else {
+            vec![]
+        };
+
+        Ok(ProcessResult {
+            text: normalized,
+            corrections,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -1281,5 +1361,94 @@ mod tests {
         // Cue at end of utterance → after_cue is empty → detector
         // skips this position.
         assert_eq!(result.text, "이것은 아니에요");
+    }
+
+    // --- InverseTextNormalizer tests ---
+
+    #[tokio::test]
+    async fn itn_english_sentence_normalizes_numerals() {
+        let itn = InverseTextNormalizer::new("en");
+        let result = itn
+            .process("i have twenty five dollars", &empty_context())
+            .await
+            .unwrap();
+        assert!(
+            result.text.contains("$25"),
+            "expected written-form currency: {}",
+            result.text
+        );
+        assert_eq!(result.corrections.len(), 1);
+        assert_eq!(
+            result.corrections[0].kind,
+            CorrectionKind::NumeralNormalized
+        );
+    }
+
+    #[tokio::test]
+    async fn itn_chinese_sentence_normalizes_numerals() {
+        let itn = InverseTextNormalizer::new("zh");
+        let result = itn
+            .process("我有二十五块钱", &empty_context())
+            .await
+            .unwrap();
+        assert_eq!(result.text, "我有25块钱");
+    }
+
+    #[tokio::test]
+    async fn itn_japanese_sentence_normalizes_numerals() {
+        let itn = InverseTextNormalizer::new("ja");
+        let result = itn
+            .process("そこに鳥一羽がいます", &empty_context())
+            .await
+            .unwrap();
+        assert_eq!(result.text, "そこに鳥1羽がいます");
+    }
+
+    #[tokio::test]
+    async fn itn_clean_text_emits_no_correction() {
+        let itn = InverseTextNormalizer::new("en");
+        let result = itn
+            .process("the meeting is on friday", &empty_context())
+            .await
+            .unwrap();
+        assert_eq!(result.text, "the meeting is on friday");
+        assert!(result.corrections.is_empty());
+    }
+
+    #[tokio::test]
+    async fn itn_spanish_passes_through_until_upstream_support() {
+        // es has no sentence-level ITN entry point upstream yet, so the
+        // normalizer is a no-op rather than silently mangling text.
+        let itn = InverseTextNormalizer::new("es");
+        let result = itn
+            .process("tengo veinticinco años", &empty_context())
+            .await
+            .unwrap();
+        assert_eq!(result.text, "tengo veinticinco años");
+        assert!(result.corrections.is_empty());
+    }
+
+    #[tokio::test]
+    async fn itn_korean_passes_through_until_upstream_support() {
+        // ko support is a pending upstream PR; until it lands the
+        // normalizer leaves Korean text untouched.
+        let itn = InverseTextNormalizer::new("ko");
+        let result = itn
+            .process("이천이십육년에 만났다", &empty_context())
+            .await
+            .unwrap();
+        assert_eq!(result.text, "이천이십육년에 만났다");
+        assert!(result.corrections.is_empty());
+    }
+
+    #[tokio::test]
+    async fn itn_unknown_language_passes_through() {
+        let itn = InverseTextNormalizer::new("xx");
+        let result = itn
+            .process("arbitrary text", &empty_context())
+            .await
+            .unwrap();
+        assert_eq!(result.text, "arbitrary text");
+        assert!(result.corrections.is_empty());
     }
 }

@@ -16,6 +16,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive", "env"] }
 arboard = "3"
 cpal = "0.15"
+# Inverse text normalization (spoken-form numerals → written form) for
+# the non-LLM TextProcessor tier. Pure Rust, no native deps, so it
+# stays in the default build.
+text-processing-rs = "0.2.2"
 
 # ONNX inference (opt-in)
 ort = { version = "2.0.0-rc.12", optional = true }
