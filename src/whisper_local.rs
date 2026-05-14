@@ -131,12 +131,7 @@ pub async fn transcribe_file(
 // Minimal WAV writer (16-bit PCM)
 // ---------------------------------------------------------------------------
 
-fn write_wav(
-    path: &Path,
-    samples: &[f32],
-    sample_rate: u32,
-    channels: u16,
-) -> std::io::Result<()> {
+fn write_wav(path: &Path, samples: &[f32], sample_rate: u32, channels: u16) -> std::io::Result<()> {
     use std::io::Write;
 
     let bits_per_sample: u16 = 16;
@@ -199,9 +194,8 @@ pub fn read_wav(path: &Path) -> Result<AudioChunk, String> {
     let mut pos = 12;
     while pos + 8 <= buf.len() {
         let chunk_id = &buf[pos..pos + 4];
-        let chunk_size = u32::from_le_bytes([
-            buf[pos + 4], buf[pos + 5], buf[pos + 6], buf[pos + 7],
-        ]) as usize;
+        let chunk_size =
+            u32::from_le_bytes([buf[pos + 4], buf[pos + 5], buf[pos + 6], buf[pos + 7]]) as usize;
         let chunk_data_start = pos + 8;
         let chunk_data_end = (chunk_data_start + chunk_size).min(buf.len());
 

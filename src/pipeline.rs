@@ -140,7 +140,8 @@ impl Pipeline {
 
         let asr = Arc::clone(&self.asr);
         let filters: Vec<Arc<dyn TextFilter>> = self.filters.iter().map(Arc::clone).collect();
-        let processors: Vec<Arc<dyn TextProcessor>> = self.processors.iter().map(Arc::clone).collect();
+        let processors: Vec<Arc<dyn TextProcessor>> =
+            self.processors.iter().map(Arc::clone).collect();
         let refiner = Arc::clone(&self.refiner);
         let context = Arc::clone(&self.context);
         let emitter = Arc::clone(&self.emitter);
@@ -148,7 +149,18 @@ impl Pipeline {
         let cancel_clone = cancel.clone();
 
         let handle = tokio::spawn(async move {
-            run_session(asr, filters, processors, refiner, context, emitter, audio_rx, asr_ch, cancel_clone).await
+            run_session(
+                asr,
+                filters,
+                processors,
+                refiner,
+                context,
+                emitter,
+                audio_rx,
+                asr_ch,
+                cancel_clone,
+            )
+            .await
         });
 
         (audio_tx, cancel, handle)
@@ -208,11 +220,15 @@ async fn run_session(
 
     // ── Activating ──────────────────────────────────────────────────────
     sm.transition(PipelineState::Activating)
-        .map_err(|e| PipelineError { message: e.to_string() })?;
+        .map_err(|e| PipelineError {
+            message: e.to_string(),
+        })?;
 
     // ── Recording + ASR ─────────────────────────────────────────────────
     sm.transition(PipelineState::Recording)
-        .map_err(|e| PipelineError { message: e.to_string() })?;
+        .map_err(|e| PipelineError {
+            message: e.to_string(),
+        })?;
 
     let (asr_tx, mut asr_rx) = mpsc::channel::<AsrResult>(asr_channel_size);
 
@@ -270,7 +286,9 @@ async fn run_session(
 
     // ── Processing (filter → context → refinement) ──────────────────────
     sm.transition(PipelineState::Processing)
-        .map_err(|e| PipelineError { message: e.to_string() })?;
+        .map_err(|e| PipelineError {
+            message: e.to_string(),
+        })?;
 
     // Apply text filters (filler removal, etc.)
     let mut filtered_text = final_text.clone();
@@ -354,13 +372,17 @@ async fn run_session(
 
     // ── Emitting ────────────────────────────────────────────────────────
     sm.transition(PipelineState::Emitting)
-        .map_err(|e| PipelineError { message: e.to_string() })?;
+        .map_err(|e| PipelineError {
+            message: e.to_string(),
+        })?;
 
     let emit_result = emitter.emit(output.clone()).await;
 
     // ── Back to Idle ────────────────────────────────────────────────────
     sm.transition(PipelineState::Idle)
-        .map_err(|e| PipelineError { message: e.to_string() })?;
+        .map_err(|e| PipelineError {
+            message: e.to_string(),
+        })?;
 
     Ok(SessionResult {
         raw_text: final_text,
@@ -542,9 +564,7 @@ mod tests {
 
         // Input with fillers AND self-correction
         let pipeline = Pipeline::builder()
-            .asr(MockAsr::new(
-                "um I want to go to Boston no wait to Denver",
-            ))
+            .asr(MockAsr::new("um I want to go to Boston no wait to Denver"))
             .filter(SimpleFillerFilter::english())
             .processor(SelfCorrectionDetector::new())
             .processor(BasicPunctuationRestorer)
@@ -570,26 +590,17 @@ mod tests {
         match &buf[0] {
             RefinementOutput::TextInsertion { text, .. } => {
                 // Fillers removed, self-correction resolved, capitalized, period added
-                assert!(
-                    !text.contains("um"),
-                    "filler should be removed: {text}"
-                );
+                assert!(!text.contains("um"), "filler should be removed: {text}");
                 assert!(
                     !text.contains("Boston"),
                     "reparandum should be removed: {text}"
                 );
-                assert!(
-                    text.contains("Denver"),
-                    "repair should be kept: {text}"
-                );
+                assert!(text.contains("Denver"), "repair should be kept: {text}");
                 assert!(
                     text.starts_with(|c: char| c.is_uppercase()),
                     "should be capitalized: {text}"
                 );
-                assert!(
-                    text.ends_with('.'),
-                    "should have terminal period: {text}"
-                );
+                assert!(text.ends_with('.'), "should have terminal period: {text}");
             }
             _ => panic!("expected TextInsertion"),
         }

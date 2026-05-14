@@ -75,10 +75,7 @@ impl F1Stats {
         } else {
             tp as f64 / (tp + fn_) as f64
         };
-        let f1 = if precision.is_nan()
-            || recall.is_nan()
-            || (precision + recall) <= 0.0
-        {
+        let f1 = if precision.is_nan() || recall.is_nan() || (precision + recall) <= 0.0 {
             f64::NAN
         } else {
             2.0 * precision * recall / (precision + recall)
@@ -98,10 +95,8 @@ impl F1Stats {
 /// TP iff there exists an exact `(start, end)` match in `gold`. Each
 /// gold span unmatched by any predicted span is FN.
 pub fn strict_f1(predicted: &[Span], gold: &[Span]) -> F1Stats {
-    let gold_set: HashSet<(usize, usize)> =
-        gold.iter().map(|s| (s.start, s.end)).collect();
-    let pred_set: HashSet<(usize, usize)> =
-        predicted.iter().map(|s| (s.start, s.end)).collect();
+    let gold_set: HashSet<(usize, usize)> = gold.iter().map(|s| (s.start, s.end)).collect();
+    let pred_set: HashSet<(usize, usize)> = predicted.iter().map(|s| (s.start, s.end)).collect();
     let tp = pred_set.intersection(&gold_set).count();
     let fp = pred_set.len() - tp;
     let fn_ = gold_set.len() - tp;
@@ -112,11 +107,7 @@ pub fn strict_f1(predicted: &[Span], gold: &[Span]) -> F1Stats {
 /// `iou_threshold` with at least one gold span; that gold span is then
 /// "consumed" (greedy 1-to-1 matching, so two predictions can't both
 /// claim the same gold span).
-pub fn iou_f1(
-    predicted: &[Span],
-    gold: &[Span],
-    iou_threshold: f64,
-) -> F1Stats {
+pub fn iou_f1(predicted: &[Span], gold: &[Span], iou_threshold: f64) -> F1Stats {
     let mut consumed = vec![false; gold.len()];
     let mut tp = 0;
     let mut fp = 0;

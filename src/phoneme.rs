@@ -38,9 +38,7 @@ fn phoneme_distance(a: &str, b: &str) -> usize {
         curr[0] = i;
         for j in 1..=n {
             let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
-            curr[j] = (prev[j] + 1)
-                .min(curr[j - 1] + 1)
-                .min(prev[j - 1] + cost);
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
         }
         std::mem::swap(&mut prev, &mut curr);
     }
@@ -63,7 +61,11 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() || a.is_empty() {
         return 0.0;
     }
-    a.iter().zip(b.iter()).map(|(x, y)| x * y).sum::<f32>().max(0.0)
+    a.iter()
+        .zip(b.iter())
+        .map(|(x, y)| x * y)
+        .sum::<f32>()
+        .max(0.0)
 }
 
 // ---------------------------------------------------------------------------
@@ -78,17 +80,22 @@ pub struct IpaDictionary {
 impl IpaDictionary {
     /// Load from a JSON file: `{"word": "IPA string", ...}`
     pub fn load(path: impl AsRef<Path>) -> Result<Self, ProcessError> {
-        let data = std::fs::read_to_string(path.as_ref())
-            .map_err(|e| ProcessError { message: format!("load IPA dict: {e}") })?;
-        let entries: HashMap<String, String> = serde_json::from_str(&data)
-            .map_err(|e| ProcessError { message: format!("parse IPA dict: {e}") })?;
+        let data = std::fs::read_to_string(path.as_ref()).map_err(|e| ProcessError {
+            message: format!("load IPA dict: {e}"),
+        })?;
+        let entries: HashMap<String, String> =
+            serde_json::from_str(&data).map_err(|e| ProcessError {
+                message: format!("parse IPA dict: {e}"),
+            })?;
         tracing::info!(entries = entries.len(), "IPA dictionary loaded");
         Ok(Self { entries })
     }
 
     /// Create an empty dictionary.
     pub fn empty() -> Self {
-        Self { entries: HashMap::new() }
+        Self {
+            entries: HashMap::new(),
+        }
     }
 
     /// Look up the IPA pronunciation of a word (case-insensitive).
@@ -200,7 +207,9 @@ impl PhonemeCorrector {
         for entry in &mut self.custom_entries {
             match embedder.embed(&entry.word) {
                 Ok(emb) => entry.embedding = Some(emb),
-                Err(e) => tracing::warn!(word = %entry.word, error = %e, "failed to embed custom entry"),
+                Err(e) => {
+                    tracing::warn!(word = %entry.word, error = %e, "failed to embed custom entry")
+                }
             }
         }
         self.embedder = Some(Box::new(embedder));
@@ -212,7 +221,8 @@ impl PhonemeCorrector {
     /// Tries the dictionary first; falls back to G2P if available.
     fn word_to_phonemes(&self, word: &str) -> Option<String> {
         // Strip punctuation for lookup
-        let clean: String = word.chars()
+        let clean: String = word
+            .chars()
             .filter(|c| c.is_alphanumeric() || *c == '\'')
             .collect();
 
@@ -274,7 +284,9 @@ impl PhonemeCorrector {
 #[async_trait]
 impl TextProcessor for PhonemeCorrector {
     async fn process(
-        &self, text: &str, _ctx: &ContextSnapshot,
+        &self,
+        text: &str,
+        _ctx: &ContextSnapshot,
     ) -> Result<ProcessResult, ProcessError> {
         if self.custom_entries.is_empty() {
             return Ok(ProcessResult {
@@ -292,10 +304,8 @@ impl TextProcessor for PhonemeCorrector {
         }
 
         // Get phonemes for each word
-        let word_phonemes: Vec<Option<String>> = words
-            .iter()
-            .map(|w| self.word_to_phonemes(w))
-            .collect();
+        let word_phonemes: Vec<Option<String>> =
+            words.iter().map(|w| self.word_to_phonemes(w)).collect();
 
         let mut result_words: Vec<String> = words.iter().map(|w| w.to_string()).collect();
         let mut consumed = vec![false; words.len()]; // track merged words
@@ -317,7 +327,12 @@ impl TextProcessor for PhonemeCorrector {
             if let Some(phonemes) = &word_phonemes[i] {
                 if let Some((idx, sim)) = self.best_match(phonemes, words[i]) {
                     if words[i].to_lowercase() != self.custom_entries[idx].word.to_lowercase() {
-                        candidates.push(Candidate { start: i, len: 1, entry_idx: idx, similarity: sim });
+                        candidates.push(Candidate {
+                            start: i,
+                            len: 1,
+                            entry_idx: idx,
+                            similarity: sim,
+                        });
                     }
                 }
             }
@@ -335,7 +350,12 @@ impl TextProcessor for PhonemeCorrector {
                         .collect::<Vec<_>>()
                         .join(" ");
                     if let Some((idx, sim)) = self.best_match(merged, &text_span) {
-                        candidates.push(Candidate { start: i, len: merge_len, entry_idx: idx, similarity: sim });
+                        candidates.push(Candidate {
+                            start: i,
+                            len: merge_len,
+                            entry_idx: idx,
+                            similarity: sim,
+                        });
                     }
                 }
             }
@@ -344,7 +364,9 @@ impl TextProcessor for PhonemeCorrector {
         // Greedy selection: sort by similarity (desc), then by shorter merge (prefer precise),
         // and pick non-overlapping candidates.
         candidates.sort_by(|a, b| {
-            b.similarity.partial_cmp(&a.similarity).unwrap()
+            b.similarity
+                .partial_cmp(&a.similarity)
+                .unwrap()
                 .then_with(|| a.len.cmp(&b.len))
         });
 
@@ -420,25 +442,39 @@ impl OnnxG2p {
 
         let session = ort::session::Session::builder()
             .and_then(|mut b| b.commit_from_file(dir.join("g2p.onnx")))
-            .map_err(|e| ProcessError { message: format!("load G2P model: {e}") })?;
+            .map_err(|e| ProcessError {
+                message: format!("load G2P model: {e}"),
+            })?;
 
-        let tok_data = std::fs::read_to_string(dir.join("tokenizer.json"))
-            .map_err(|e| ProcessError { message: format!("load tokenizer: {e}") })?;
-        let tok: serde_json::Value = serde_json::from_str(&tok_data)
-            .map_err(|e| ProcessError { message: format!("parse tokenizer: {e}") })?;
+        let tok_data =
+            std::fs::read_to_string(dir.join("tokenizer.json")).map_err(|e| ProcessError {
+                message: format!("load tokenizer: {e}"),
+            })?;
+        let tok: serde_json::Value = serde_json::from_str(&tok_data).map_err(|e| ProcessError {
+            message: format!("parse tokenizer: {e}"),
+        })?;
 
         let text_to_idx: HashMap<String, i64> = tok["text_to_idx"]
             .as_object()
-            .ok_or_else(|| ProcessError { message: "missing text_to_idx".into() })?
+            .ok_or_else(|| ProcessError {
+                message: "missing text_to_idx".into(),
+            })?
             .iter()
             .map(|(k, v)| (k.clone(), v.as_i64().unwrap_or(0)))
             .collect();
 
         let idx_to_phoneme: HashMap<i64, String> = tok["idx_to_phoneme"]
             .as_object()
-            .ok_or_else(|| ProcessError { message: "missing idx_to_phoneme".into() })?
+            .ok_or_else(|| ProcessError {
+                message: "missing idx_to_phoneme".into(),
+            })?
             .iter()
-            .map(|(k, v)| (k.parse::<i64>().unwrap_or(0), v.as_str().unwrap_or("").to_string()))
+            .map(|(k, v)| {
+                (
+                    k.parse::<i64>().unwrap_or(0),
+                    v.as_str().unwrap_or("").to_string(),
+                )
+            })
             .collect();
 
         let lang_token = *text_to_idx.get("<en_us>").unwrap_or(&2);
@@ -484,11 +520,7 @@ impl OnnxG2p {
         for t in 0..seq_len {
             let offset = t * n_classes;
             let best = (0..n_classes)
-                .max_by(|&a, &b| {
-                    logits[offset + a]
-                        .partial_cmp(&logits[offset + b])
-                        .unwrap()
-                })
+                .max_by(|&a, &b| logits[offset + a].partial_cmp(&logits[offset + b]).unwrap())
                 .unwrap_or(0) as i64;
 
             // Skip CTC blank (0) and consecutive duplicates
@@ -521,24 +553,52 @@ impl G2pBackend for OnnxG2p {
         let tokens = self.tokenize(word);
         let seq_len = tokens.len();
 
-        let text = Array2::from_shape_vec((1, seq_len), tokens)
-            .map_err(|e| ProcessError { message: format!("shape: {e}") })?;
-        let start_index = Array2::from_shape_vec((1, 1), vec![0_i64])
-            .map_err(|e| ProcessError { message: format!("shape: {e}") })?;
+        let text = Array2::from_shape_vec((1, seq_len), tokens).map_err(|e| ProcessError {
+            message: format!("shape: {e}"),
+        })?;
+        let start_index =
+            Array2::from_shape_vec((1, 1), vec![0_i64]).map_err(|e| ProcessError {
+                message: format!("shape: {e}"),
+            })?;
         let text_len = Array1::from_vec(vec![seq_len as i64]);
 
         let mut session = self.session.lock().unwrap();
         let outputs = session
             .run(vec![
-                ("text", Value::from_array(text).map_err(|e| ProcessError { message: format!("{e}") })?.into_dyn()),
-                ("start_index", Value::from_array(start_index).map_err(|e| ProcessError { message: format!("{e}") })?.into_dyn()),
-                ("text_len", Value::from_array(text_len).map_err(|e| ProcessError { message: format!("{e}") })?.into_dyn()),
+                (
+                    "text",
+                    Value::from_array(text)
+                        .map_err(|e| ProcessError {
+                            message: format!("{e}"),
+                        })?
+                        .into_dyn(),
+                ),
+                (
+                    "start_index",
+                    Value::from_array(start_index)
+                        .map_err(|e| ProcessError {
+                            message: format!("{e}"),
+                        })?
+                        .into_dyn(),
+                ),
+                (
+                    "text_len",
+                    Value::from_array(text_len)
+                        .map_err(|e| ProcessError {
+                            message: format!("{e}"),
+                        })?
+                        .into_dyn(),
+                ),
             ])
-            .map_err(|e| ProcessError { message: format!("G2P inference: {e}") })?;
+            .map_err(|e| ProcessError {
+                message: format!("G2P inference: {e}"),
+            })?;
 
         let logits = outputs[0]
             .try_extract_array::<f32>()
-            .map_err(|e| ProcessError { message: format!("extract: {e}") })?;
+            .map_err(|e| ProcessError {
+                message: format!("extract: {e}"),
+            })?;
         let view = logits.view();
         let out_seq = view.shape()[1];
         let n_classes = view.shape()[2];
@@ -576,9 +636,15 @@ impl OnnxTextEmbedder {
         let dir = model_dir.as_ref();
         let session = ort::session::Session::builder()
             .and_then(|mut b| b.commit_from_file(dir.join("model.onnx")))
-            .map_err(|e| ProcessError { message: format!("load embedder: {e}") })?;
-        let tokenizer = tokenizers::Tokenizer::from_file(dir.join("tokenizer.json"))
-            .map_err(|e| ProcessError { message: format!("load tokenizer: {e}") })?;
+            .map_err(|e| ProcessError {
+                message: format!("load embedder: {e}"),
+            })?;
+        let tokenizer =
+            tokenizers::Tokenizer::from_file(dir.join("tokenizer.json")).map_err(|e| {
+                ProcessError {
+                    message: format!("load tokenizer: {e}"),
+                }
+            })?;
         tracing::info!("ONNX text embedder loaded");
         Ok(Self {
             session: std::sync::Mutex::new(session),
@@ -593,29 +659,65 @@ impl TextEmbedder for OnnxTextEmbedder {
         use ndarray::Array2;
         use ort::value::Value;
 
-        let enc = self.tokenizer.encode(text, true)
-            .map_err(|e| ProcessError { message: format!("tokenize: {e}") })?;
+        let enc = self
+            .tokenizer
+            .encode(text, true)
+            .map_err(|e| ProcessError {
+                message: format!("tokenize: {e}"),
+            })?;
 
         let len = enc.get_ids().len();
-        let ids = Array2::from_shape_vec(
-            (1, len), enc.get_ids().iter().map(|&x| x as i64).collect(),
-        ).unwrap();
+        let ids =
+            Array2::from_shape_vec((1, len), enc.get_ids().iter().map(|&x| x as i64).collect())
+                .unwrap();
         let mask = Array2::from_shape_vec(
-            (1, len), enc.get_attention_mask().iter().map(|&x| x as i64).collect(),
-        ).unwrap();
+            (1, len),
+            enc.get_attention_mask().iter().map(|&x| x as i64).collect(),
+        )
+        .unwrap();
         let tids = Array2::from_shape_vec(
-            (1, len), enc.get_type_ids().iter().map(|&x| x as i64).collect(),
-        ).unwrap();
+            (1, len),
+            enc.get_type_ids().iter().map(|&x| x as i64).collect(),
+        )
+        .unwrap();
 
         let mut session = self.session.lock().unwrap();
-        let outputs = session.run(vec![
-            ("input_ids", Value::from_array(ids).map_err(|e| ProcessError { message: format!("{e}") })?.into_dyn()),
-            ("attention_mask", Value::from_array(mask).map_err(|e| ProcessError { message: format!("{e}") })?.into_dyn()),
-            ("token_type_ids", Value::from_array(tids).map_err(|e| ProcessError { message: format!("{e}") })?.into_dyn()),
-        ]).map_err(|e| ProcessError { message: format!("embed: {e}") })?;
+        let outputs = session
+            .run(vec![
+                (
+                    "input_ids",
+                    Value::from_array(ids)
+                        .map_err(|e| ProcessError {
+                            message: format!("{e}"),
+                        })?
+                        .into_dyn(),
+                ),
+                (
+                    "attention_mask",
+                    Value::from_array(mask)
+                        .map_err(|e| ProcessError {
+                            message: format!("{e}"),
+                        })?
+                        .into_dyn(),
+                ),
+                (
+                    "token_type_ids",
+                    Value::from_array(tids)
+                        .map_err(|e| ProcessError {
+                            message: format!("{e}"),
+                        })?
+                        .into_dyn(),
+                ),
+            ])
+            .map_err(|e| ProcessError {
+                message: format!("embed: {e}"),
+            })?;
 
-        let arr = outputs[0].try_extract_array::<f32>()
-            .map_err(|e| ProcessError { message: format!("extract: {e}") })?;
+        let arr = outputs[0]
+            .try_extract_array::<f32>()
+            .map_err(|e| ProcessError {
+                message: format!("extract: {e}"),
+            })?;
         let view = arr.view();
         let hidden_dim = view.shape()[2];
         let cls: Vec<f32> = (0..hidden_dim).map(|i| view[[0, 0, i]]).collect();
@@ -671,13 +773,11 @@ mod tests {
     #[tokio::test]
     async fn test_corrector_single_word() {
         let dict = IpaDictionary::empty();
-        let custom = vec![
-            CustomEntry {
-                word: "Kubernetes".into(),
-                phonemes: "kuːbɝniːts".into(),
-                embedding: None,
-            },
-        ];
+        let custom = vec![CustomEntry {
+            word: "Kubernetes".into(),
+            phonemes: "kuːbɝniːts".into(),
+            embedding: None,
+        }];
         // Simulate ASR producing "kuber nets" → phonemes not in empty dict
         // This tests the case where we can't look up phonemes — no crash
         let corrector = PhonemeCorrector::new(dict, custom);
@@ -723,7 +823,10 @@ mod tests {
         assert_eq!(r2.text, "JavaScript");
 
         // Mixed sentence
-        let r3 = corrector.process("I called use effect in java script", &ctx).await.unwrap();
+        let r3 = corrector
+            .process("I called use effect in java script", &ctx)
+            .await
+            .unwrap();
         assert_eq!(r3.text, "I called useEffect in JavaScript");
     }
 
@@ -735,13 +838,11 @@ mod tests {
         entries.insert("computer".into(), "kəmpjuːtɝ".into());
         let dict = IpaDictionary { entries };
 
-        let custom = vec![
-            CustomEntry {
-                word: "useEffect".into(),
-                phonemes: "juːsɪfɛkt".into(),
-                embedding: None,
-            },
-        ];
+        let custom = vec![CustomEntry {
+            word: "useEffect".into(),
+            phonemes: "juːsɪfɛkt".into(),
+            embedding: None,
+        }];
 
         let corrector = PhonemeCorrector::new(dict, custom);
         let ctx = ContextSnapshot::default();

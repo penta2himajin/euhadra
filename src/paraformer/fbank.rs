@@ -14,7 +14,7 @@
 //!
 //! Output is a row-major `[num_frames, n_mels]` `Vec<f32>`.
 
-use rustfft::{FftPlanner, num_complex::Complex32};
+use rustfft::{num_complex::Complex32, FftPlanner};
 use std::f32::consts::PI;
 
 #[derive(Debug, Clone)]
@@ -370,6 +370,9 @@ mod tests {
         // spectrum, otherwise our high-frequency calibration is off.
         let last = filters.last().unwrap();
         let last_bin = last.start_bin + last.weights.len() - 1;
-        assert!(last_bin > 200, "last bin {last_bin} below expected upper range");
+        assert!(
+            last_bin > 200,
+            "last bin {last_bin} below expected upper range"
+        );
     }
 }

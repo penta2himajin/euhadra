@@ -20,11 +20,11 @@
 //! `scripts/setup_canary.sh`; this crate ships none of them.
 //! Upstream license is CC-BY-4.0.
 
-pub mod frontend;
-pub mod vocab;
-pub mod encoder;
-pub mod decoder;
 pub mod adapter;
+pub mod decoder;
+pub mod encoder;
+pub mod frontend;
 pub(crate) mod profiling;
+pub mod vocab;
 
 pub use adapter::{CanaryAdapter, CanaryConfig};

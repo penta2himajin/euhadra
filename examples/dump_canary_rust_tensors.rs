@@ -25,9 +25,8 @@ use clap::Parser;
 use euhadra::canary::{
     decoder::{
         argmax_last_position, build_decoder_prefix, CanaryDecoder, DecodeOptions,
-        DECODER_INPUT_DECODER_MEMS, DECODER_INPUT_ENCODER_EMBEDDINGS,
-        DECODER_INPUT_ENCODER_MASK, DECODER_INPUT_IDS, DECODER_OUTPUT_HIDDEN_STATES,
-        DECODER_OUTPUT_LOGITS,
+        DECODER_INPUT_DECODER_MEMS, DECODER_INPUT_ENCODER_EMBEDDINGS, DECODER_INPUT_ENCODER_MASK,
+        DECODER_INPUT_IDS, DECODER_OUTPUT_HIDDEN_STATES, DECODER_OUTPUT_LOGITS,
     },
     encoder::CanaryEncoder,
     frontend::{MelFrontend, MelOpts},
@@ -114,7 +113,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     decode_opts.min_token_to_frame_ratio = 0.0;
     decode_opts.eos_confidence_margin = 0.0;
     let prefix_i64 = build_decoder_prefix(&vocab, &decode_opts)?;
-    write_tensor_i64_as_f32(&cli.out.join("prefix.bin"), &[prefix_i64.len()], &prefix_i64)?;
+    write_tensor_i64_as_f32(
+        &cli.out.join("prefix.bin"),
+        &[prefix_i64.len()],
+        &prefix_i64,
+    )?;
     eprintln!("prefix={:?}", prefix_i64);
 
     // --- Decoder: directly drive a session for tensor capture ---
@@ -142,10 +145,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (logits0, hidden0): (Array3<f32>, Array4<f32>) = {
         let outputs = session.run(vec![
-            (
-                DECODER_INPUT_IDS,
-                Value::from_array(input_ids)?.into_dyn(),
-            ),
+            (DECODER_INPUT_IDS, Value::from_array(input_ids)?.into_dyn()),
             (
                 DECODER_INPUT_ENCODER_EMBEDDINGS,
                 Value::from_array(enc_out.embeddings.clone())?.into_dyn(),
@@ -179,7 +179,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let l0_shape = logits0.shape().to_vec();
     let h0_shape = hidden0.shape().to_vec();
-    eprintln!("step0 logits.shape={:?} hidden.shape={:?}", l0_shape, h0_shape);
+    eprintln!(
+        "step0 logits.shape={:?} hidden.shape={:?}",
+        l0_shape, h0_shape
+    );
     write_tensor_f32(
         &cli.out.join("step0_logits.bin"),
         &l0_shape,
@@ -192,16 +195,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let next0 = argmax_last_position(&logits0)[0] as i64;
     write_tensor_i64_as_f32(&cli.out.join("next_token_step0.bin"), &[1], &[next0])?;
-    eprintln!("step0 next_token={} ({:?})", next0, vocab.piece(next0 as u32));
+    eprintln!(
+        "step0 next_token={} ({:?})",
+        next0,
+        vocab.piece(next0 as u32)
+    );
 
     // Step 1: just the next token.
     let input_ids1: Array2<i64> = Array2::from_shape_vec((1, 1), vec![next0])?;
     let (logits1, hidden1): (Array3<f32>, Array4<f32>) = {
         let outputs = session.run(vec![
-            (
-                DECODER_INPUT_IDS,
-                Value::from_array(input_ids1)?.into_dyn(),
-            ),
+            (DECODER_INPUT_IDS, Value::from_array(input_ids1)?.into_dyn()),
             (
                 DECODER_INPUT_ENCODER_EMBEDDINGS,
                 Value::from_array(enc_out.embeddings.clone())?.into_dyn(),
@@ -235,7 +239,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let l1_shape = logits1.shape().to_vec();
     let h1_shape = hidden1.shape().to_vec();
-    eprintln!("step1 logits.shape={:?} hidden.shape={:?}", l1_shape, h1_shape);
+    eprintln!(
+        "step1 logits.shape={:?} hidden.shape={:?}",
+        l1_shape, h1_shape
+    );
     write_tensor_f32(
         &cli.out.join("step1_logits.bin"),
         &l1_shape,
@@ -248,7 +255,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let next1 = argmax_last_position(&logits1)[0] as i64;
     write_tensor_i64_as_f32(&cli.out.join("next_token_step1.bin"), &[1], &[next1])?;
-    eprintln!("step1 next_token={} ({:?})", next1, vocab.piece(next1 as u32));
+    eprintln!(
+        "step1 next_token={} ({:?})",
+        next1,
+        vocab.piece(next1 as u32)
+    );
 
     // Stash the fact that CanaryDecoder is unused to silence dead-code
     // warnings on this dev binary.

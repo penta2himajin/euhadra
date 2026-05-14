@@ -22,10 +22,10 @@ use std::time::Instant;
 
 use clap::Parser;
 use euhadra::eval::baseline::{
-    LanguageLayerBaseline, LatencyMicrosRecord, LayerBaseline, LayerTolerances, Verdict,
-    check_language_layers,
+    check_language_layers, LanguageLayerBaseline, LatencyMicrosRecord, LayerBaseline,
+    LayerTolerances, Verdict,
 };
-use euhadra::eval::fixtures::{Fixture, load_jsonl};
+use euhadra::eval::fixtures::{load_jsonl, Fixture};
 use euhadra::eval::latency::Samples;
 use euhadra::eval::metrics::{cer, wer};
 use euhadra::prelude::*;
@@ -69,8 +69,7 @@ async fn run() -> Result<(), String> {
 
     for lang in &cli.langs {
         let path = cli.fixtures_dir.join(format!("{lang}.jsonl"));
-        let fixtures =
-            load_jsonl(&path).map_err(|e| format!("loading {}: {e}", path.display()))?;
+        let fixtures = load_jsonl(&path).map_err(|e| format!("loading {}: {e}", path.display()))?;
         if fixtures.is_empty() {
             return Err(format!("fixture file {} is empty", path.display()));
         }
@@ -386,7 +385,11 @@ async fn bench_processor<P: TextProcessor>(
 fn print_language_result(lang: &str, r: &LanguageLayerBaseline) {
     println!("[{lang}] fixtures={}", r.fixtures);
     // en / es are whitespace-segmented → WER; ja / zh use CER.
-    let primary = if matches!(lang, "en" | "es") { "WER" } else { "CER" };
+    let primary = if matches!(lang, "en" | "es") {
+        "WER"
+    } else {
+        "CER"
+    };
     for (cfg, er) in &r.ablation {
         println!("  ablation/{cfg:30}  {primary}={er:.4}");
     }

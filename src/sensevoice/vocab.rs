@@ -195,14 +195,7 @@ mod tests {
 
     #[test]
     fn decode_tokens_handles_mixed_korean_english() {
-        let toks = vocab(&[
-            "<|ko|>",
-            "안",
-            "녕",
-            "\u{2581}hello",
-            "\u{2581}세",
-            "계",
-        ]);
+        let toks = vocab(&["<|ko|>", "안", "녕", "\u{2581}hello", "\u{2581}세", "계"]);
         assert_eq!(decode_tokens(&toks), "안녕 hello 세계");
     }
 
@@ -219,10 +212,8 @@ mod tests {
 
     #[test]
     fn load_tokens_txt_round_trips() {
-        let dir = std::env::temp_dir().join(format!(
-            "euhadra_sensevoice_tokens_{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("euhadra_sensevoice_tokens_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("tokens.txt");
         std::fs::write(&path, "<blank>\n<s>\n</s>\n<|zh|>\n<|en|>\n\n").unwrap();

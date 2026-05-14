@@ -10,8 +10,7 @@ use euhadra::mic::{self, MicConfig};
 use euhadra::mock::{MockContextProvider, MockRefiner, StdoutEmitter};
 use euhadra::pipeline::Pipeline;
 use euhadra::processor::{
-    BasicPunctuationRestorer, InverseTextNormalizer, SelfCorrectionDetector,
-    SpokenFormNormalizer,
+    BasicPunctuationRestorer, InverseTextNormalizer, SelfCorrectionDetector, SpokenFormNormalizer,
 };
 use euhadra::whisper_local::{self, WhisperLocal};
 
@@ -121,13 +120,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             model,
             language,
         } => {
-            let text = whisper_local::transcribe_file(
-                &whisper_cli,
-                &model,
-                &file,
-                language.as_deref(),
-            )
-            .await?;
+            let text =
+                whisper_local::transcribe_file(&whisper_cli, &model, &file, language.as_deref())
+                    .await?;
             println!("{text}");
         }
 
@@ -141,8 +136,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             no_process,
         } => {
             // Load audio
-            let audio = whisper_local::read_wav(&file)
-                .map_err(|e| format!("failed to read WAV: {e}"))?;
+            let audio =
+                whisper_local::read_wav(&file).map_err(|e| format!("failed to read WAV: {e}"))?;
 
             // Build pipeline
             let mut builder = Pipeline::builder();
@@ -163,12 +158,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         Some("ja") | Some("japanese") => {
                             builder.filter(JapaneseFillerFilter::new())
                         }
-                        Some("zh") | Some("chinese") => {
-                            builder.filter(ChineseFillerFilter::new())
-                        }
-                        Some("es") | Some("spanish") => {
-                            builder.filter(SpanishFillerFilter::new())
-                        }
+                        Some("zh") | Some("chinese") => builder.filter(ChineseFillerFilter::new()),
+                        Some("es") | Some("spanish") => builder.filter(SpanishFillerFilter::new()),
                         _ => builder.filter(SimpleFillerFilter::english()),
                     };
                 }
@@ -235,15 +226,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Filter
             if !no_filter {
                 builder = match language.as_deref() {
-                    Some("ja") | Some("japanese") => {
-                        builder.filter(JapaneseFillerFilter::new())
-                    }
-                    Some("zh") | Some("chinese") => {
-                        builder.filter(ChineseFillerFilter::new())
-                    }
-                    Some("es") | Some("spanish") => {
-                        builder.filter(SpanishFillerFilter::new())
-                    }
+                    Some("ja") | Some("japanese") => builder.filter(JapaneseFillerFilter::new()),
+                    Some("zh") | Some("chinese") => builder.filter(ChineseFillerFilter::new()),
+                    Some("es") | Some("spanish") => builder.filter(SpanishFillerFilter::new()),
                     _ => builder.filter(SimpleFillerFilter::english()),
                 };
             }

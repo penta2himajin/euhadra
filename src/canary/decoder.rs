@@ -301,10 +301,7 @@ pub struct DecodeOutput {
 
 /// Build the 10-token decoder prefix (i64-typed for direct ort
 /// hand-off). Pure function — returns a fresh Vec each call.
-pub fn build_decoder_prefix(
-    vocab: &Vocab,
-    opts: &DecodeOptions,
-) -> Result<Vec<i64>, AsrError> {
+pub fn build_decoder_prefix(vocab: &Vocab, opts: &DecodeOptions) -> Result<Vec<i64>, AsrError> {
     let space = vocab.last_id("\u{2581}").ok_or_else(|| AsrError {
         message: "vocab missing ▁ (used for the literal-space slot in the \
                   decoder prefix; onnx-asr maps `_tokens[\" \"]` to the \
@@ -332,7 +329,11 @@ pub fn build_decoder_prefix(
                 opts.target_language
             ),
         })?;
-    let pnc = if opts.pnc { vocab.pnc()? } else { vocab.nopnc()? };
+    let pnc = if opts.pnc {
+        vocab.pnc()?
+    } else {
+        vocab.nopnc()?
+    };
     let noitn = vocab.id("<|noitn|>").ok_or_else(|| AsrError {
         message: "vocab missing <|noitn|>".into(),
     })?;
@@ -345,10 +346,27 @@ pub fn build_decoder_prefix(
 
     let prefix: Vec<u32> = match opts.prefix_format {
         PrefixFormat::OnnxAsr => vec![
-            space, soc, sot, emo, src_lang, tgt_lang, pnc, noitn, notimestamp, nodiarize,
+            space,
+            soc,
+            sot,
+            emo,
+            src_lang,
+            tgt_lang,
+            pnc,
+            noitn,
+            notimestamp,
+            nodiarize,
         ],
         PrefixFormat::NemoCanary2 => vec![
-            soc, sot, emo, src_lang, tgt_lang, pnc, noitn, notimestamp, nodiarize,
+            soc,
+            sot,
+            emo,
+            src_lang,
+            tgt_lang,
+            pnc,
+            noitn,
+            notimestamp,
+            nodiarize,
         ],
     };
     debug_assert_eq!(prefix.len(), opts.prefix_format.token_count());
@@ -444,11 +462,7 @@ pub fn valid_frame_count(mask: &Array2<i64>, batch_idx: usize) -> usize {
 /// Operates on the last time-position only — earlier positions
 /// are prefix tokens or already-emitted tokens that the greedy
 /// step won't sample again.
-pub fn enforce_eos_confidence_margin(
-    logits: &mut Array3<f32>,
-    eos_token_id: u32,
-    margin: f32,
-) {
+pub fn enforce_eos_confidence_margin(logits: &mut Array3<f32>, eos_token_id: u32, margin: f32) {
     if margin <= 0.0 {
         return;
     }
@@ -507,11 +521,7 @@ pub fn enforce_eos_confidence_margin(
 /// greedy step only consumes that slice; earlier positions are
 /// either prefix tokens (not yet sampled) or already-emitted tokens
 /// (irrelevant to the next sampling step).
-pub fn apply_repetition_penalty(
-    logits: &mut Array3<f32>,
-    history: &[i64],
-    penalty: f32,
-) {
+pub fn apply_repetition_penalty(logits: &mut Array3<f32>, history: &[i64], penalty: f32) {
     if penalty == 1.0 || history.is_empty() {
         return;
     }
@@ -548,11 +558,7 @@ pub fn apply_repetition_penalty(
 /// remaining angle-pipe special tokens (`<|...|>`). Mirrors
 /// `[id for id in tokens if not self._vocab[id].startswith("<|")]`
 /// in onnx-asr.
-pub fn strip_prefix_and_specials(
-    all_tokens: &[u32],
-    prefix_len: usize,
-    vocab: &Vocab,
-) -> Vec<u32> {
+pub fn strip_prefix_and_specials(all_tokens: &[u32], prefix_len: usize, vocab: &Vocab) -> Vec<u32> {
     if all_tokens.len() <= prefix_len {
         return Vec::new();
     }
@@ -672,9 +678,10 @@ impl CanaryDecoder {
             let input_ids_v = Value::from_array(input_ids).map_err(|e| AsrError {
                 message: format!("input_ids Value: {e}"),
             })?;
-            let enc_emb_v = Value::from_array(encoder_embeddings.clone()).map_err(|e| AsrError {
-                message: format!("encoder_embeddings Value: {e}"),
-            })?;
+            let enc_emb_v =
+                Value::from_array(encoder_embeddings.clone()).map_err(|e| AsrError {
+                    message: format!("encoder_embeddings Value: {e}"),
+                })?;
             let enc_mask_v = Value::from_array(encoder_mask.clone()).map_err(|e| AsrError {
                 message: format!("encoder_mask Value: {e}"),
             })?;
@@ -693,16 +700,14 @@ impl CanaryDecoder {
                     message: format!("Canary decoder run: {e}"),
                 })?;
 
-            let logits_idx = output_index(&outputs, DECODER_OUTPUT_LOGITS).ok_or_else(|| {
-                AsrError {
+            let logits_idx =
+                output_index(&outputs, DECODER_OUTPUT_LOGITS).ok_or_else(|| AsrError {
                     message: format!("decoder missing output {DECODER_OUTPUT_LOGITS}"),
-                }
-            })?;
-            let mems_idx = output_index(&outputs, DECODER_OUTPUT_HIDDEN_STATES).ok_or_else(
-                || AsrError {
+                })?;
+            let mems_idx =
+                output_index(&outputs, DECODER_OUTPUT_HIDDEN_STATES).ok_or_else(|| AsrError {
                     message: format!("decoder missing output {DECODER_OUTPUT_HIDDEN_STATES}"),
-                },
-            )?;
+                })?;
 
             let mut logits: Array3<f32> = outputs[logits_idx]
                 .try_extract_array::<f32>()
@@ -759,11 +764,7 @@ impl CanaryDecoder {
             // decoder gives up just as the next content token was
             // also competitive.
             if opts.eos_confidence_margin > 0.0 {
-                enforce_eos_confidence_margin(
-                    &mut logits,
-                    eos,
-                    opts.eos_confidence_margin,
-                );
+                enforce_eos_confidence_margin(&mut logits, eos, opts.eos_confidence_margin);
             }
 
             let next_tokens = argmax_last_position(&logits);
@@ -915,9 +916,7 @@ impl CanaryDecoder {
         let beam_size = opts.beam_size;
         if beam_size < 2 {
             return Err(AsrError {
-                message: format!(
-                    "decode_beam requires beam_size ≥ 2 (got {beam_size})"
-                ),
+                message: format!("decode_beam requires beam_size ≥ 2 (got {beam_size})"),
             });
         }
 
@@ -932,12 +931,11 @@ impl CanaryDecoder {
 
         // === Step 0: identical prefix across all B beams; run once
         // and seed the beam set from the top-B candidates. ===
-        let initial_input: Array2<i64> =
-            Array2::from_shape_vec((1, prefix_len), prefix.clone()).map_err(|e| AsrError {
+        let initial_input: Array2<i64> = Array2::from_shape_vec((1, prefix_len), prefix.clone())
+            .map_err(|e| AsrError {
                 message: format!("input_ids reshape (initial): {e}"),
             })?;
-        let initial_mems: Array4<f32> =
-            Array4::zeros((self.mems_layers, 1, 0, self.mems_hidden));
+        let initial_mems: Array4<f32> = Array4::zeros((self.mems_layers, 1, 0, self.mems_hidden));
         let (init_logits, init_hidden) = run_decoder_step(
             &mut session,
             initial_input,
@@ -965,7 +963,9 @@ impl CanaryDecoder {
 
         let last_t = step0_logits.shape()[1] - 1;
         let vocab_size = step0_logits.shape()[2];
-        let last_row: Vec<f32> = (0..vocab_size).map(|v| step0_logits[[0, last_t, v]]).collect();
+        let last_row: Vec<f32> = (0..vocab_size)
+            .map(|v| step0_logits[[0, last_t, v]])
+            .collect();
         let log_probs0 = log_softmax_row(&last_row);
         let candidates0 = topk_indices(&log_probs0, beam_size);
 
@@ -990,10 +990,7 @@ impl CanaryDecoder {
         // === Step ≥ 1: each active beam is now distinct. Run them
         // in a single batched decoder call (input_ids [B, 1],
         // encoder repeated). ===
-        while !active.is_empty()
-            && active[0].tokens.len() < max_len
-            && finished.len() < beam_size
-        {
+        while !active.is_empty() && active[0].tokens.len() < max_len && finished.len() < beam_size {
             let b = active.len();
 
             // Build input_ids = each beam's last token, shape [B, 1].
@@ -1007,13 +1004,8 @@ impl CanaryDecoder {
             let enc_emb_b: Array3<f32> = repeat_along_axis0(encoder_embeddings, b);
             let enc_mask_b: Array2<i64> = repeat_along_axis0_i64(encoder_mask, b);
 
-            let (mut logits, hidden) = run_decoder_step(
-                &mut session,
-                input_ids,
-                enc_emb_b,
-                enc_mask_b,
-                decoder_mems,
-            )?;
+            let (mut logits, hidden) =
+                run_decoder_step(&mut session, input_ids, enc_emb_b, enc_mask_b, decoder_mems)?;
 
             // Apply per-beam gates: repetition penalty uses each
             // beam's own history; min-length / eos-margin operate on
@@ -1059,8 +1051,7 @@ impl CanaryDecoder {
             // candidate as parent.cum_logprob + log_prob[v].
             let last_t = logits.shape()[1] - 1;
             let vocab_size = logits.shape()[2];
-            let mut all_candidates: Vec<(usize, i64, f32)> =
-                Vec::with_capacity(b * beam_size);
+            let mut all_candidates: Vec<(usize, i64, f32)> = Vec::with_capacity(b * beam_size);
             for bi in 0..b {
                 let row: Vec<f32> = (0..vocab_size).map(|v| logits[[bi, last_t, v]]).collect();
                 let lp = log_softmax_row(&row);
@@ -1202,9 +1193,10 @@ fn run_decoder_step(
     let logits_idx = output_index(&outputs, DECODER_OUTPUT_LOGITS).ok_or_else(|| AsrError {
         message: format!("decoder missing output {DECODER_OUTPUT_LOGITS}"),
     })?;
-    let mems_idx = output_index(&outputs, DECODER_OUTPUT_HIDDEN_STATES).ok_or_else(|| AsrError {
-        message: format!("decoder missing output {DECODER_OUTPUT_HIDDEN_STATES}"),
-    })?;
+    let mems_idx =
+        output_index(&outputs, DECODER_OUTPUT_HIDDEN_STATES).ok_or_else(|| AsrError {
+            message: format!("decoder missing output {DECODER_OUTPUT_HIDDEN_STATES}"),
+        })?;
     let logits: Array3<f32> = outputs[logits_idx]
         .try_extract_array::<f32>()
         .map_err(|e| AsrError {
@@ -1379,7 +1371,11 @@ fn validate_decoder_io(session: &Session, path: &Path) -> Result<(), AsrError> {
         DECODER_INPUT_ENCODER_MASK,
         DECODER_INPUT_DECODER_MEMS,
     ];
-    let got_in: Vec<String> = session.inputs().iter().map(|i| i.name().to_string()).collect();
+    let got_in: Vec<String> = session
+        .inputs()
+        .iter()
+        .map(|i| i.name().to_string())
+        .collect();
     for name in &want_in {
         if !got_in.iter().any(|n| n == name) {
             return Err(AsrError {
@@ -1558,14 +1554,14 @@ mod tests {
         assert_eq!(p.len(), PrefixFormat::NemoCanary2.token_count());
         // Slot 0 = <|startofcontext|> (no leading ▁ in NeMo template).
         assert_eq!(p[0], 7);
-        assert_eq!(p[1], 4);  // <|startoftranscript|>
+        assert_eq!(p[1], 4); // <|startoftranscript|>
         assert_eq!(p[2], 11); // <|emo:undefined|>
         assert_eq!(p[3], 15); // source <|es|>
         assert_eq!(p[4], 15); // target <|es|>
-        assert_eq!(p[5], 5);  // <|pnc|>
-        assert_eq!(p[6], 8);  // <|noitn|>
+        assert_eq!(p[5], 5); // <|pnc|>
+        assert_eq!(p[6], 8); // <|noitn|>
         assert_eq!(p[7], 10); // <|notimestamp|>
-        assert_eq!(p[8], 9);  // <|nodiarize|>
+        assert_eq!(p[8], 9); // <|nodiarize|>
     }
 
     #[test]
@@ -1655,8 +1651,7 @@ mod tests {
             (1, 2, 4),
             vec![
                 // t=0 — chooses 0 if we used wrong time index
-                10.0, 1.0, 1.0, 1.0,
-                // t=1 — actual final position; max at idx 2
+                10.0, 1.0, 1.0, 1.0, // t=1 — actual final position; max at idx 2
                 0.0, 0.5, 9.9, 0.5,
             ],
         )
@@ -1670,8 +1665,7 @@ mod tests {
             (2, 1, 3),
             vec![
                 // batch 0, t=0: max at idx 1
-                0.0, 5.0, 0.0,
-                // batch 1, t=0: max at idx 2
+                0.0, 5.0, 0.0, // batch 1, t=0: max at idx 2
                 1.0, 1.0, 9.0,
             ],
         )
@@ -1753,10 +1747,8 @@ mod tests {
             (1, 3, 4),
             vec![
                 // t=0
-                1.0, 2.0, 3.0, 4.0,
-                // t=1
-                5.0, 6.0, 7.0, 8.0,
-                // t=2 (last)
+                1.0, 2.0, 3.0, 4.0, // t=1
+                5.0, 6.0, 7.0, 8.0, // t=2 (last)
                 9.0, 10.0, 11.0, 12.0,
             ],
         )
@@ -1844,31 +1836,20 @@ mod tests {
 
     #[test]
     fn valid_frame_count_returns_count_of_ones() {
-        let m = ndarray::Array2::<i64>::from_shape_vec(
-            (1, 8),
-            vec![1, 1, 1, 1, 1, 0, 0, 0],
-        )
-        .unwrap();
+        let m =
+            ndarray::Array2::<i64>::from_shape_vec((1, 8), vec![1, 1, 1, 1, 1, 0, 0, 0]).unwrap();
         assert_eq!(valid_frame_count(&m, 0), 5);
     }
 
     #[test]
     fn valid_frame_count_full_mask_equals_shape() {
-        let m = ndarray::Array2::<i64>::from_shape_vec(
-            (1, 4),
-            vec![1, 1, 1, 1],
-        )
-        .unwrap();
+        let m = ndarray::Array2::<i64>::from_shape_vec((1, 4), vec![1, 1, 1, 1]).unwrap();
         assert_eq!(valid_frame_count(&m, 0), 4);
     }
 
     #[test]
     fn valid_frame_count_handles_out_of_range_batch() {
-        let m = ndarray::Array2::<i64>::from_shape_vec(
-            (1, 4),
-            vec![1, 1, 0, 0],
-        )
-        .unwrap();
+        let m = ndarray::Array2::<i64>::from_shape_vec((1, 4), vec![1, 1, 0, 0]).unwrap();
         // Asking for a non-existent batch must not panic.
         assert_eq!(valid_frame_count(&m, 7), 0);
     }
@@ -1878,11 +1859,7 @@ mod tests {
         // The ONNX export emits i64 1-vs-0; defensively treat any
         // non-zero as valid in case a future export uses a different
         // truthy convention.
-        let m = ndarray::Array2::<i64>::from_shape_vec(
-            (1, 4),
-            vec![1, 2, 0, 1],
-        )
-        .unwrap();
+        let m = ndarray::Array2::<i64>::from_shape_vec((1, 4), vec![1, 2, 0, 1]).unwrap();
         assert_eq!(valid_frame_count(&m, 0), 3);
     }
 
@@ -1923,8 +1900,7 @@ mod tests {
             (1, 2, 3),
             vec![
                 // t=0
-                1.0, 2.0, 3.0,
-                // t=1 (last)
+                1.0, 2.0, 3.0, // t=1 (last)
                 4.0, 5.0, 6.0,
             ],
         )
@@ -2006,8 +1982,7 @@ mod tests {
             (1, 2, 3),
             vec![
                 // t=0: EOS (id 0) lead = 1 < margin
-                5.0, 4.0, 2.0,
-                // t=1 (last): EOS lead = 5 - 4 = 1 < margin
+                5.0, 4.0, 2.0, // t=1 (last): EOS lead = 5 - 4 = 1 < margin
                 5.0, 4.0, 3.0,
             ],
         )
@@ -2219,11 +2194,7 @@ mod tests {
     fn load_nonexistent_decoder_returns_error() {
         match CanaryDecoder::load("/nonexistent/path/to/decoder.onnx") {
             Ok(_) => panic!("expected error"),
-            Err(e) => assert!(
-                e.message.contains("load Canary decoder"),
-                "{}",
-                e.message
-            ),
+            Err(e) => assert!(e.message.contains("load Canary decoder"), "{}", e.message),
         }
     }
 

@@ -451,10 +451,7 @@ mod tests {
         let filters = build_slaney_mel_filters(16_000.0, 512, 80, 0.0, 8000.0);
         for (i, f) in filters.iter().enumerate() {
             for (k, &w) in f.weights.iter().enumerate() {
-                assert!(
-                    w.is_finite() && w >= 0.0,
-                    "filter {i} bin {k} = {w}"
-                );
+                assert!(w.is_finite() && w >= 0.0, "filter {i} bin {k} = {w}");
             }
         }
     }
@@ -521,10 +518,7 @@ mod tests {
         for m in 0..n_mels {
             let sum: f32 = (0..n_frames).map(|f| feats[f * n_mels + m]).sum();
             let mean = sum / n_frames as f32;
-            assert!(
-                mean.abs() < 1e-3,
-                "mel {m} mean after CMVN = {mean}"
-            );
+            assert!(mean.abs() < 1e-3, "mel {m} mean after CMVN = {mean}");
         }
     }
 

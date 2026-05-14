@@ -25,7 +25,9 @@ impl std::error::Error for TransitionError {}
 
 impl StateMachine {
     pub fn new() -> Self {
-        Self { state: PipelineState::Idle }
+        Self {
+            state: PipelineState::Idle,
+        }
     }
 
     pub fn state(&self) -> PipelineState {
@@ -39,7 +41,10 @@ impl StateMachine {
             self.state = to;
             Ok(to)
         } else {
-            Err(TransitionError { from: self.state, to })
+            Err(TransitionError {
+                from: self.state,
+                to,
+            })
         }
     }
 

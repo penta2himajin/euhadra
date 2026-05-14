@@ -48,7 +48,7 @@ use crate::traits::{AsrAdapter, AsrError};
 use crate::types::{AsrResult, AudioChunk};
 
 use crate::paraformer::fbank::{Fbank, FbankOpts};
-use crate::paraformer::frontend::{Cmvn, apply_cmvn, apply_lfr, load_cmvn};
+use crate::paraformer::frontend::{apply_cmvn, apply_lfr, load_cmvn, Cmvn};
 
 use super::metadata::SenseVoiceMetadata;
 use super::vocab::{ctc_collapse, decode_tokens, ids_to_tokens, load_tokens_txt};
@@ -153,7 +153,10 @@ impl SenseVoiceAdapter {
         let session = Session::builder()
             .and_then(|mut b| b.commit_from_file(&model_path))
             .map_err(|e| AsrError {
-                message: format!("failed to load SenseVoice ONNX {}: {e}", model_path.display()),
+                message: format!(
+                    "failed to load SenseVoice ONNX {}: {e}",
+                    model_path.display()
+                ),
             })?;
 
         let cmvn = load_cmvn(&mvn_path)?;
@@ -241,12 +244,15 @@ impl SenseVoiceAdapter {
         let feat_dim = n_mels * lfr_m;
         apply_cmvn(&mut feats, feat_dim, &self.cmvn);
 
-        let language_id = self.metadata.language_id(&self.language).ok_or_else(|| AsrError {
-            message: format!(
-                "language {:?} not present in metadata.json lang2id",
-                self.language
-            ),
-        })?;
+        let language_id = self
+            .metadata
+            .language_id(&self.language)
+            .ok_or_else(|| AsrError {
+                message: format!(
+                    "language {:?} not present in metadata.json lang2id",
+                    self.language
+                ),
+            })?;
         let text_norm_id = if self.cfg.default_use_itn {
             self.metadata.with_itn_id
         } else {
@@ -255,8 +261,8 @@ impl SenseVoiceAdapter {
 
         // ONNX expects `speech` as [B=1, T, feat_dim] f32 and the three
         // sidecar integer inputs as int32 1-D tensors.
-        let speech: Array3<f32> = Array3::from_shape_vec((1, t_lfr, feat_dim), feats)
-            .map_err(|e| AsrError {
+        let speech: Array3<f32> =
+            Array3::from_shape_vec((1, t_lfr, feat_dim), feats).map_err(|e| AsrError {
                 message: format!("speech tensor shape: {e}"),
             })?;
         let speech_lengths: Array1<i32> = Array1::from(vec![t_lfr as i32]);
@@ -284,9 +290,15 @@ impl SenseVoiceAdapter {
         let outputs = session
             .run(vec![
                 (self.input_names.x.as_str(), speech_val.into_dyn()),
-                (self.input_names.x_length.as_str(), speech_lengths_val.into_dyn()),
+                (
+                    self.input_names.x_length.as_str(),
+                    speech_lengths_val.into_dyn(),
+                ),
                 (self.input_names.language.as_str(), language_val.into_dyn()),
-                (self.input_names.text_norm.as_str(), text_norm_val.into_dyn()),
+                (
+                    self.input_names.text_norm.as_str(),
+                    text_norm_val.into_dyn(),
+                ),
             ])
             .map_err(|e| AsrError {
                 message: format!("SenseVoice ONNX run: {e}"),
@@ -329,7 +341,11 @@ impl SenseVoiceAdapter {
 }
 
 fn resolve_input_names(session: &Session, path: &Path) -> Result<InputNames, AsrError> {
-    let names: Vec<String> = session.inputs().iter().map(|i| i.name().to_string()).collect();
+    let names: Vec<String> = session
+        .inputs()
+        .iter()
+        .map(|i| i.name().to_string())
+        .collect();
     let find = |needle: &str| -> Result<String, AsrError> {
         names
             .iter()

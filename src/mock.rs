@@ -14,7 +14,9 @@ pub struct MockAsr {
 
 impl MockAsr {
     pub fn new(transcript: impl Into<String>) -> Self {
-        Self { transcript: transcript.into() }
+        Self {
+            transcript: transcript.into(),
+        }
     }
 }
 
@@ -53,7 +55,9 @@ pub struct MockContextProvider {
 
 impl MockContextProvider {
     pub fn new() -> Self {
-        Self { snapshot: ContextSnapshot::default() }
+        Self {
+            snapshot: ContextSnapshot::default(),
+        }
     }
 
     pub fn with_app(mut self, name: impl Into<String>, field_type: FieldType) -> Self {
@@ -97,19 +101,27 @@ pub struct MockRefiner {
 
 impl MockRefiner {
     pub fn passthrough() -> Self {
-        Self { behavior: MockRefinerBehavior::Passthrough }
+        Self {
+            behavior: MockRefinerBehavior::Passthrough,
+        }
     }
 
     pub fn uppercase() -> Self {
-        Self { behavior: MockRefinerBehavior::Uppercase }
+        Self {
+            behavior: MockRefinerBehavior::Uppercase,
+        }
     }
 
     pub fn fixed(text: impl Into<String>) -> Self {
-        Self { behavior: MockRefinerBehavior::Fixed(text.into()) }
+        Self {
+            behavior: MockRefinerBehavior::Fixed(text.into()),
+        }
     }
 
     pub fn failing(msg: impl Into<String>) -> Self {
-        Self { behavior: MockRefinerBehavior::Fail(msg.into()) }
+        Self {
+            behavior: MockRefinerBehavior::Fail(msg.into()),
+        }
     }
 }
 

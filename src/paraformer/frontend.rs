@@ -88,7 +88,11 @@ pub fn apply_cmvn(feats: &mut [f32], feat_dim: usize, cmvn: &Cmvn) {
     );
     assert_eq!(cmvn.vars.len(), feat_dim);
     for chunk in feats.chunks_exact_mut(feat_dim) {
-        for ((x, m), v) in chunk.iter_mut().zip(cmvn.means.iter()).zip(cmvn.vars.iter()) {
+        for ((x, m), v) in chunk
+            .iter_mut()
+            .zip(cmvn.means.iter())
+            .zip(cmvn.vars.iter())
+        {
             *x = (*x + *m) * *v;
         }
     }
@@ -228,10 +232,8 @@ mod tests {
 
     #[test]
     fn load_cmvn_parses_addshift_and_rescale() {
-        let dir = std::env::temp_dir().join(format!(
-            "euhadra_paraformer_mvn_{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("euhadra_paraformer_mvn_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("am.mvn");
         let body = "<Nnet>\n\
@@ -248,17 +250,11 @@ mod tests {
 
     #[test]
     fn load_cmvn_rejects_dim_mismatch() {
-        let dir = std::env::temp_dir().join(format!(
-            "euhadra_paraformer_mvn_bad_{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("euhadra_paraformer_mvn_bad_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("am.mvn");
-        std::fs::write(
-            &path,
-            "<AddShift> [ -1 -2 -3 ]\n<Rescale> [ 1 2 ]\n",
-        )
-        .unwrap();
+        std::fs::write(&path, "<AddShift> [ -1 -2 -3 ]\n<Rescale> [ 1 2 ]\n").unwrap();
         let res = load_cmvn(&path);
         std::fs::remove_dir_all(&dir).ok();
         assert!(res.is_err());

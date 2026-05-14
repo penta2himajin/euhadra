@@ -165,7 +165,10 @@ mod tests {
 
     #[test]
     fn sentence_postprocess_pure_chinese_concatenates() {
-        let toks = ["我", "们", "好"].iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let toks = ["我", "们", "好"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>();
         assert_eq!(sentence_postprocess(&toks), "我们好");
     }
 
@@ -212,15 +215,15 @@ mod tests {
     }
 
     #[test]
-    fn load_tokens_json_round_trips(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let dir = std::env::temp_dir().join(format!(
-            "euhadra_paraformer_vocab_{}",
-            std::process::id()
-        ));
+    fn load_tokens_json_round_trips() -> Result<(), Box<dyn std::error::Error>> {
+        let dir =
+            std::env::temp_dir().join(format!("euhadra_paraformer_vocab_{}", std::process::id()));
         std::fs::create_dir_all(&dir)?;
         let path = dir.join("tokens.json");
-        std::fs::write(&path, r#"["<blank>", "<s>", "</s>", "我", "们"]"#.as_bytes())?;
+        std::fs::write(
+            &path,
+            r#"["<blank>", "<s>", "</s>", "我", "们"]"#.as_bytes(),
+        )?;
         let vocab = load_tokens_json(&path)?;
         std::fs::remove_dir_all(&dir).ok();
         assert_eq!(vocab.len(), 5);
@@ -230,10 +233,8 @@ mod tests {
 
     #[test]
     fn load_tokens_json_rejects_empty_array() {
-        let dir = std::env::temp_dir().join(format!(
-            "euhadra_paraformer_empty_{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("euhadra_paraformer_empty_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("tokens.json");
         std::fs::write(&path, b"[]").unwrap();

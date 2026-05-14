@@ -15,7 +15,7 @@ use crate::traits::{AsrAdapter, AsrError};
 use crate::types::{AsrResult, AudioChunk};
 
 use super::fbank::{Fbank, FbankOpts};
-use super::frontend::{Cmvn, apply_cmvn, apply_lfr, load_cmvn};
+use super::frontend::{apply_cmvn, apply_lfr, load_cmvn, Cmvn};
 use super::vocab::{ids_to_tokens, load_tokens_json, sentence_postprocess};
 
 /// Configuration that mirrors the standard offline Paraformer-large
@@ -84,7 +84,10 @@ impl ParaformerAdapter {
         let session = Session::builder()
             .and_then(|mut b| b.commit_from_file(&model_path))
             .map_err(|e| AsrError {
-                message: format!("failed to load Paraformer ONNX {}: {e}", model_path.display()),
+                message: format!(
+                    "failed to load Paraformer ONNX {}: {e}",
+                    model_path.display()
+                ),
             })?;
 
         let cmvn = load_cmvn(&mvn_path)?;
@@ -150,8 +153,8 @@ impl ParaformerAdapter {
         let feat_dim = n_mels * self.cfg.lfr_m;
         apply_cmvn(&mut feats, feat_dim, &self.cmvn);
 
-        let speech: Array3<f32> = Array3::from_shape_vec((1, t_lfr, feat_dim), feats)
-            .map_err(|e| AsrError {
+        let speech: Array3<f32> =
+            Array3::from_shape_vec((1, t_lfr, feat_dim), feats).map_err(|e| AsrError {
                 message: format!("speech tensor shape: {e}"),
             })?;
         let lengths: Array1<i32> = Array1::from(vec![t_lfr as i32]);
@@ -163,10 +166,8 @@ impl ParaformerAdapter {
             message: format!("lengths Value: {e}"),
         })?;
 
-        let (speech_name, lengths_name) = (
-            self.input_names.0.as_str(),
-            self.input_names.1.as_str(),
-        );
+        let (speech_name, lengths_name) =
+            (self.input_names.0.as_str(), self.input_names.1.as_str());
 
         // Hold the session lock for the duration of decoding so the
         // borrowed output tensors stay live; the encoder pass is the

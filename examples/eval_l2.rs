@@ -33,7 +33,7 @@ use std::time::Instant;
 use clap::{Parser, ValueEnum};
 use euhadra::eval::metrics::{cer_lenient, wer_lenient};
 use euhadra::prelude::*;
-use euhadra::whisper_local::{WhisperLocal, read_wav};
+use euhadra::whisper_local::{read_wav, WhisperLocal};
 
 // ---------------------------------------------------------------------------
 // Audio augmentation (inline so the dev-dep `rustfft` doesn't leak into
@@ -103,16 +103,10 @@ mod audio_aug {
         let fft = planner.plan_fft_forward(n);
         let ifft = planner.plan_fft_inverse(n);
 
-        let mut s_buf: Vec<Complex32> = signal
-            .iter()
-            .map(|&x| Complex32::new(x, 0.0))
-            .collect();
+        let mut s_buf: Vec<Complex32> = signal.iter().map(|&x| Complex32::new(x, 0.0)).collect();
         s_buf.resize(n, Complex32::new(0.0, 0.0));
 
-        let mut r_buf: Vec<Complex32> = rir
-            .iter()
-            .map(|&x| Complex32::new(x, 0.0))
-            .collect();
+        let mut r_buf: Vec<Complex32> = rir.iter().map(|&x| Complex32::new(x, 0.0)).collect();
         r_buf.resize(n, Complex32::new(0.0, 0.0));
 
         fft.process(&mut s_buf);
@@ -191,7 +185,10 @@ mod audio_aug {
             let out = fft_convolve(&signal, &rir);
             for (i, expected) in signal.iter().enumerate() {
                 let got = out[i];
-                assert!((got - expected).abs() < 1e-4, "i={i} got={got} expected={expected}");
+                assert!(
+                    (got - expected).abs() < 1e-4,
+                    "i={i} got={got} expected={expected}"
+                );
             }
         }
 
@@ -210,9 +207,7 @@ mod audio_aug {
         #[test]
         fn add_noise_hits_target_snr() {
             // Pure tone signal, white-ish noise, target 10 dB.
-            let signal_orig: Vec<f32> = (0..16000)
-                .map(|i| (i as f32 * 0.05).sin() * 0.5)
-                .collect();
+            let signal_orig: Vec<f32> = (0..16000).map(|i| (i as f32 * 0.05).sin() * 0.5).collect();
             let noise: Vec<f32> = (0..16000)
                 .map(|i| ((i as f32 * 0.13).sin() + (i as f32 * 0.27).cos()) * 0.5)
                 .collect();
@@ -228,10 +223,7 @@ mod audio_aug {
                 .map(|d| d * d)
                 .sum::<f64>()
                 / signal.len() as f64;
-            let signal_power: f64 = signal_orig
-                .iter()
-                .map(|s| (*s as f64).powi(2))
-                .sum::<f64>()
+            let signal_power: f64 = signal_orig.iter().map(|s| (*s as f64).powi(2)).sum::<f64>()
                 / signal_orig.len() as f64;
             let achieved_db = 10.0 * (signal_power / resid_power).log10();
             assert!(
@@ -456,15 +448,18 @@ async fn run() -> Result<(), String> {
         let pool = audio_aug::collect_wavs(&cli.noise_dir)
             .map_err(|e| format!("loading noise pool: {e}"))?;
         if pool.is_empty() {
-            return Err(format!("noise pool at {} is empty", cli.noise_dir.display()));
+            return Err(format!(
+                "noise pool at {} is empty",
+                cli.noise_dir.display()
+            ));
         }
         Some(pool)
     } else {
         None
     };
     let rir_pool = if cli.condition.needs_reverb() {
-        let pool = audio_aug::collect_wavs(&cli.rir_dir)
-            .map_err(|e| format!("loading RIR pool: {e}"))?;
+        let pool =
+            audio_aug::collect_wavs(&cli.rir_dir).map_err(|e| format!("loading RIR pool: {e}"))?;
         if pool.is_empty() {
             return Err(format!("RIR pool at {} is empty", cli.rir_dir.display()));
         }
@@ -474,7 +469,11 @@ async fn run() -> Result<(), String> {
     };
 
     let lang = cli.dataset.language();
-    let model = if lang == "en" { &cli.model_en } else { &cli.model_multi };
+    let model = if lang == "en" {
+        &cli.model_en
+    } else {
+        &cli.model_multi
+    };
     let result = evaluate(
         &cli,
         lang,
@@ -490,7 +489,8 @@ async fn run() -> Result<(), String> {
         if let Some(parent) = out.parent() {
             std::fs::create_dir_all(parent).ok();
         }
-        let json = serde_json::to_string_pretty(&result.as_report(&cli)).map_err(|e| format!("json: {e}"))?;
+        let json = serde_json::to_string_pretty(&result.as_report(&cli))
+            .map_err(|e| format!("json: {e}"))?;
         std::fs::write(out, json).map_err(|e| format!("write {}: {e}", out.display()))?;
         eprintln!("report written to {}", out.display());
     }
@@ -588,7 +588,8 @@ async fn evaluate(
         if cli.condition.needs_reverb() {
             let pool = rir_pool.expect("rir pool guaranteed");
             let rir_path = pick(pool, cli.seed, &row.id, "rir");
-            let rir = read_wav(rir_path).map_err(|e| format!("read RIR {}: {e}", rir_path.display()))?;
+            let rir =
+                read_wav(rir_path).map_err(|e| format!("read RIR {}: {e}", rir_path.display()))?;
             let rir_mono = audio_aug::to_mono(&rir);
             audio.samples = audio_aug::fft_convolve(&audio.samples, &rir_mono);
             // Convolution may push amplitude > 1.0; renormalise to keep
@@ -598,7 +599,8 @@ async fn evaluate(
         if cli.condition.needs_noise() {
             let pool = noise_pool.expect("noise pool guaranteed");
             let noise_path = pick(pool, cli.seed, &row.id, "noise");
-            let noise = read_wav(noise_path).map_err(|e| format!("read noise {}: {e}", noise_path.display()))?;
+            let noise = read_wav(noise_path)
+                .map_err(|e| format!("read noise {}: {e}", noise_path.display()))?;
             let noise_mono = audio_aug::to_mono(&noise);
             audio_aug::add_noise(&mut audio.samples, &noise_mono, cli.snr_db);
         }

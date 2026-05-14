@@ -121,11 +121,8 @@ mod tests {
     use std::io::Write;
 
     fn tempfile(name: &str) -> std::path::PathBuf {
-        let p = std::env::temp_dir().join(format!(
-            "euhadra-eval-anno-{}-{}",
-            std::process::id(),
-            name
-        ));
+        let p =
+            std::env::temp_dir().join(format!("euhadra-eval-anno-{}-{}", std::process::id(), name));
         p
     }
 

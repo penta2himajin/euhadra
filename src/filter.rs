@@ -111,9 +111,10 @@ impl TextFilter for EmbeddingFillerFilter {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let resp: serde_json::Value = serde_json::from_str(stdout.trim()).map_err(|e| FilterError {
-            message: format!("json parse response: {e} (raw: {stdout})"),
-        })?;
+        let resp: serde_json::Value =
+            serde_json::from_str(stdout.trim()).map_err(|e| FilterError {
+                message: format!("json parse response: {e} (raw: {stdout})"),
+            })?;
 
         if let Some(err) = resp.get("error") {
             return Err(FilterError {
@@ -163,19 +164,15 @@ pub struct SimpleFillerFilter {
 impl SimpleFillerFilter {
     pub fn english() -> Self {
         Self {
-            pure_fillers: vec![
-                "um", "uh", "uhm", "umm", "hmm", "er", "ah", "eh",
-            ]
-            .into_iter()
-            .map(String::from)
-            .collect(),
+            pure_fillers: vec!["um", "uh", "uhm", "umm", "hmm", "er", "ah", "eh"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
 
-            contextual_fillers: vec![
-                "so", "well", "basically", "actually", "literally", "right",
-            ]
-            .into_iter()
-            .map(String::from)
-            .collect(),
+            contextual_fillers: vec!["so", "well", "basically", "actually", "literally", "right"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
 
             multi_fillers: vec![
                 vec!["you".into(), "know".into()],
@@ -209,10 +206,17 @@ impl SimpleFillerFilter {
         Self {
             pure_fillers: vec![
                 // Hesitation markers
-                "えーと", "えっと", "えー", "あー", "うーん", "うん",
-                "ああ", "ええ",
+                "えーと",
+                "えっと",
+                "えー",
+                "あー",
+                "うーん",
+                "うん",
+                "ああ",
+                "ええ",
                 // Common ASR misrecognitions of fillers
-                "映像", "映映",
+                "映像",
+                "映映",
             ]
             .into_iter()
             .map(String::from)
@@ -220,8 +224,14 @@ impl SimpleFillerFilter {
 
             contextual_fillers: vec![
                 // Discourse markers — filler at sentence start, content word otherwise
-                "あの", "まあ", "その", "なんか", "ほら", "やっぱり",
-                "まあまあ", "ちょっと",
+                "あの",
+                "まあ",
+                "その",
+                "なんか",
+                "ほら",
+                "やっぱり",
+                "まあまあ",
+                "ちょっと",
             ]
             .into_iter()
             .map(String::from)
@@ -264,9 +274,19 @@ impl SimpleFillerFilter {
                 // word otherwise. `그` and `저` are the two most
                 // ambiguous; the rest read as fillers nearly any time
                 // they appear sentence-initial.
-                "그", "저", "막", "약간", "뭐", "저기", "글쎄",
-                "그러니까", "그니까", "그래서", "어쨌든",
-                "그게", "뭐랄까",
+                "그",
+                "저",
+                "막",
+                "약간",
+                "뭐",
+                "저기",
+                "글쎄",
+                "그러니까",
+                "그니까",
+                "그래서",
+                "어쨌든",
+                "그게",
+                "뭐랄까",
             ]
             .into_iter()
             .map(String::from)
@@ -297,7 +317,11 @@ impl SimpleFillerFilter {
             }
             // Previous kept word ends with sentence punctuation → we're at a boundary
             let prev = words[j];
-            if prev.ends_with('.') || prev.ends_with('!') || prev.ends_with('?') || prev.ends_with(',') {
+            if prev.ends_with('.')
+                || prev.ends_with('!')
+                || prev.ends_with('?')
+                || prev.ends_with(',')
+            {
                 return true;
             }
             return false;
@@ -337,10 +361,7 @@ impl SimpleFillerFilter {
             }
             let surface: String = chars[start..i].iter().collect();
             let lower = surface.to_lowercase();
-            let clean: String = lower
-                .chars()
-                .take_while(|c| c.is_alphanumeric())
-                .collect();
+            let clean: String = lower.chars().take_while(|c| c.is_alphanumeric()).collect();
             let ends_with_terminal = surface.ends_with('.')
                 || surface.ends_with('!')
                 || surface.ends_with('?')
@@ -361,7 +382,9 @@ impl SimpleFillerFilter {
         let mut k = 0;
         'outer: while k + 1 < n {
             for mf in &self.multi_fillers {
-                if mf.len() == 2 && !removed[k] && !removed[k + 1]
+                if mf.len() == 2
+                    && !removed[k]
+                    && !removed[k + 1]
                     && tokens[k].clean_lower == mf[0]
                     && tokens[k + 1].clean_lower == mf[1]
                 {
@@ -407,9 +430,7 @@ impl SimpleFillerFilter {
             if removed[j] {
                 continue;
             }
-            if self.contextual_fillers.contains(&tokens[j].clean_lower)
-                && is_initial(j, &removed)
-            {
+            if self.contextual_fillers.contains(&tokens[j].clean_lower) && is_initial(j, &removed) {
                 removed[j] = true;
                 detections.push((j, j));
             }
@@ -439,10 +460,7 @@ impl TextFilter for SimpleFillerFilter {
         let mut i = 0;
         'outer: while i + 1 < n {
             for mf in &self.multi_fillers {
-                if mf.len() == 2
-                    && !removed_indices[i]
-                    && !removed_indices[i + 1]
-                {
+                if mf.len() == 2 && !removed_indices[i] && !removed_indices[i + 1] {
                     let w0 = words[i].to_lowercase();
                     let w1 = words[i + 1].to_lowercase();
                     let clean0: String = w0.chars().take_while(|c| c.is_alphanumeric()).collect();
@@ -529,21 +547,26 @@ impl JapaneseFillerFilter {
     pub fn new() -> Self {
         Self {
             pure_fillers: vec![
-                "えーと", "えっと", "えー", "あー", "うーん", "うん",
-                "ああ", "ええ",
+                "えーと",
+                "えっと",
+                "えー",
+                "あー",
+                "うーん",
+                "うん",
+                "ああ",
+                "ええ",
                 // Common ASR misrecognitions
-                "映像", "映映",
+                "映像",
+                "映映",
             ]
             .into_iter()
             .map(String::from)
             .collect(),
 
-            contextual_fillers: vec![
-                "あの", "まあ", "その", "なんか", "ほら", "やっぱり",
-            ]
-            .into_iter()
-            .map(String::from)
-            .collect(),
+            contextual_fillers: vec!["あの", "まあ", "その", "なんか", "ほら", "やっぱり"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
         }
     }
 }
@@ -585,15 +608,12 @@ impl TextFilter for JapaneseFillerFilter {
                 continue;
             }
             // Check if this is sentence-initial
-            let is_initial = (0..i).all(|j| {
-                removed_indices[j] || segments[j].trim().is_empty()
-            });
+            let is_initial = (0..i).all(|j| removed_indices[j] || segments[j].trim().is_empty());
             // Also check after sentence-ending punctuation (。)
-            let after_period = i > 0 && !removed_indices[i - 1]
-                && segments[i - 1].trim().ends_with('。');
+            let after_period =
+                i > 0 && !removed_indices[i - 1] && segments[i - 1].trim().ends_with('。');
 
-            if self.contextual_fillers.iter().any(|f| trimmed == f)
-                && (is_initial || after_period)
+            if self.contextual_fillers.iter().any(|f| trimmed == f) && (is_initial || after_period)
             {
                 removed_indices[i] = true;
                 removed_labels.push(trimmed.to_string());
@@ -851,15 +871,11 @@ impl TextFilter for ChineseFillerFilter {
             if trimmed.is_empty() {
                 continue;
             }
-            let is_initial = (0..i).all(|j| {
-                removed_indices[j] || segments[j].trim().is_empty()
-            });
-            let after_period = i > 0
-                && !removed_indices[i - 1]
-                && segments[i - 1].trim().ends_with('。');
+            let is_initial = (0..i).all(|j| removed_indices[j] || segments[j].trim().is_empty());
+            let after_period =
+                i > 0 && !removed_indices[i - 1] && segments[i - 1].trim().ends_with('。');
 
-            if self.contextual_fillers.iter().any(|f| trimmed == f)
-                && (is_initial || after_period)
+            if self.contextual_fillers.iter().any(|f| trimmed == f) && (is_initial || after_period)
             {
                 removed_indices[i] = true;
                 removed_labels.push(trimmed.to_string());
@@ -1061,8 +1077,7 @@ impl SpanishFillerFilter {
                 // CIEMPIESS hesitation form)
                 "e", "eh", "ehh", "ehhh", "eee", "eeh", "eeeh", "ehm",
                 // nasal hesitations
-                "mm", "mmm", "hmm",
-                // "ah" / "oh" family
+                "mm", "mmm", "hmm", // "ah" / "oh" family
                 "ah", "aah", "ahh", "oh",
             ]
             .into_iter()
@@ -1070,13 +1085,10 @@ impl SpanishFillerFilter {
             .collect(),
             multi_fillers: vec![vec!["o".into(), "sea".into()]],
             partial_stoplist: vec![
-                "y", "a", "o", "u", "e",
-                "de", "en", "el", "la", "lo", "los", "las", "le", "les",
-                "un", "una", "uno", "unos", "unas",
-                "se", "te", "me", "nos", "os",
-                "no", "ni", "es", "ya", "si", "sí",
-                "por", "con", "para", "del", "al", "que", "qué",
-                "su", "sus", "mi", "mis", "tu", "tus",
+                "y", "a", "o", "u", "e", "de", "en", "el", "la", "lo", "los", "las", "le", "les",
+                "un", "una", "uno", "unos", "unas", "se", "te", "me", "nos", "os", "no", "ni",
+                "es", "ya", "si", "sí", "por", "con", "para", "del", "al", "que", "qué", "su",
+                "sus", "mi", "mis", "tu", "tus",
             ]
             .into_iter()
             .map(String::from)
@@ -1322,7 +1334,10 @@ mod tests {
     #[tokio::test]
     async fn simple_filler_filter_removes_pure_fillers() {
         let filter = SimpleFillerFilter::english();
-        let result = filter.filter("um I think uh we should deploy").await.unwrap();
+        let result = filter
+            .filter("um I think uh we should deploy")
+            .await
+            .unwrap();
         assert_eq!(result.text, "I think we should deploy");
         assert!(result.removed.contains(&"um".to_string()));
         assert!(result.removed.contains(&"uh".to_string()));
@@ -1363,7 +1378,10 @@ mod tests {
     #[tokio::test]
     async fn well_removed_at_sentence_start() {
         let filter = SimpleFillerFilter::english();
-        let result = filter.filter("Well I think we should deploy").await.unwrap();
+        let result = filter
+            .filter("Well I think we should deploy")
+            .await
+            .unwrap();
         assert_eq!(result.text, "I think we should deploy");
     }
 
@@ -1409,7 +1427,11 @@ mod tests {
             .filter("And so my fellow Americans ask not what your country can do for you")
             .await
             .unwrap();
-        assert!(result.text.contains("so"), "mid-sentence 'so' should be kept: {}", result.text);
+        assert!(
+            result.text.contains("so"),
+            "mid-sentence 'so' should be kept: {}",
+            result.text
+        );
     }
 
     // --- Japanese filler filter tests ---
@@ -1434,8 +1456,15 @@ mod tests {
     async fn japanese_contextual_filler_standalone_removed() {
         let filter = JapaneseFillerFilter::new();
         // "あの" as standalone segment between commas → filler, removed
-        let result = filter.filter("拙者親方と申すは、あの、お立ち合いの中に").await.unwrap();
-        assert!(!result.text.contains("あの"), "standalone あの should be removed: {}", result.text);
+        let result = filter
+            .filter("拙者親方と申すは、あの、お立ち合いの中に")
+            .await
+            .unwrap();
+        assert!(
+            !result.text.contains("あの"),
+            "standalone あの should be removed: {}",
+            result.text
+        );
         assert!(result.removed.contains(&"あの".to_string()));
     }
 
@@ -1443,8 +1472,15 @@ mod tests {
     async fn japanese_contextual_word_in_phrase_preserved() {
         let filter = JapaneseFillerFilter::new();
         // "あの" as part of a longer phrase → demonstrative, preserved
-        let result = filter.filter("拙者親方と申すは、あの人が来た").await.unwrap();
-        assert!(result.text.contains("あの人が来た"), "あの in phrase should be kept: {}", result.text);
+        let result = filter
+            .filter("拙者親方と申すは、あの人が来た")
+            .await
+            .unwrap();
+        assert!(
+            result.text.contains("あの人が来た"),
+            "あの in phrase should be kept: {}",
+            result.text
+        );
     }
 
     #[tokio::test]
@@ -1489,7 +1525,10 @@ mod tests {
             .filter("映像、せっしゃおやかたとモースは、あの、おたち合いの中に、まあ、ご存知のおかたもございましょうが、その、お江戸をたってにじゅうりかみがた")
             .await
             .unwrap();
-        assert!(!result.text.contains("映像"), "ASR artifact should be removed");
+        assert!(
+            !result.text.contains("映像"),
+            "ASR artifact should be removed"
+        );
         assert!(result.text.contains("せっしゃおやかたとモースは"));
         assert!(result.text.contains("ご存知のおかたもございましょうが"));
     }
@@ -1602,7 +1641,11 @@ mod tests {
             .filter("hace rato comentaba e fuera del aire")
             .await
             .unwrap();
-        assert!(!result.text.split_whitespace().any(|t| t == "e"), "{}", result.text);
+        assert!(
+            !result.text.split_whitespace().any(|t| t == "e"),
+            "{}",
+            result.text
+        );
         assert!(result.text.contains("comentaba"));
         assert!(result.text.contains("fuera del aire"));
     }
@@ -1625,10 +1668,7 @@ mod tests {
     #[tokio::test]
     async fn spanish_multi_word_filler_o_sea() {
         let filter = SpanishFillerFilter::new();
-        let result = filter
-            .filter("o sea ahora las mujeres")
-            .await
-            .unwrap();
+        let result = filter.filter("o sea ahora las mujeres").await.unwrap();
         assert_eq!(result.text, "ahora las mujeres");
         assert!(result.removed.contains(&"o sea".to_string()));
     }
@@ -1656,10 +1696,7 @@ mod tests {
     #[tokio::test]
     async fn spanish_two_token_repetition_drops_first_pair() {
         let filter = SpanishFillerFilter::new();
-        let result = filter
-            .filter("a la a la casa de mi abuela")
-            .await
-            .unwrap();
+        let result = filter.filter("a la a la casa de mi abuela").await.unwrap();
         assert_eq!(result.text, "a la casa de mi abuela");
         assert!(result.removed.contains(&"a la".to_string()));
     }
@@ -1669,10 +1706,7 @@ mod tests {
         // "sie" is a strict prefix of "siempre" with len ≥ 2 and a
         // gap of ≥ 2 chars → flagged as an abandoned-word disfluency.
         let filter = SpanishFillerFilter::new();
-        let result = filter
-            .filter("sie siempre estuvo leyendo")
-            .await
-            .unwrap();
+        let result = filter.filter("sie siempre estuvo leyendo").await.unwrap();
         assert_eq!(result.text, "siempre estuvo leyendo");
         assert!(result.removed.contains(&"sie".to_string()));
     }
@@ -1762,10 +1796,7 @@ mod tests {
     fn spanish_detect_spans_pure_filler_at_start() {
         let filter = SpanishFillerFilter::new();
         // "e fuera" → span [0, 1) for "e"
-        assert_eq!(
-            filter.detect_spans("e fuera del aire"),
-            vec![span(0, 1)]
-        );
+        assert_eq!(filter.detect_spans("e fuera del aire"), vec![span(0, 1)]);
     }
 
     #[test]
@@ -1782,20 +1813,14 @@ mod tests {
     fn spanish_detect_spans_two_token_repetition() {
         let filter = SpanishFillerFilter::new();
         // "a la a la casa" → span [0, 4) covering the first "a la"
-        assert_eq!(
-            filter.detect_spans("a la a la casa"),
-            vec![span(0, 4)]
-        );
+        assert_eq!(filter.detect_spans("a la a la casa"), vec![span(0, 4)]);
     }
 
     #[test]
     fn spanish_detect_spans_partial_word() {
         let filter = SpanishFillerFilter::new();
         // "sie siempre estuvo" → span [0, 3) for "sie"
-        assert_eq!(
-            filter.detect_spans("sie siempre estuvo"),
-            vec![span(0, 3)]
-        );
+        assert_eq!(filter.detect_spans("sie siempre estuvo"), vec![span(0, 3)]);
     }
 
     #[test]
@@ -1817,10 +1842,7 @@ mod tests {
         // "e canción mañana" — "e" at codepoint [0,1), then space at 1,
         // "canción" at [2, 9). Two ñ/ó codepoints encoded as 2 bytes
         // each in UTF-8 — verify we still get char offsets.
-        assert_eq!(
-            filter.detect_spans("e canción mañana"),
-            vec![span(0, 1)]
-        );
+        assert_eq!(filter.detect_spans("e canción mañana"), vec![span(0, 1)]);
     }
 
     #[test]
@@ -1896,7 +1918,11 @@ mod tests {
         let filter = SimpleFillerFilter::korean();
         let result = filter.filter("회의 시간을 어 변경합시다").await.unwrap();
         // `어` is a pure filler — removed regardless of position.
-        assert!(!result.text.split_whitespace().any(|t| t == "어"), "{}", result.text);
+        assert!(
+            !result.text.split_whitespace().any(|t| t == "어"),
+            "{}",
+            result.text
+        );
         assert!(result.text.contains("회의"));
         assert!(result.text.contains("변경합시다"));
     }
@@ -1926,7 +1952,10 @@ mod tests {
     #[tokio::test]
     async fn korean_clean_text_unchanged() {
         let filter = SimpleFillerFilter::korean();
-        let result = filter.filter("내일 오후 세 시에 만나기로 했습니다").await.unwrap();
+        let result = filter
+            .filter("내일 오후 세 시에 만나기로 했습니다")
+            .await
+            .unwrap();
         assert_eq!(result.text, "내일 오후 세 시에 만나기로 했습니다");
     }
 }

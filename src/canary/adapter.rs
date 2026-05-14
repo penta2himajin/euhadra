@@ -213,7 +213,9 @@ impl CanaryAdapter {
             length_penalty: self.cfg.length_penalty,
             prefix_format: self.cfg.prefix_format,
         };
-        let decoded = self.decoder.decode(&enc.embeddings, &enc.mask, &self.vocab, &opts)?;
+        let decoded = self
+            .decoder
+            .decode(&enc.embeddings, &enc.mask, &self.vocab, &opts)?;
 
         Ok(self.vocab.decode(&decoded.tokens))
     }

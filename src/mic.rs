@@ -61,9 +61,7 @@ impl Default for MicConfig {
 /// drop(stop);
 /// # }
 /// ```
-pub fn record(
-    config: MicConfig,
-) -> Result<(mpsc::Receiver<AudioChunk>, MicStopGuard), MicError> {
+pub fn record(config: MicConfig) -> Result<(mpsc::Receiver<AudioChunk>, MicStopGuard), MicError> {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
     let host = cpal::default_host();
@@ -115,7 +113,9 @@ pub fn record(
         )
         .map_err(|e| MicError(format!("build stream: {e}")))?;
 
-    stream.play().map_err(|e| MicError(format!("start stream: {e}")))?;
+    stream
+        .play()
+        .map_err(|e| MicError(format!("start stream: {e}")))?;
 
     let _bridge = std::thread::spawn(move || {
         let mut buffer: Vec<f32> = Vec::with_capacity(chunk_size * 2);
