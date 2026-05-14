@@ -11,6 +11,7 @@ use euhadra::mock::{MockContextProvider, MockRefiner, StdoutEmitter};
 use euhadra::pipeline::Pipeline;
 use euhadra::processor::{
     BasicPunctuationRestorer, InverseTextNormalizer, SelfCorrectionDetector,
+    SpokenFormNormalizer,
 };
 use euhadra::whisper_local::{self, WhisperLocal};
 
@@ -177,6 +178,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if !no_process {
                 builder = builder
                     .processor(SelfCorrectionDetector::new())
+                    .processor(SpokenFormNormalizer::new(
+                        language.as_deref().unwrap_or("en"),
+                    ))
                     .processor(InverseTextNormalizer::new(
                         language.as_deref().unwrap_or("en"),
                     ))
@@ -248,6 +252,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if !no_process {
                 builder = builder
                     .processor(SelfCorrectionDetector::new())
+                    .processor(SpokenFormNormalizer::new(
+                        language.as_deref().unwrap_or("en"),
+                    ))
                     .processor(InverseTextNormalizer::new(
                         language.as_deref().unwrap_or("en"),
                     ))
