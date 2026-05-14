@@ -42,6 +42,7 @@ pub enum CorrectionKind {
     ListFormatted,
     DictionaryMatch,
     NumeralNormalized,
+    SpokenFormNormalized,
 }
 
 #[derive(Debug, Clone)]
@@ -824,6 +825,140 @@ impl TextProcessor for InverseTextNormalizer {
 }
 
 // ---------------------------------------------------------------------------
+// SpokenFormNormalizer
+// ---------------------------------------------------------------------------
+
+/// Rewrites colloquial spoken-form reductions into their written form
+/// ("gonna" → "going to", "lemme" → "let me"). A non-LLM Tier-2
+/// processor (issue #72).
+///
+/// This is a rule-based stopgap — a curated dictionary of unambiguous
+/// one-to-one reductions — pending an edit-tagging ONNX model that can
+/// resolve context-dependent cases. Only English has a rule set today;
+/// other languages pass through unchanged. To add a language, write a
+/// `<lang>_spoken_form` lookup and wire it in [`SpokenFormNormalizer::new`].
+///
+/// The dictionary is deliberately conservative: entries like "gonna" /
+/// "wanna" technically also have a "going a" / "want a" reading, but
+/// the "going to" / "want to" sense dominates spoken usage, so the
+/// dominant mapping is applied. Genuinely ambiguous reductions
+/// ("ain't", bare "cause", "gotcha") are left out.
+pub struct SpokenFormNormalizer {
+    lookup: Option<fn(&str) -> Option<&'static str>>,
+}
+
+impl SpokenFormNormalizer {
+    /// Build a normalizer for `lang`. Unsupported languages produce a
+    /// passthrough normalizer.
+    pub fn new(lang: &str) -> Self {
+        let lookup = match lang {
+            "en" => Some(en_spoken_form as fn(&str) -> Option<&'static str>),
+            _ => None,
+        };
+        Self { lookup }
+    }
+}
+
+/// English colloquial reductions → written form. Conservative,
+/// one-to-one, unambiguous-in-the-dominant-sense entries only.
+fn en_spoken_form(token: &str) -> Option<&'static str> {
+    match token {
+        "gonna" => Some("going to"),
+        "wanna" => Some("want to"),
+        "gotta" => Some("got to"),
+        "hafta" => Some("have to"),
+        "oughta" => Some("ought to"),
+        "tryna" => Some("trying to"),
+        "gimme" => Some("give me"),
+        "lemme" => Some("let me"),
+        "kinda" => Some("kind of"),
+        "sorta" => Some("sort of"),
+        "outta" => Some("out of"),
+        "lotta" => Some("lot of"),
+        "dunno" => Some("don't know"),
+        "c'mon" => Some("come on"),
+        "'cause" => Some("because"),
+        "cuz" => Some("because"),
+        "y'all" => Some("you all"),
+        _ => None,
+    }
+}
+
+/// Apply the leading-capitalization of `original` to `replacement`.
+fn match_leading_case(original: &str, replacement: &str) -> String {
+    if original.chars().next().is_some_and(|c| c.is_uppercase()) {
+        let mut chars = replacement.chars();
+        match chars.next() {
+            Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+            None => String::new(),
+        }
+    } else {
+        replacement.to_string()
+    }
+}
+
+#[async_trait]
+impl TextProcessor for SpokenFormNormalizer {
+    async fn process(
+        &self,
+        text: &str,
+        _context: &ContextSnapshot,
+    ) -> Result<ProcessResult, ProcessError> {
+        let Some(lookup) = self.lookup else {
+            return Ok(ProcessResult {
+                text: text.to_string(),
+                corrections: vec![],
+            });
+        };
+
+        let mut out: Vec<String> = Vec::new();
+        let mut corrections = Vec::new();
+
+        for token in text.split_whitespace() {
+            // Split a trailing run of sentence punctuation so "gonna."
+            // still matches; a leading apostrophe is kept (it is part
+            // of words like "'cause").
+            let trail_start = token
+                .char_indices()
+                .rev()
+                .take_while(|(_, c)| matches!(c, '.' | ',' | '!' | '?' | ';' | ':'))
+                .last()
+                .map(|(i, _)| i)
+                .unwrap_or(token.len());
+            let (core, trailing) = token.split_at(trail_start);
+
+            let lower = core.to_lowercase();
+            match lookup(&lower) {
+                Some(replacement) if !core.is_empty() => {
+                    let cased = match_leading_case(core, replacement);
+                    corrections.push(Correction {
+                        kind: CorrectionKind::SpokenFormNormalized,
+                        original: core.to_string(),
+                        replacement: cased.clone(),
+                    });
+                    out.push(format!("{}{}", cased, trailing));
+                }
+                _ => out.push(token.to_string()),
+            }
+        }
+
+        if corrections.is_empty() {
+            // Nothing matched — return the input untouched so clean text
+            // is byte-identical (no whitespace re-normalization).
+            return Ok(ProcessResult {
+                text: text.to_string(),
+                corrections,
+            });
+        }
+
+        Ok(ProcessResult {
+            text: out.join(" "),
+            corrections,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -1449,6 +1584,77 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.text, "arbitrary text");
+        assert!(result.corrections.is_empty());
+    }
+
+    // --- SpokenFormNormalizer tests ---
+
+    #[tokio::test]
+    async fn spoken_form_expands_english_reductions() {
+        let sfn = SpokenFormNormalizer::new("en");
+        let result = sfn
+            .process("i'm gonna grab a coffee", &empty_context())
+            .await
+            .unwrap();
+        assert_eq!(result.text, "i'm going to grab a coffee");
+        assert_eq!(result.corrections.len(), 1);
+        assert_eq!(
+            result.corrections[0].kind,
+            CorrectionKind::SpokenFormNormalized
+        );
+    }
+
+    #[tokio::test]
+    async fn spoken_form_handles_multiple_and_punctuation() {
+        let sfn = SpokenFormNormalizer::new("en");
+        let result = sfn
+            .process("lemme know, i kinda forgot.", &empty_context())
+            .await
+            .unwrap();
+        assert_eq!(result.text, "let me know, i kind of forgot.");
+        assert_eq!(result.corrections.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn spoken_form_preserves_leading_capitalization() {
+        let sfn = SpokenFormNormalizer::new("en");
+        let result = sfn
+            .process("Gonna head out now", &empty_context())
+            .await
+            .unwrap();
+        assert_eq!(result.text, "Going to head out now");
+    }
+
+    #[tokio::test]
+    async fn spoken_form_keeps_apostrophe_words() {
+        let sfn = SpokenFormNormalizer::new("en");
+        let result = sfn
+            .process("c'mon we leave 'cause it's late", &empty_context())
+            .await
+            .unwrap();
+        assert_eq!(result.text, "come on we leave because it's late");
+    }
+
+    #[tokio::test]
+    async fn spoken_form_clean_text_is_untouched() {
+        let sfn = SpokenFormNormalizer::new("en");
+        let result = sfn
+            .process("the meeting  is on friday", &empty_context())
+            .await
+            .unwrap();
+        // No match → input returned verbatim, including the double space.
+        assert_eq!(result.text, "the meeting  is on friday");
+        assert!(result.corrections.is_empty());
+    }
+
+    #[tokio::test]
+    async fn spoken_form_unsupported_language_passes_through() {
+        let sfn = SpokenFormNormalizer::new("ja");
+        let result = sfn
+            .process("これはテストです", &empty_context())
+            .await
+            .unwrap();
+        assert_eq!(result.text, "これはテストです");
         assert!(result.corrections.is_empty());
     }
 }
