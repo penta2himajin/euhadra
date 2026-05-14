@@ -1,0 +1,55 @@
+Korean (ko) ITN patch for FluidInference/text-processing-rs
+==========================================================
+
+This directory holds a patch that adds Korean inverse text
+normalization to the upstream `text-processing-rs` crate. euhadra's
+GitHub tooling is scoped to penta2himajin/euhadra only, so the patch is
+staged here for a human to apply to a fork and open the PR.
+
+How to apply
+------------
+  git clone https://github.com/FluidInference/text-processing-rs
+  cd text-processing-rs
+  git checkout -b feat/korean-itn
+  git apply /path/to/euhadra/patches/text-processing-rs-ko-itn.patch
+  cargo test && cargo clippy --all-targets
+  git add src/itn/ko src/itn/mod.rs src/lib.rs tests/ko_tests.rs tests/data/ko
+  git commit   # use the message below
+
+Then push the branch to your fork and open a PR against
+FluidInference/text-processing-rs:main.
+
+Suggested commit message / PR body
+----------------------------------
+feat: add Korean (ko) inverse text normalization
+
+Adds a `ko` language module mirroring the `ja` / `zh` sentence-scanning
+tagger layout, wired into `normalize_with_lang(input, "ko")`.
+
+Coverage:
+- cardinal: Sino-Korean numerals (십/백/천/만/억/조), implicit-1 units,
+  mixed Arabic+unit forms (15만 -> 150000)
+- ordinal: 제X, X번째
+- decimal: X점Y, 마이너스 prefix
+- date: 년/월/일, weekday abbreviation, 세기, 년대, irregular month
+  names 유월/시월
+- time: 시 (native-Korean hour numerals) + 분/초 (Sino-Korean)
+- fraction: X분의 Y -> Y/X, mixed numbers, 마이너스
+
+Korean Sino-numeral syllables double as common non-numeric morphemes
+(이 "this", 일 "day", 만 the "only" particle, ...), so the cardinal
+catch-all only rewrites runs that carry a scale unit, and a trailing
+lone digit after 만/억/조 is split off as a probable particle. The
+numeral logic is ported from the euhadra speech framework's evaluation
+metrics, which hardened these heuristics against FLEURS-ko data.
+
+Known limitations (documented inline):
+- Date ranges (3일에서 5일) are not handled — the Korean range
+  connectors are extremely common non-range particles.
+- A decimal digit glued directly onto a copula with no separator
+  (삼점일사이다) is over-consumed; ASR output normally has a boundary
+  there.
+
+Tests: 25 unit tests + 51 NeMo-format integration cases under
+tests/data/ko/. `cargo test` (753 lib + all integration) and
+`cargo clippy --all-targets` are clean for the new module.
