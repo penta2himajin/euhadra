@@ -18,8 +18,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use ort::session::Session;
 use ort::session::builder::SessionBuilder;
+use ort::session::Session;
 
 /// Environment variable: when set to a directory path, ORT
 /// profiling is enabled on every Canary session loaded thereafter.

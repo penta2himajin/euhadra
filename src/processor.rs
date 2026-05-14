@@ -92,8 +92,14 @@ impl SelfCorrectionDetector {
         // "鈴木課長" preceding the cue. Same hazard exists for en
         // ("no" / "no wait", "rather" / "or rather").
         let mut correction_cues_en: Vec<String> = vec![
-            "no", "wait", "sorry", "i mean", "actually", "rather",
-            "no wait", "or rather",
+            "no",
+            "wait",
+            "sorry",
+            "i mean",
+            "actually",
+            "rather",
+            "no wait",
+            "or rather",
         ]
         .into_iter()
         .map(String::from)
@@ -101,8 +107,13 @@ impl SelfCorrectionDetector {
         correction_cues_en.sort_by_key(|c| std::cmp::Reverse(c.chars().count()));
 
         let mut correction_cues_ja: Vec<String> = vec![
-            "いや", "じゃなくて", "じゃなく", "ではなく", "ていうか",
-            "っていうか", "じゃない",
+            "いや",
+            "じゃなくて",
+            "じゃなく",
+            "ではなく",
+            "ていうか",
+            "っていうか",
+            "じゃない",
         ]
         .into_iter()
         .map(String::from)
@@ -117,8 +128,14 @@ impl SelfCorrectionDetector {
         // Sorted longest-first: `mejor dicho` must outrank `mejor`,
         // `quiero decir` outrank `digo`, `no es` outrank `no`.
         let mut correction_cues_es: Vec<String> = vec![
-            "mejor dicho", "quiero decir", "o sea", "perdón",
-            "mejor", "digo", "no es", "no",
+            "mejor dicho",
+            "quiero decir",
+            "o sea",
+            "perdón",
+            "mejor",
+            "digo",
+            "no es",
+            "no",
         ]
         .into_iter()
         .map(String::from)
@@ -130,8 +147,13 @@ impl SelfCorrectionDetector {
         // so 我的意思是 outranks 我是说 inside utterances that contain
         // both fragments.
         let mut correction_cues_zh: Vec<String> = vec![
-            "我的意思是", "确切地说", "应该说", "我是说",
-            "不对", "不是", "算了",
+            "我的意思是",
+            "确切地说",
+            "应该说",
+            "我是说",
+            "不对",
+            "不是",
+            "算了",
         ]
         .into_iter()
         .map(String::from)
@@ -145,9 +167,16 @@ impl SelfCorrectionDetector {
         // particles (X-아니에요 = "is not X"); the word-boundary
         // check in detect_korean handles that disambiguation.
         let mut correction_cues_ko: Vec<String> = vec![
-            "그게 아니라", "그게 아니고", "잘못 말했다", "잘못 말했네",
-            "아 잠깐", "잠깐만",
-            "아니에요", "아니라", "아니야", "아니",
+            "그게 아니라",
+            "그게 아니고",
+            "잘못 말했다",
+            "잘못 말했네",
+            "아 잠깐",
+            "잠깐만",
+            "아니에요",
+            "아니라",
+            "아니야",
+            "아니",
         ]
         .into_iter()
         .map(String::from)
@@ -225,7 +254,9 @@ impl SelfCorrectionDetector {
         for cue in &self.correction_cues_ja {
             if let Some(cue_pos) = text.find(cue.as_str()) {
                 let before = text[..cue_pos].trim_end_matches('、').trim_end();
-                let after = text[cue_pos + cue.len()..].trim_start_matches('、').trim_start();
+                let after = text[cue_pos + cue.len()..]
+                    .trim_start_matches('、')
+                    .trim_start();
 
                 if after.is_empty() || before.is_empty() {
                     continue;
@@ -257,7 +288,7 @@ impl SelfCorrectionDetector {
                     result,
                     Correction {
                         kind: CorrectionKind::SelfCorrectionRemoved,
-                        original: format!("{}{}",  reparandum, cue),
+                        original: format!("{}{}", reparandum, cue),
                         replacement: String::new(),
                     },
                 ));
@@ -332,8 +363,7 @@ impl SelfCorrectionDetector {
                     continue;
                 }
 
-                let shared =
-                    Self::count_shared_prefix_from_end(&before_words, &after_words);
+                let shared = Self::count_shared_prefix_from_end(&before_words, &after_words);
 
                 if shared >= self.min_shared_words {
                     let keep_count = before_words.len() - shared;
@@ -370,9 +400,7 @@ impl SelfCorrectionDetector {
         for cue in &self.correction_cues_zh {
             if let Some(cue_pos) = text.find(cue.as_str()) {
                 let trim_clause: &[char] = &['、', '，', ',', ' '];
-                let before = text[..cue_pos]
-                    .trim_end_matches(trim_clause)
-                    .trim_end();
+                let before = text[..cue_pos].trim_end_matches(trim_clause).trim_end();
                 let after = text[cue_pos + cue.len()..]
                     .trim_start_matches(trim_clause)
                     .trim_start();
@@ -472,8 +500,7 @@ impl SelfCorrectionDetector {
                 // FLEURS-ko / SenseVoice utterances (no internal
                 // commas) the whole pre-cue is one segment → drop
                 // it entirely → output is just the repair.
-                let segments: Vec<&str> =
-                    before_cue.split([',', '.', '!', '?', ';']).collect();
+                let segments: Vec<&str> = before_cue.split([',', '.', '!', '?', ';']).collect();
                 if segments.is_empty() {
                     from = cue_end;
                     continue;
@@ -1017,7 +1044,10 @@ mod tests {
     async fn no_self_correction_in_clean_text() {
         let detector = SelfCorrectionDetector::new();
         let result = detector
-            .process("I want to go to Denver for the conference", &empty_context())
+            .process(
+                "I want to go to Denver for the conference",
+                &empty_context(),
+            )
             .await
             .unwrap();
         assert_eq!(result.text, "I want to go to Denver for the conference");
@@ -1047,14 +1077,15 @@ mod tests {
     async fn japanese_self_correction_with_janakute() {
         let detector = SelfCorrectionDetector::new();
         let result = detector
-            .process(
-                "東京駅、じゃなくて品川駅で待ち合わせ",
-                &empty_context(),
-            )
+            .process("東京駅、じゃなくて品川駅で待ち合わせ", &empty_context())
             .await
             .unwrap();
         assert!(result.text.contains("品川駅"), "repair: {}", result.text);
-        assert!(!result.text.contains("東京駅"), "reparandum: {}", result.text);
+        assert!(
+            !result.text.contains("東京駅"),
+            "reparandum: {}",
+            result.text
+        );
     }
 
     // --- SelfCorrectionDetector — Spanish ---
@@ -1068,7 +1099,11 @@ mod tests {
             .await
             .unwrap();
         assert!(result.text.contains("hoy"), "repair: {}", result.text);
-        assert!(!result.text.contains("mañana"), "reparandum: {}", result.text);
+        assert!(
+            !result.text.contains("mañana"),
+            "reparandum: {}",
+            result.text
+        );
         assert_eq!(result.corrections.len(), 1);
     }
 
@@ -1080,7 +1115,11 @@ mod tests {
             .await
             .unwrap();
         assert!(result.text.contains("Barcelona"), "repair: {}", result.text);
-        assert!(!result.text.contains("Madrid"), "reparandum: {}", result.text);
+        assert!(
+            !result.text.contains("Madrid"),
+            "reparandum: {}",
+            result.text
+        );
     }
 
     #[tokio::test]
@@ -1090,7 +1129,11 @@ mod tests {
             .process("el presidente digo el ex-presidente", &empty_context())
             .await
             .unwrap();
-        assert!(result.text.contains("ex-presidente"), "repair: {}", result.text);
+        assert!(
+            result.text.contains("ex-presidente"),
+            "repair: {}",
+            result.text
+        );
     }
 
     #[tokio::test]
@@ -1102,7 +1145,11 @@ mod tests {
             .await
             .unwrap();
         assert!(result.text.contains("seis"), "repair: {}", result.text);
-        assert!(!result.text.contains("cinco"), "reparandum: {}", result.text);
+        assert!(
+            !result.text.contains("cinco"),
+            "reparandum: {}",
+            result.text
+        );
     }
 
     #[tokio::test]
@@ -1151,7 +1198,11 @@ mod tests {
             .await
             .unwrap();
         assert!(result.text.contains("Barcelona"), "repair: {}", result.text);
-        assert!(!result.text.contains("Madrid"), "reparandum: {}", result.text);
+        assert!(
+            !result.text.contains("Madrid"),
+            "reparandum: {}",
+            result.text
+        );
     }
 
     #[tokio::test]
@@ -1178,7 +1229,11 @@ mod tests {
             .await
             .unwrap();
         assert!(result.text.contains("Barcelona"), "repair: {}", result.text);
-        assert!(!result.text.contains("Madrid"), "reparandum: {}", result.text);
+        assert!(
+            !result.text.contains("Madrid"),
+            "reparandum: {}",
+            result.text
+        );
     }
 
     // --- BasicPunctuationRestorer tests ---
@@ -1186,20 +1241,14 @@ mod tests {
     #[tokio::test]
     async fn capitalize_first_word() {
         let proc = BasicPunctuationRestorer;
-        let result = proc
-            .process("hello world", &empty_context())
-            .await
-            .unwrap();
+        let result = proc.process("hello world", &empty_context()).await.unwrap();
         assert!(result.text.starts_with('H'));
     }
 
     #[tokio::test]
     async fn add_terminal_period() {
         let proc = BasicPunctuationRestorer;
-        let result = proc
-            .process("hello world", &empty_context())
-            .await
-            .unwrap();
+        let result = proc.process("hello world", &empty_context()).await.unwrap();
         assert!(result.text.ends_with('.'));
     }
 
@@ -1356,10 +1405,7 @@ mod tests {
     async fn en_self_correction_no_wait_prefers_long_cue() {
         let detector = SelfCorrectionDetector::new();
         let result = detector
-            .process(
-                "I want to go to Boston no wait to Denver",
-                &empty_context(),
-            )
+            .process("I want to go to Boston no wait to Denver", &empty_context())
             .await
             .unwrap();
         assert!(!result.text.contains("Boston"), "{}", result.text);

@@ -260,10 +260,16 @@ fn check_absolute_max(measured: f64, warn_at: f64, fmt: impl Fn(f64) -> String) 
 
 fn check_error_rate(measured: f64, baseline: f64, tol: &Tolerances) -> Verdict {
     if measured.is_nan() || baseline.is_nan() {
-        return Verdict::Fail(format!("NaN encountered: measured={measured}, baseline={baseline}"));
+        return Verdict::Fail(format!(
+            "NaN encountered: measured={measured}, baseline={baseline}"
+        ));
     }
     let abs_delta = measured - baseline;
-    let rel_delta = if baseline > 0.0 { abs_delta / baseline } else { 0.0 };
+    let rel_delta = if baseline > 0.0 {
+        abs_delta / baseline
+    } else {
+        0.0
+    };
 
     if abs_delta >= tol.wer_absolute_fail || rel_delta >= tol.wer_relative_fail {
         Verdict::Fail(format!(
@@ -428,9 +434,15 @@ pub fn check_language_layers(
         };
         let abs_delta = (m_val - b_val).abs();
         let v = if abs_delta >= tol.ablation_absolute_fail {
-            Verdict::Fail(format!("{:.4} → {:.4} (|Δ| {:.4})", b_val, m_val, abs_delta))
+            Verdict::Fail(format!(
+                "{:.4} → {:.4} (|Δ| {:.4})",
+                b_val, m_val, abs_delta
+            ))
         } else if abs_delta >= tol.ablation_absolute_warn {
-            Verdict::Warn(format!("{:.4} → {:.4} (|Δ| {:.4})", b_val, m_val, abs_delta))
+            Verdict::Warn(format!(
+                "{:.4} → {:.4} (|Δ| {:.4})",
+                b_val, m_val, abs_delta
+            ))
         } else {
             Verdict::Pass
         };
@@ -473,8 +485,14 @@ mod tests {
             samples: 10,
             wer,
             cer,
-            asr_latency_ms: LatencyRecord { p50: 100.0, p95: 200.0 },
-            e2e_latency_ms: LatencyRecord { p50: 150.0, p95: 250.0 },
+            asr_latency_ms: LatencyRecord {
+                p50: 100.0,
+                p95: 200.0,
+            },
+            e2e_latency_ms: LatencyRecord {
+                p50: 150.0,
+                p95: 250.0,
+            },
             rtf: Some(0.20),
         }
     }
@@ -527,12 +545,20 @@ mod tests {
         // Defaults: warn at +50% (1.5×), fail at +150% (2.5×).
         measured.asr_latency_ms.p50 = 200.0; // +100% → warn
         let results = check_language(&measured, &baseline, &tol);
-        let v = &results.iter().find(|(k, _)| k == "asr_latency_p50_ms").unwrap().1;
+        let v = &results
+            .iter()
+            .find(|(k, _)| k == "asr_latency_p50_ms")
+            .unwrap()
+            .1;
         assert!(matches!(v, Verdict::Warn(_)), "got {v:?}");
 
         measured.asr_latency_ms.p50 = 280.0; // +180% → fail
         let results = check_language(&measured, &baseline, &tol);
-        let v = &results.iter().find(|(k, _)| k == "asr_latency_p50_ms").unwrap().1;
+        let v = &results
+            .iter()
+            .find(|(k, _)| k == "asr_latency_p50_ms")
+            .unwrap()
+            .1;
         assert!(matches!(v, Verdict::Fail(_)), "got {v:?}");
     }
 
@@ -563,21 +589,13 @@ mod tests {
         // absolute (< 1.0)
         measured.rtf = Some(0.50); // already triggers relative warn
         let results = check_language(&measured, &baseline, &tol);
-        let v = &results
-            .iter()
-            .find(|(k, _)| k == "rtf_absolute")
-            .unwrap()
-            .1;
+        let v = &results.iter().find(|(k, _)| k == "rtf_absolute").unwrap().1;
         assert_eq!(v, &Verdict::Pass, "0.50 < 1.0 should be absolute pass");
 
         // RTF crosses the absolute threshold
         measured.rtf = Some(1.20);
         let results = check_language(&measured, &baseline, &tol);
-        let v = &results
-            .iter()
-            .find(|(k, _)| k == "rtf_absolute")
-            .unwrap()
-            .1;
+        let v = &results.iter().find(|(k, _)| k == "rtf_absolute").unwrap().1;
         assert!(matches!(v, Verdict::Warn(_)), "got {v:?}");
     }
 
@@ -641,7 +659,10 @@ mod tests {
         let mut layer_latency = BTreeMap::new();
         layer_latency.insert(
             "filler".to_string(),
-            LatencyMicrosRecord { p50: 500.0, p95: 1000.0 },
+            LatencyMicrosRecord {
+                p50: 500.0,
+                p95: 1000.0,
+            },
         );
         LanguageLayerBaseline {
             fixtures: 25,
@@ -692,7 +713,10 @@ mod tests {
         // Default tolerances: warn 200%, fail 400%
         measured.layer_latency_us.insert(
             "filler".to_string(),
-            LatencyMicrosRecord { p50: 1500.0, p95: 1500.0 }, // +200% → warn boundary
+            LatencyMicrosRecord {
+                p50: 1500.0,
+                p95: 1500.0,
+            }, // +200% → warn boundary
         );
         let results = check_language_layers(&measured, &baseline, &tol);
         let v = &results
@@ -704,7 +728,10 @@ mod tests {
 
         measured.layer_latency_us.insert(
             "filler".to_string(),
-            LatencyMicrosRecord { p50: 3000.0, p95: 3000.0 }, // +500% → fail
+            LatencyMicrosRecord {
+                p50: 3000.0,
+                p95: 3000.0,
+            }, // +500% → fail
         );
         let results = check_language_layers(&measured, &baseline, &tol);
         let v = &results
@@ -750,11 +777,17 @@ mod tests {
         // Baseline-matching sub-second filler stays Pass on absolute.
         measured.layer_latency_us.insert(
             "filler".to_string(),
-            LatencyMicrosRecord { p50: 500.0, p95: 1000.0 },
+            LatencyMicrosRecord {
+                p50: 500.0,
+                p95: 1000.0,
+            },
         );
         bl_match.layer_latency_us.insert(
             "filler".to_string(),
-            LatencyMicrosRecord { p50: 500.0, p95: 1000.0 },
+            LatencyMicrosRecord {
+                p50: 500.0,
+                p95: 1000.0,
+            },
         );
         let results = check_language_layers(&measured, &bl_match, &tol);
         let v = &results

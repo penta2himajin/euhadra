@@ -22,23 +22,23 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use clap::Parser;
+#[cfg(feature = "onnx")]
+use euhadra::canary::decoder::PrefixFormat;
+#[cfg(feature = "onnx")]
+use euhadra::canary::{CanaryAdapter, CanaryConfig};
 use euhadra::eval::baseline::{
-    Baseline, LanguageBaseline, LatencyRecord, Tolerances, Verdict, check_language,
+    check_language, Baseline, LanguageBaseline, LatencyRecord, Tolerances, Verdict,
 };
 use euhadra::eval::latency::Samples;
 use euhadra::eval::metrics::{cer_lenient, wer_lenient};
 #[cfg(feature = "onnx")]
-use euhadra::canary::{CanaryAdapter, CanaryConfig};
-#[cfg(feature = "onnx")]
-use euhadra::canary::decoder::PrefixFormat;
-#[cfg(feature = "onnx")]
-use euhadra::parakeet::ParakeetAdapter;
-#[cfg(feature = "onnx")]
 use euhadra::paraformer::ParaformerAdapter;
 #[cfg(feature = "onnx")]
-use euhadra::sensevoice::{SenseVoiceAdapter, SenseVoiceConfig};
+use euhadra::parakeet::ParakeetAdapter;
 use euhadra::prelude::*;
-use euhadra::whisper_local::{WhisperLocal, read_wav};
+#[cfg(feature = "onnx")]
+use euhadra::sensevoice::{SenseVoiceAdapter, SenseVoiceConfig};
+use euhadra::whisper_local::{read_wav, WhisperLocal};
 
 #[derive(Parser, Debug)]
 #[command(about = "L1 smoke: FLEURS subset → ASR → pipeline → WER/CER + latency")]
@@ -192,13 +192,19 @@ async fn run() -> Result<(), String> {
         let manifest = load_manifest(&cli.data_dir, lang)
             .map_err(|e| format!("loading {lang} manifest: {e}"))?;
         if manifest.rows.is_empty() {
-            return Err(format!("manifest for {lang} is empty — did the download script run?"));
+            return Err(format!(
+                "manifest for {lang} is empty — did the download script run?"
+            ));
         }
 
         // Build the pipeline ONCE per language. For ParakeetAdapter
         // this matters: model load is a multi-second ONNX session
         // initialisation that we don't want to pay per utterance.
-        let model = if lang == "en" { &cli.model_en } else { &cli.model_multi };
+        let model = if lang == "en" {
+            &cli.model_en
+        } else {
+            &cli.model_multi
+        };
         let pipeline = build_pipeline(
             &cli.whisper_cli,
             model,
@@ -222,7 +228,8 @@ async fn run() -> Result<(), String> {
             used_sensevoice_ko = true;
         }
 
-        let lang_result = evaluate_language(lang, &manifest, &pipeline, cli.dump_utterances).await?;
+        let lang_result =
+            evaluate_language(lang, &manifest, &pipeline, cli.dump_utterances).await?;
         measured.insert(lang.clone(), lang_result);
     }
 
@@ -238,10 +245,26 @@ async fn run() -> Result<(), String> {
 
     let asr_model_label = format!(
         "{en_model} (en) / {ja_model} (ja) / {zh_model} (zh) / {ko_model} (ko)",
-        en_model = if used_canary_en { "canary-180m-flash-int8" } else { "ggml-tiny.en" },
-        ja_model = if used_parakeet_ja { "parakeet-tdt_ctc-0.6b-ja" } else { "ggml-tiny" },
-        zh_model = if used_paraformer_zh { "paraformer-large-zh" } else { "ggml-tiny" },
-        ko_model = if used_sensevoice_ko { "sensevoice-small" } else { "ggml-tiny" },
+        en_model = if used_canary_en {
+            "canary-180m-flash-int8"
+        } else {
+            "ggml-tiny.en"
+        },
+        ja_model = if used_parakeet_ja {
+            "parakeet-tdt_ctc-0.6b-ja"
+        } else {
+            "ggml-tiny"
+        },
+        zh_model = if used_paraformer_zh {
+            "paraformer-large-zh"
+        } else {
+            "ggml-tiny"
+        },
+        ko_model = if used_sensevoice_ko {
+            "sensevoice-small"
+        } else {
+            "ggml-tiny"
+        },
     );
 
     if cli.update_baseline {
@@ -340,9 +363,7 @@ async fn evaluate_language(
         // mode behind a top-level error. Count empty hypotheses as
         // 100 % WER/CER (the reference is non-trivially missed) and
         // keep going.
-        let result_or_err = handle
-            .await
-            .map_err(|e| format!("join: {e}"))?;
+        let result_or_err = handle.await.map_err(|e| format!("join: {e}"))?;
         let asr_elapsed = asr_start.elapsed();
         asr_latency.record(asr_elapsed);
         e2e_latency.record(e2e_start.elapsed());
@@ -477,16 +498,13 @@ fn build_pipeline(
             #[cfg(feature = "onnx")]
             {
                 let dir = parakeet_ja_dir.unwrap();
-                let asr = ParakeetAdapter::load_with_feature_size(dir, 80).map_err(|e| {
-                    format!("load parakeet ja from {}: {e}", dir.display())
-                })?;
+                let asr = ParakeetAdapter::load_with_feature_size(dir, 80)
+                    .map_err(|e| format!("load parakeet ja from {}: {e}", dir.display()))?;
                 builder.asr(asr)
             }
             #[cfg(not(feature = "onnx"))]
             {
-                return Err(
-                    "--parakeet-ja-dir requires --features onnx at build time".into(),
-                );
+                return Err("--parakeet-ja-dir requires --features onnx at build time".into());
             }
         }
         "en" if canary_en_dir.is_some() => {
@@ -498,25 +516,20 @@ fn build_pipeline(
             }
             #[cfg(not(feature = "onnx"))]
             {
-                return Err(
-                    "--canary-en-dir requires --features onnx at build time".into(),
-                );
+                return Err("--canary-en-dir requires --features onnx at build time".into());
             }
         }
         "zh" if paraformer_zh_dir.is_some() => {
             #[cfg(feature = "onnx")]
             {
                 let dir = paraformer_zh_dir.unwrap();
-                let asr = ParaformerAdapter::load(dir).map_err(|e| {
-                    format!("load paraformer zh from {}: {e}", dir.display())
-                })?;
+                let asr = ParaformerAdapter::load(dir)
+                    .map_err(|e| format!("load paraformer zh from {}: {e}", dir.display()))?;
                 builder.asr(asr)
             }
             #[cfg(not(feature = "onnx"))]
             {
-                return Err(
-                    "--paraformer-zh-dir requires --features onnx at build time".into(),
-                );
+                return Err("--paraformer-zh-dir requires --features onnx at build time".into());
             }
         }
         "ko" if sensevoice_dir.is_some() => {
@@ -528,9 +541,7 @@ fn build_pipeline(
             }
             #[cfg(not(feature = "onnx"))]
             {
-                return Err(
-                    "--sensevoice-dir requires --features onnx at build time".into(),
-                );
+                return Err("--sensevoice-dir requires --features onnx at build time".into());
             }
         }
         "es" if canary_es_dir.is_some() => {
@@ -542,9 +553,7 @@ fn build_pipeline(
             }
             #[cfg(not(feature = "onnx"))]
             {
-                return Err(
-                    "--canary-es-dir requires --features onnx at build time".into(),
-                );
+                return Err("--canary-es-dir requires --features onnx at build time".into());
             }
         }
         _ => builder.asr(WhisperLocal::new(whisper_cli, model).with_language(lang)),
@@ -584,9 +593,9 @@ fn load_canary_adapter(dir: &Path, lang: &str) -> Result<CanaryAdapter, String> 
 
     // INT8 toggle. Per-language default + symmetric env override.
     let int8_default = lang == "en";
-    let int8_env = std::env::var("CANARY_INT8").ok().map(|raw| {
-        matches!(raw.as_str(), "1" | "true" | "TRUE" | "yes")
-    });
+    let int8_env = std::env::var("CANARY_INT8")
+        .ok()
+        .map(|raw| matches!(raw.as_str(), "1" | "true" | "TRUE" | "yes"));
     if int8_env.unwrap_or(int8_default) {
         cfg = cfg.with_int8_weights();
     }

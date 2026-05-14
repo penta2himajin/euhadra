@@ -53,9 +53,7 @@ impl OutputEmitter for ClipboardEmitter {
         let text = match &output {
             RefinementOutput::TextInsertion { text, .. } => text.clone(),
             RefinementOutput::Command { action, .. } => action.clone(),
-            RefinementOutput::StructuredInput { text, .. } => {
-                text.clone().unwrap_or_default()
-            }
+            RefinementOutput::StructuredInput { text, .. } => text.clone().unwrap_or_default(),
         };
 
         // Run clipboard operations on a blocking thread (arboard is sync)

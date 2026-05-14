@@ -138,14 +138,11 @@ pub fn normalize_lenient(text: &str) -> String {
         // ASCII
         '.', ',', '?', '!', ':', ';', '"', '\'', '(', ')', '[', ']', '{', '}',
         // Japanese / CJK punctuation
-        '。', '、', '「', '」', '『', '』', '・',
-        // Fullwidth ASCII clones (FF block)
+        '。', '、', '「', '」', '『', '』', '・', // Fullwidth ASCII clones (FF block)
         '？', '！', '：', '；', '（', '）', '，', '．',
         // Chinese alternative brackets / quotes
-        '《', '》', '〈', '〉', '〝', '〟',
-        // Misc
-        '…',
-        '\u{2018}', '\u{2019}', // single smart quotes ' '
+        '《', '》', '〈', '〉', '〝', '〟', // Misc
+        '…', '\u{2018}', '\u{2019}', // single smart quotes ' '
         '\u{201C}', '\u{201D}', // double smart quotes " "
     ];
     // Hyphens / dashes always behave as word separators, never as
@@ -228,8 +225,21 @@ fn normalize_chinese_numerals(text: &str) -> String {
 fn is_zh_numeric(c: char) -> bool {
     matches!(
         c,
-        '零' | '〇' | '一' | '二' | '三' | '四' | '五' | '六' | '七' | '八' | '九'
-            | '十' | '百' | '千' | '万' | '亿'
+        '零' | '〇'
+            | '一'
+            | '二'
+            | '三'
+            | '四'
+            | '五'
+            | '六'
+            | '七'
+            | '八'
+            | '九'
+            | '十'
+            | '百'
+            | '千'
+            | '万'
+            | '亿'
     )
 }
 
@@ -458,9 +468,7 @@ fn flush_kr_segment(out: &mut String, segment: &str, follow_up: Option<&str>) {
     if has_digit && has_unit {
         out.push_str(&parse_kr_positional(segment).to_string());
     } else if segment.chars().count() == 1
-        && follow_up
-            .map(starts_with_kr_classifier)
-            .unwrap_or(false)
+        && follow_up.map(starts_with_kr_classifier).unwrap_or(false)
     {
         // Single-token segment followed by a Korean classifier —
         // either a single-char Sino-Korean date / time classifier
@@ -615,9 +623,7 @@ fn levenshtein<T: Eq>(a: &[T], b: &[T]) -> usize {
         curr[0] = i + 1;
         for (j, bj) in b.iter().enumerate() {
             let cost = if ai == bj { 0 } else { 1 };
-            curr[j + 1] = (curr[j] + 1)
-                .min(prev[j + 1] + 1)
-                .min(prev[j] + cost);
+            curr[j + 1] = (curr[j] + 1).min(prev[j + 1] + 1).min(prev[j] + cost);
         }
         std::mem::swap(&mut prev, &mut curr);
     }
@@ -835,12 +841,12 @@ mod tests {
         let h = "一九六三年大坝建成后季节性洪水被控制住了沉积雾不再冲散到河流里";
         let c = cer_lenient(r, h);
         // 1 sub / total chars in r (after stripping punct/whitespace)
-        let r_chars = normalize_lenient(r).chars().filter(|x| !x.is_whitespace()).count();
+        let r_chars = normalize_lenient(r)
+            .chars()
+            .filter(|x| !x.is_whitespace())
+            .count();
         let expected = 1.0 / r_chars as f64;
-        assert!(
-            (c - expected).abs() < 1e-9,
-            "expected {expected} got {c}"
-        );
+        assert!((c - expected).abs() < 1e-9, "expected {expected} got {c}");
     }
 
     #[test]
@@ -854,10 +860,22 @@ mod tests {
         //   hyp → "scotburb403路公交汽车"
         // Edits: scotturb→scotburb (1 sub), 公共→公交 (1 sub). Two real errors.
         // We only assert that numeral mismatches no longer contribute.
-        let r_norm: String = normalize_lenient(r).chars().filter(|x| !x.is_whitespace()).collect();
-        let h_norm: String = normalize_lenient(h).chars().filter(|x| !x.is_whitespace()).collect();
-        assert!(r_norm.contains("403"), "ref should contain 403, got {r_norm}");
-        assert!(h_norm.contains("403"), "hyp should contain 403, got {h_norm}");
+        let r_norm: String = normalize_lenient(r)
+            .chars()
+            .filter(|x| !x.is_whitespace())
+            .collect();
+        let h_norm: String = normalize_lenient(h)
+            .chars()
+            .filter(|x| !x.is_whitespace())
+            .collect();
+        assert!(
+            r_norm.contains("403"),
+            "ref should contain 403, got {r_norm}"
+        );
+        assert!(
+            h_norm.contains("403"),
+            "hyp should contain 403, got {h_norm}"
+        );
     }
 
     // -----------------------------------------------------------------
@@ -901,7 +919,10 @@ mod tests {
         assert_eq!(wer_lenient("twentieth century", "20th century"), 0.0);
         assert_eq!(wer_lenient("first place", "1st place"), 0.0);
         assert_eq!(wer_lenient("twelfth night", "12th night"), 0.0);
-        assert_eq!(wer_lenient("third time's the charm", "3rd time's the charm"), 0.0);
+        assert_eq!(
+            wer_lenient("third time's the charm", "3rd time's the charm"),
+            0.0
+        );
     }
 
     #[test]
@@ -1101,7 +1122,11 @@ mod tests {
         let h = "hello world.";
         // Tokens (split_whitespace): r=[hello, world], h=[hello, world.]
         // 1 substitution → 1/2 = 0.5
-        assert!((wer(r, h) - 0.5).abs() < 1e-9, "strict wer should see `.` token, got {}", wer(r, h));
+        assert!(
+            (wer(r, h) - 0.5).abs() < 1e-9,
+            "strict wer should see `.` token, got {}",
+            wer(r, h)
+        );
     }
 
     #[test]
@@ -1111,7 +1136,10 @@ mod tests {
         // Chars after whitespace strip: r="helloworld" (10), h="helloworld." (11)
         // 1 insertion / 10 ref chars
         let c = cer(r, h);
-        assert!((c - 0.1).abs() < 1e-9, "strict cer should see `.` char, got {c}");
+        assert!(
+            (c - 0.1).abs() < 1e-9,
+            "strict cer should see `.` char, got {c}"
+        );
     }
 
     #[test]
@@ -1144,7 +1172,10 @@ mod tests {
         let h = "你好，世界";
         // 1 insertion / 4 ref chars = 0.25
         let c = cer(r, h);
-        assert!((c - 0.25).abs() < 1e-9, "strict cer should see fullwidth comma, got {c}");
+        assert!(
+            (c - 0.25).abs() < 1e-9,
+            "strict cer should see fullwidth comma, got {c}"
+        );
     }
 
     #[test]
@@ -1239,10 +1270,7 @@ mod tests {
         // 일억 = 100,000,000.
         assert_eq!(normalize_korean_numerals("일억 원"), "100000000 원");
         // 삼억 오천만 = 350,000,000.
-        assert_eq!(
-            normalize_korean_numerals("삼억 오천만 원"),
-            "350000000 원"
-        );
+        assert_eq!(normalize_korean_numerals("삼억 오천만 원"), "350000000 원");
     }
 
     #[test]
@@ -1302,10 +1330,7 @@ mod tests {
     fn normalize_korean_numerals_run_followed_by_classifier_unaffected() {
         // Multi-token positional runs already win their digit case.
         // A trailing classifier doesn't change the outcome.
-        assert_eq!(
-            normalize_korean_numerals("이천 십 일 년"),
-            "2011 년"
-        );
+        assert_eq!(normalize_korean_numerals("이천 십 일 년"), "2011 년");
     }
 
     #[test]
@@ -1352,10 +1377,7 @@ mod tests {
         // alone is not in the single-char classifier whitelist.
         assert_eq!(normalize_korean_numerals("이 세트"), "2 세트");
         // Korean particles after `세트` don't disrupt the match.
-        assert_eq!(
-            normalize_korean_numerals("이 세트에서"),
-            "2 세트에서"
-        );
+        assert_eq!(normalize_korean_numerals("이 세트에서"), "2 세트에서");
         assert_eq!(
             normalize_korean_numerals("이 세트가 끝나고"),
             "2 세트가 끝나고"
@@ -1420,6 +1442,9 @@ mod tests {
         // this test focused on the multi-token positional fix.
         let hypothesis = "공사는 이천 십 일 년 8월에 마무리되었으며";
         let cer = cer_lenient(reference, hypothesis);
-        assert!(cer < 0.05, "expected cer < 0.05 after kr numeral norm, got {cer}");
+        assert!(
+            cer < 0.05,
+            "expected cer < 0.05 after kr numeral norm, got {cer}"
+        );
     }
 }

@@ -33,8 +33,8 @@ use clap::{Parser, ValueEnum};
 
 use euhadra::eval::annotations::load_jsonl as load_annotations;
 use euhadra::eval::baseline::{LanguageLayerBaseline, LatencyMicrosRecord};
-use euhadra::eval::f1::{F1Stats, Span, aggregate, iou_f1, strict_f1};
-use euhadra::eval::fixtures::{Fixture, load_jsonl as load_fixtures};
+use euhadra::eval::f1::{aggregate, iou_f1, strict_f1, F1Stats, Span};
+use euhadra::eval::fixtures::{load_jsonl as load_fixtures, Fixture};
 use euhadra::eval::latency::Samples;
 use euhadra::eval::metrics::{cer, wer};
 use euhadra::prelude::*;
@@ -153,11 +153,7 @@ async fn run_self_correction(cli: &Cli) -> Result<(), String> {
                 None => Vec::new(),
             }
         };
-        let gold: Vec<Span> = anno
-            .repairs
-            .iter()
-            .map(|r| r.reparandum.span())
-            .collect();
+        let gold: Vec<Span> = anno.repairs.iter().map(|r| r.reparandum.span()).collect();
 
         // Utterance-level fire / no-fire (ignores span position).
         match (predicted.is_empty(), gold.is_empty()) {
@@ -181,10 +177,14 @@ async fn run_self_correction(cli: &Cli) -> Result<(), String> {
                         .map(|s| s.iter().collect::<String>())
                         .unwrap_or_default()
                 };
-                let pred_str: Vec<String> =
-                    predicted.iter().map(|s| format!("{:?}={:?}", (s.start, s.end), span_text(s))).collect();
-                let gold_str: Vec<String> =
-                    gold.iter().map(|s| format!("{:?}={:?}", (s.start, s.end), span_text(s))).collect();
+                let pred_str: Vec<String> = predicted
+                    .iter()
+                    .map(|s| format!("{:?}={:?}", (s.start, s.end), span_text(s)))
+                    .collect();
+                let gold_str: Vec<String> = gold
+                    .iter()
+                    .map(|s| format!("{:?}={:?}", (s.start, s.end), span_text(s)))
+                    .collect();
                 if predicted != gold {
                     println!(
                         "  [diff] {} text={:?}\n         predicted={:?}\n         gold={:?}",
@@ -366,8 +366,7 @@ fn diff_removed_span(input: &str, output: &str) -> Option<Span> {
     let mut suffix_len = 0;
     while suffix_len < in_chars.len()
         && suffix_len < out_chars.len()
-        && in_chars[in_chars.len() - 1 - suffix_len]
-            == out_chars[out_chars.len() - 1 - suffix_len]
+        && in_chars[in_chars.len() - 1 - suffix_len] == out_chars[out_chars.len() - 1 - suffix_len]
     {
         suffix_len += 1;
     }
@@ -698,10 +697,7 @@ async fn run_phoneme_correction(cli: &Cli) -> Result<(), String> {
         // input would already have been collapsed.)
         let output_norm = output_text.trim();
         let expected_norm = expected_text.trim();
-        match (
-            !anno.corrections.is_empty(),
-            output_norm == expected_norm,
-        ) {
+        match (!anno.corrections.is_empty(), output_norm == expected_norm) {
             (true, true) => utt_tp += 1,
             (true, false) => utt_fn += 1,
             (false, true) => utt_tn += 1,
@@ -714,9 +710,7 @@ async fn run_phoneme_correction(cli: &Cli) -> Result<(), String> {
         let mut predicted_pairs: Vec<(String, String)> = result
             .corrections
             .iter()
-            .filter(|c| {
-                matches!(c.kind, euhadra::processor::CorrectionKind::DictionaryMatch)
-            })
+            .filter(|c| matches!(c.kind, euhadra::processor::CorrectionKind::DictionaryMatch))
             .map(|c| (c.original.clone(), c.replacement.clone()))
             .collect();
         predicted_pairs.sort();
@@ -1083,4 +1077,3 @@ async fn bench_processor<P: TextProcessor>(
 fn round4(x: f64) -> f64 {
     (x * 10_000.0).round() / 10_000.0
 }
-

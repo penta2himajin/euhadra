@@ -130,13 +130,18 @@ pub struct EmitResult {
 
 impl EmitResult {
     pub fn ok() -> Self {
-        Self { success: true, error: None }
+        Self {
+            success: true,
+            error: None,
+        }
     }
 
     pub fn fail(msg: impl Into<String>) -> Self {
         Self {
             success: false,
-            error: Some(EmitError { message: msg.into() }),
+            error: Some(EmitError {
+                message: msg.into(),
+            }),
         }
     }
 }

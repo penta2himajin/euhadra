@@ -1,17 +1,17 @@
-pub mod types;
-pub mod traits;
-pub mod state;
-pub mod filter;
-pub mod processor;
-pub mod phoneme;
-pub mod paragraph;
-pub mod pipeline;
 pub mod emitters;
+pub mod eval;
+pub mod filter;
 pub mod mic;
 pub mod mock;
-pub mod whisper_local;
+pub mod paragraph;
+pub mod phoneme;
+pub mod pipeline;
 pub mod prelude;
-pub mod eval;
+pub mod processor;
+pub mod state;
+pub mod traits;
+pub mod types;
+pub mod whisper_local;
 
 #[cfg(feature = "onnx")]
 pub mod onnx_processing;

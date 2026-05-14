@@ -131,10 +131,7 @@ impl ParagraphSplitter {
             None => return vec![None; sentences.len()],
         };
 
-        sentences
-            .iter()
-            .map(|s| embedder.embed(s).ok())
-            .collect()
+        sentences.iter().map(|s| embedder.embed(s).ok()).collect()
     }
 
     /// Cosine similarity between two embedding vectors.
@@ -142,7 +139,11 @@ impl ParagraphSplitter {
         if a.len() != b.len() || a.is_empty() {
             return 0.0;
         }
-        a.iter().zip(b.iter()).map(|(x, y)| x * y).sum::<f32>().max(0.0)
+        a.iter()
+            .zip(b.iter())
+            .map(|(x, y)| x * y)
+            .sum::<f32>()
+            .max(0.0)
     }
 
     /// Compute inter-sentence similarities. Returns N-1 similarity values
@@ -153,21 +154,15 @@ impl ParagraphSplitter {
         }
 
         (0..embeddings.len() - 1)
-            .map(|i| {
-                match (&embeddings[i], &embeddings[i + 1]) {
-                    (Some(a), Some(b)) => Some(Self::cosine_sim(a, b)),
-                    _ => None,
-                }
+            .map(|i| match (&embeddings[i], &embeddings[i + 1]) {
+                (Some(a), Some(b)) => Some(Self::cosine_sim(a, b)),
+                _ => None,
             })
             .collect()
     }
 
     /// Find paragraph break points given inter-sentence similarities.
-    fn find_breaks(
-        &self,
-        n_sentences: usize,
-        similarities: &[Option<f32>],
-    ) -> Vec<usize> {
+    fn find_breaks(&self, n_sentences: usize, similarities: &[Option<f32>]) -> Vec<usize> {
         if n_sentences <= 1 {
             return vec![];
         }
@@ -240,7 +235,9 @@ impl ParagraphSplitter {
 #[async_trait]
 impl TextProcessor for ParagraphSplitter {
     async fn process(
-        &self, text: &str, ctx: &ContextSnapshot,
+        &self,
+        text: &str,
+        ctx: &ContextSnapshot,
     ) -> Result<ProcessResult, ProcessError> {
         // Skip splitting for field types where it doesn't make sense
         if !Self::should_split(&ctx.field_type) {
@@ -360,7 +357,11 @@ mod tests {
         let text = "One. Two. Three. Four. Five. Six.";
         let r = splitter.process(text, &ctx).await.unwrap();
         // Should split: 6 sentences > max 3
-        assert!(r.text.contains("\n\n"), "Expected paragraph break in: {}", r.text);
+        assert!(
+            r.text.contains("\n\n"),
+            "Expected paragraph break in: {}",
+            r.text
+        );
     }
 
     #[tokio::test]
@@ -392,7 +393,7 @@ mod tests {
 
         let embedder = OrderedEmbedder {
             embeddings: std::sync::Mutex::new(
-                vec![emb_a.clone(), emb_a.clone(), emb_b.clone()].into()
+                vec![emb_a.clone(), emb_a.clone(), emb_b.clone()].into(),
             ),
         };
 
@@ -405,7 +406,11 @@ mod tests {
         let r = splitter.process(text, &ctx).await.unwrap();
 
         // Should split before "The stock market..." (topic shift)
-        assert!(r.text.contains("\n\n"), "Expected paragraph break in: {}", r.text);
+        assert!(
+            r.text.contains("\n\n"),
+            "Expected paragraph break in: {}",
+            r.text
+        );
         let parts: Vec<&str> = r.text.split("\n\n").collect();
         assert_eq!(parts.len(), 2);
     }

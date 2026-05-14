@@ -38,8 +38,8 @@ impl ParakeetAdapter {
     /// `parakeet-tdt-0.6b-v2` and the multilingual European
     /// `parakeet-tdt-0.6b-v3`.
     pub fn load(model_dir: impl AsRef<Path>) -> Result<Self, AsrError> {
-        let model = ParakeetTDT::from_pretrained(model_dir.as_ref(), None)
-            .map_err(|e| AsrError {
+        let model =
+            ParakeetTDT::from_pretrained(model_dir.as_ref(), None).map_err(|e| AsrError {
                 message: format!("failed to load ParakeetTDT model: {e}"),
             })?;
         Ok(Self {
@@ -59,14 +59,13 @@ impl ParakeetAdapter {
         model_dir: impl AsRef<Path>,
         feature_size: usize,
     ) -> Result<Self, AsrError> {
-        let model = ParakeetTDT::from_pretrained_with_feature_size(
-            model_dir.as_ref(),
-            None,
-            feature_size,
-        )
-        .map_err(|e| AsrError {
-            message: format!("failed to load ParakeetTDT model (feature_size={feature_size}): {e}"),
-        })?;
+        let model =
+            ParakeetTDT::from_pretrained_with_feature_size(model_dir.as_ref(), None, feature_size)
+                .map_err(|e| AsrError {
+                    message: format!(
+                        "failed to load ParakeetTDT model (feature_size={feature_size}): {e}"
+                    ),
+                })?;
         Ok(Self {
             model: Mutex::new(model),
         })

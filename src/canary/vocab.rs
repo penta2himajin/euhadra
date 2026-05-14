@@ -61,18 +61,12 @@ impl Vocab {
             // token on the line is always the integer id. Splitting
             // on the rightmost ASCII space keeps both halves intact.
             let split_at = raw.rfind(' ').ok_or_else(|| AsrError {
-                message: format!(
-                    "vocab line {} missing id separator: {raw:?}",
-                    line_no + 1
-                ),
+                message: format!("vocab line {} missing id separator: {raw:?}", line_no + 1),
             })?;
             let piece = &raw[..split_at];
             let id_str = &raw[split_at + 1..];
             let id: u32 = id_str.parse().map_err(|_| AsrError {
-                message: format!(
-                    "vocab line {} id is not a u32: {id_str:?}",
-                    line_no + 1
-                ),
+                message: format!("vocab line {} id is not a u32: {id_str:?}", line_no + 1),
             })?;
             if id as usize != id_to_piece.len() {
                 return Err(AsrError {
@@ -302,7 +296,11 @@ mod tests {
     fn rejects_missing_id() {
         let bad = "<unk>\n";
         let err = Vocab::from_text(bad).unwrap_err();
-        assert!(err.message.contains("missing id separator"), "{}", err.message);
+        assert!(
+            err.message.contains("missing id separator"),
+            "{}",
+            err.message
+        );
     }
 
     #[test]

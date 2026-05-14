@@ -153,9 +153,10 @@ impl CanaryEncoder {
         // The order ort gives back outputs in matches the input order
         // declared in the ONNX graph. Look up by name to be robust to
         // re-exports that swap the two.
-        let emb_idx = output_index(&outputs, ENCODER_OUTPUT_EMBEDDINGS).ok_or_else(|| AsrError {
-            message: format!("encoder missing output {ENCODER_OUTPUT_EMBEDDINGS}"),
-        })?;
+        let emb_idx =
+            output_index(&outputs, ENCODER_OUTPUT_EMBEDDINGS).ok_or_else(|| AsrError {
+                message: format!("encoder missing output {ENCODER_OUTPUT_EMBEDDINGS}"),
+            })?;
         let mask_idx = output_index(&outputs, ENCODER_OUTPUT_MASK).ok_or_else(|| AsrError {
             message: format!("encoder missing output {ENCODER_OUTPUT_MASK}"),
         })?;
@@ -194,7 +195,11 @@ impl Drop for CanaryEncoder {
 }
 
 fn validate_encoder_io(session: &Session, path: &Path) -> Result<(), AsrError> {
-    let input_names: Vec<String> = session.inputs().iter().map(|i| i.name().to_string()).collect();
+    let input_names: Vec<String> = session
+        .inputs()
+        .iter()
+        .map(|i| i.name().to_string())
+        .collect();
     if !input_names.iter().any(|n| n == ENCODER_INPUT_AUDIO) {
         return Err(AsrError {
             message: format!(
@@ -211,7 +216,11 @@ fn validate_encoder_io(session: &Session, path: &Path) -> Result<(), AsrError> {
             ),
         });
     }
-    let output_names: Vec<String> = session.outputs().iter().map(|o| o.name().to_string()).collect();
+    let output_names: Vec<String> = session
+        .outputs()
+        .iter()
+        .map(|o| o.name().to_string())
+        .collect();
     if !output_names.iter().any(|n| n == ENCODER_OUTPUT_EMBEDDINGS) {
         return Err(AsrError {
             message: format!(
@@ -299,11 +308,7 @@ mod tests {
         // Don't use `unwrap_err` (would require Debug on the Ok variant).
         match CanaryEncoder::load("/nonexistent/path/to/encoder.onnx") {
             Ok(_) => panic!("expected error, got Ok"),
-            Err(e) => assert!(
-                e.message.contains("load Canary encoder"),
-                "{}",
-                e.message
-            ),
+            Err(e) => assert!(e.message.contains("load Canary encoder"), "{}", e.message),
         }
     }
 
