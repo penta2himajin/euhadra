@@ -25,9 +25,11 @@
 //! FP32 `model.onnx` (~895 MB) is no longer shipped by the setup
 //! script (issue #59 Phase 2); INT8 CER drift on FLEURS-ko is <1pp.
 //!
-//! The model is shipped under the SenseVoice MODEL_LICENSE (CC-BY-NC
-//! 4.0); this Rust port re-implements only the inference logic and
-//! ships none of the upstream weights.
+//! The model weights ship under the FunASR Model Open Source License
+//! Agreement v1.1 — see the module docstring in `mod.rs` and
+//! `docs/model-licenses.md` for the canonical summary and attribution
+//! requirements. This Rust port re-implements only the inference
+//! logic and ships none of the upstream weights.
 
 use async_trait::async_trait;
 use ndarray::{Array1, Array3};
