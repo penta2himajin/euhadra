@@ -8,6 +8,7 @@ pub use crate::pipeline::{Pipeline, PipelineBuilder, PipelineError, SessionResul
 pub use crate::processor::{
     BasicPunctuationRestorer, ProcessResult, SelfCorrectionDetector, TextProcessor,
 };
+pub use crate::router::{AdapterRequest, AsrRouter, AsrRuntimeFactory, ModelSource, RouterError};
 pub use crate::state::StateMachine;
 pub use crate::traits::*;
 pub use crate::types::*;
