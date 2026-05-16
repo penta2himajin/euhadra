@@ -29,8 +29,10 @@
 //! from the official HuggingFace bundle.
 
 pub mod adapter;
+pub mod factory;
 pub mod metadata;
 pub mod vocab;
 
 pub use adapter::{SenseVoiceAdapter, SenseVoiceConfig};
+pub use factory::SenseVoiceFactory;
 pub use metadata::SenseVoiceMetadata;
