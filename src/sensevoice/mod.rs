@@ -20,11 +20,13 @@
 //! supports Mandarin (`zh`), Cantonese (`yue`), English (`en`), and
 //! Japanese (`ja`) — switch via `with_language("ja")` etc.
 //!
-//! The model weights ship under the FunAudioLLM SenseVoice
-//! [MODEL_LICENSE](https://github.com/FunAudioLLM/SenseVoice/blob/main/MODEL_LICENSE)
-//! (CC-BY-NC-4.0). This Rust port re-implements the inference logic
-//! and ships none of the upstream weights — `setup_sensevoice.sh`
-//! self-exports from the official HuggingFace bundle.
+//! The model weights ship under the FunASR Model Open Source
+//! License Agreement v1.1
+//! (https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE),
+//! a permissive license allowing commercial use with attribution.
+//! This Rust port re-implements the inference logic and ships none
+//! of the upstream weights — `setup_sensevoice.sh` self-exports
+//! from the official HuggingFace bundle.
 
 pub mod adapter;
 pub mod metadata;
