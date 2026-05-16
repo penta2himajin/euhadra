@@ -23,8 +23,10 @@
 //! upstream weights.
 
 pub mod adapter;
+pub mod factory;
 pub mod fbank;
 pub mod frontend;
 pub mod vocab;
 
 pub use adapter::{ParaformerAdapter, ParaformerConfig};
+pub use factory::ParaformerFactory;

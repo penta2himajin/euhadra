@@ -11,10 +11,12 @@
 
 use async_trait::async_trait;
 use parakeet_rs::{ParakeetTDT, Transcriber};
+use serde::Deserialize;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
+use crate::router::{AdapterRequest, AsrRuntimeFactory, ModelSource, RouterError};
 use crate::traits::{AsrAdapter, AsrError};
 use crate::types::{AsrResult, AudioChunk};
 
@@ -120,6 +122,132 @@ impl AsrAdapter for ParakeetAdapter {
         }
 
         Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Router factory
+// ---------------------------------------------------------------------------
+
+/// Options accepted by `ParakeetFactory` via `AdapterRequest.options`.
+///
+/// `feature_size` selects between the 128-mel (default — v2/v3) and
+/// 80-mel (ja Hybrid TDT-CTC) preprocessors. Leave unset to fall back
+/// to `ParakeetAdapter::load`'s default 128-mel path.
+#[derive(Debug, Default, Deserialize)]
+struct ParakeetOptions {
+    #[serde(default)]
+    feature_size: Option<usize>,
+}
+
+/// Router factory that builds `ParakeetAdapter` via `AsrRouter`.
+///
+/// Registered under the runtime id `"parakeet"`. The language is
+/// determined by the model variant itself — `parakeet-tdt-0.6b-v3`
+/// covers en + EU 25, the `-ja` variant is Japanese-only — so the
+/// factory does not consume `AdapterRequest.language` today. Menura's
+/// `asr_models.toml` still routes per BCP 47 tag, just by selecting
+/// different model bundles for different languages.
+pub struct ParakeetFactory;
+
+impl ParakeetFactory {
+    pub const ID: &'static str = "parakeet";
+}
+
+#[async_trait]
+impl AsrRuntimeFactory for ParakeetFactory {
+    fn id(&self) -> &'static str {
+        Self::ID
+    }
+
+    async fn instantiate(&self, req: &AdapterRequest) -> Result<Arc<dyn AsrAdapter>, RouterError> {
+        let ModelSource::LocalPath(model_dir) = &req.model_source;
+
+        let opts: ParakeetOptions = if req.options.is_null() {
+            ParakeetOptions::default()
+        } else {
+            serde_json::from_value(req.options.clone()).map_err(|e| {
+                RouterError::InvalidRequest(format!("parakeet options parse error: {e}"))
+            })?
+        };
+
+        let adapter = match opts.feature_size {
+            None => ParakeetAdapter::load(model_dir),
+            Some(fs) => ParakeetAdapter::load_with_feature_size(model_dir, fs),
+        }
+        .map_err(|e| RouterError::InstantiationFailed {
+            runtime: Self::ID.to_string(),
+            message: e.message,
+        })?;
+        Ok(Arc::new(adapter))
+    }
+}
+
+#[cfg(test)]
+mod factory_tests {
+    use super::*;
+    use crate::router::{AdapterRequest, AsrRouter, ModelSource, RouterError};
+    use serde_json::json;
+    use std::path::PathBuf;
+
+    fn req(options: serde_json::Value) -> AdapterRequest {
+        AdapterRequest {
+            language: "en".into(),
+            runtime: ParakeetFactory::ID.into(),
+            model_source: ModelSource::LocalPath(PathBuf::from("/nonexistent/parakeet/bundle")),
+            options,
+        }
+    }
+
+    #[tokio::test]
+    async fn factory_id_matches_constant() {
+        assert_eq!(ParakeetFactory.id(), "parakeet");
+    }
+
+    #[tokio::test]
+    async fn dispatch_with_missing_bundle_returns_instantiation_failed() {
+        let router = AsrRouter::new().register(ParakeetFactory);
+        match router.dispatch(req(serde_json::Value::Null)).await {
+            Err(RouterError::InstantiationFailed { runtime, .. }) => {
+                assert_eq!(runtime, "parakeet");
+            }
+            Err(other) => panic!("expected InstantiationFailed, got {other:?}"),
+            Ok(_) => panic!("expected error when bundle dir does not exist"),
+        }
+    }
+
+    #[tokio::test]
+    async fn feature_size_80_reaches_load_with_feature_size_path() {
+        let router = AsrRouter::new().register(ParakeetFactory);
+        match router.dispatch(req(json!({ "feature_size": 80 }))).await {
+            Err(RouterError::InstantiationFailed { runtime, message }) => {
+                assert_eq!(runtime, "parakeet");
+                // load_with_feature_size embeds the feature size in its
+                // failure message; this confirms we went through that path
+                // rather than the default `load`.
+                assert!(
+                    message.contains("feature_size=80"),
+                    "expected feature_size=80 in error, got: {message}"
+                );
+            }
+            Err(other) => panic!("expected InstantiationFailed, got {other:?}"),
+            Ok(_) => panic!("expected error when bundle dir does not exist"),
+        }
+    }
+
+    #[tokio::test]
+    async fn malformed_options_return_invalid_request() {
+        let router = AsrRouter::new().register(ParakeetFactory);
+        match router
+            .dispatch(req(json!({ "feature_size": "not a number" })))
+            .await
+        {
+            Err(RouterError::InvalidRequest(msg)) => {
+                assert!(msg.contains("parakeet"));
+            }
+            Err(other) => panic!("expected InvalidRequest, got {other:?}"),
+            Ok(_) => panic!("expected error for malformed options"),
+        }
     }
 }
 

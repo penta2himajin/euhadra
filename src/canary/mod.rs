@@ -23,8 +23,10 @@
 pub mod adapter;
 pub mod decoder;
 pub mod encoder;
+pub mod factory;
 pub mod frontend;
 pub(crate) mod profiling;
 pub mod vocab;
 
 pub use adapter::{CanaryAdapter, CanaryConfig};
+pub use factory::CanaryFactory;
