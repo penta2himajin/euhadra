@@ -1,7 +1,10 @@
 use async_trait::async_trait;
+use serde::Deserialize;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
+use crate::router::{AdapterRequest, AsrRuntimeFactory, ModelSource, RouterError};
 use crate::traits::{AsrAdapter, AsrError};
 use crate::types::{AsrResult, AudioChunk};
 
@@ -229,4 +232,111 @@ pub fn read_wav(path: &Path) -> Result<AudioChunk, String> {
         sample_rate,
         channels,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Router factory
+// ---------------------------------------------------------------------------
+
+/// Options accepted by `WhisperLocalFactory` via `AdapterRequest.options`.
+///
+/// The model path comes from `AdapterRequest.model_source` (the per-language
+/// artifact, e.g. `ggml-base.bin`). `cli_path` is the deployment-specific
+/// `whisper-cli` binary location, which Menura supplies once per install.
+#[derive(Debug, Deserialize)]
+struct WhisperLocalOptions {
+    cli_path: PathBuf,
+}
+
+/// Router factory that builds `WhisperLocal` adapters via `AsrRouter`.
+///
+/// Registered under the runtime id `"whisper-local"`. Menura's
+/// `asr_models.toml` should set `runtime = "whisper-local"` for any
+/// language that should be served by whisper.cpp.
+pub struct WhisperLocalFactory;
+
+impl WhisperLocalFactory {
+    pub const ID: &'static str = "whisper-local";
+}
+
+#[async_trait]
+impl AsrRuntimeFactory for WhisperLocalFactory {
+    fn id(&self) -> &'static str {
+        Self::ID
+    }
+
+    async fn instantiate(&self, req: &AdapterRequest) -> Result<Arc<dyn AsrAdapter>, RouterError> {
+        let ModelSource::LocalPath(model_path) = &req.model_source;
+
+        let opts: WhisperLocalOptions =
+            serde_json::from_value(req.options.clone()).map_err(|e| {
+                RouterError::InvalidRequest(format!(
+                    "whisper-local options must include `cli_path`: {e}"
+                ))
+            })?;
+
+        let mut adapter = WhisperLocal::new(opts.cli_path, model_path.clone());
+        if !req.language.is_empty() {
+            adapter = adapter.with_language(req.language.clone());
+        }
+        Ok(Arc::new(adapter))
+    }
+}
+
+#[cfg(test)]
+mod factory_tests {
+    use super::*;
+    use crate::router::{AdapterRequest, AsrRouter, ModelSource, RouterError};
+    use serde_json::json;
+    use std::path::PathBuf;
+
+    fn req(language: &str, options: serde_json::Value) -> AdapterRequest {
+        AdapterRequest {
+            language: language.into(),
+            runtime: WhisperLocalFactory::ID.into(),
+            model_source: ModelSource::LocalPath(PathBuf::from("/tmp/ggml-base.bin")),
+            options,
+        }
+    }
+
+    #[tokio::test]
+    async fn factory_id_matches_constant() {
+        let f = WhisperLocalFactory;
+        assert_eq!(f.id(), "whisper-local");
+    }
+
+    #[tokio::test]
+    async fn dispatch_with_cli_path_returns_adapter() {
+        let router = AsrRouter::new().register(WhisperLocalFactory);
+        let result = router
+            .dispatch(req("en", json!({ "cli_path": "/usr/bin/whisper-cli" })))
+            .await;
+        assert!(result.is_ok(), "expected Ok, got error");
+    }
+
+    #[tokio::test]
+    async fn dispatch_without_cli_path_returns_invalid_request() {
+        let router = AsrRouter::new().register(WhisperLocalFactory);
+        match router.dispatch(req("en", json!({}))).await {
+            Err(RouterError::InvalidRequest(msg)) => {
+                assert!(
+                    msg.contains("cli_path"),
+                    "error message should mention cli_path, got: {msg}"
+                );
+            }
+            Err(other) => panic!("expected InvalidRequest, got {other:?}"),
+            Ok(_) => panic!("expected error, got Ok"),
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_language_does_not_pass_language_hint() {
+        // We can't inspect WhisperLocal internals, but we can at least confirm
+        // that instantiation succeeds with an empty language field.
+        let router = AsrRouter::new().register(WhisperLocalFactory);
+        let result = router
+            .dispatch(req("", json!({ "cli_path": "/usr/bin/whisper-cli" })))
+            .await;
+        assert!(result.is_ok());
+    }
 }
