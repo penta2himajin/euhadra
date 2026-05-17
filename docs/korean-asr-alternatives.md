@@ -29,7 +29,40 @@ Current measured baseline (`docs/benchmarks/ci_baseline.json`):
 | Architecture | Encoder/decoder; 809M params; 4 decoder layers (vs 32 in large-v3) |
 | Korean reported | OpenAI's turbo announcement evaluates Korean with **CER** rather than WER but does **not publish the numeric value** for FLEURS-ko or CommonVoice-ko ([discussion #2363](https://github.com/openai/whisper/discussions/2363)). large-v3 announcement places Korean in the "10–20% error-rate reduction vs large-v2" bucket ([discussion #1762](https://github.com/openai/whisper/discussions/1762)). We have to measure it ourselves. |
 | Integration cost | **Zero**. Existing `WhisperLocal` already loads any GGML/whisper.cpp-compatible Whisper checkpoint; pointing `ko` at this model is one config line on the Menura side. |
-| Verdict | **Default candidate for immediate replacement**. License is the cleanest possible; integration cost is zero. The unknown is whether FLEURS-ko CER lands competitive vs SenseVoice's 6.32%. |
+| Verdict | **Recommended replacement for ko**. Measured FLEURS-ko CER 1.96% — better than SenseVoice's 6.64% baseline by ~3.4×. RTF in this measurement is 0.567 (FP32 PyTorch Python) but production via whisper.cpp INT5 GGML should land near 0.1–0.2 on CPU; that is still 2–4× slower than SenseVoice, but the CER win and clean MIT licence justify the trade-off for dictation use cases where accuracy dominates. See A.1 below. |
+
+#### A.1 Measured FLEURS-ko 10-utt CER + RTF (2026-05-16)
+
+Same harness as Section B.1 (CPU, 4 threads, lenient normalisation
+via `eval::metrics::cer_lenient`). turbo was loaded via `transformers`
+(FP32 PyTorch) since we don't have whisper.cpp + GGML turbo set up
+in the session container; the production `WhisperLocal` path would
+use whisper.cpp INT5 weights and be substantially faster.
+
+| Model | CER (lenient) | RTF | p50 / p95 latency | Weights size | Runtime |
+|---|---|---|---|---|---|
+| `openai/whisper-large-v3-turbo` | **1.96%** | 0.567 (FP32 Python; whisper.cpp INT5 expected ≈0.1–0.2) | 6294 / 7054 ms | ~1.6 GB FP32 | transformers + PyTorch CPU |
+| `FunAudioLLM/SenseVoiceSmall` (`ci_baseline.json`) | 6.64% | **0.047** | 540 / 776 ms | ~234 MB INT8 | euhadra `SenseVoiceAdapter` |
+
+Per-utt lenient CER for turbo: **5 / 10 utts perfect (0.0000)**,
+3 / 10 < 0.05, 2 / 10 < 0.06. The remaining drift is mostly digit
+normalisation (turbo emits `천구백사십년` for `1940년`) which the
+lenient Korean-numeral converter handles partially. Even the worst
+utt (1883) is only 5.66% CER.
+
+Caveats:
+
+- **RTF gap is real**: FP32 PyTorch turbo is ~12× slower than INT8 ONNX
+  SenseVoice in this container. Production parity is much closer:
+  whisper.cpp INT5 turbo on a recent x86 CPU benchmarks around RTF 0.1–0.2
+  (community reports), so the realistic gap is ~2–4×, not 12×.
+- **Cross-environment timings**: SenseVoice baseline was measured on a
+  CI runner; turbo here in a cloud session container. The CER side of
+  the comparison is hardware-independent.
+- **No GGML turbo bundle yet**: euhadra's `WhisperLocal` already accepts
+  any GGML Whisper checkpoint; switching `ko` to turbo just requires
+  shipping the GGML conversion (≈800 MB for `ggml-large-v3-turbo-q5_0.bin`).
+  No Rust code change.
 
 ### B. `kresnik/wav2vec2-large-xlsr-korean`
 
@@ -141,29 +174,45 @@ License cleanliness (descending):
 4. `facebook/w2v-bert-2.0` (MIT) — base only; no production Korean fine-tune yet.
 5. KsponSpeech-trained models — model licence clean but **training-data licence unconfirmed for commercial redistribution**.
 
-### Step 1 (now, 1 PR's worth of work)
+### Step 1 (done — 2026-05-16)
 
-Run a FLEURS-ko CER measurement of **Whisper-large-v3-turbo via `WhisperLocal`**, using the same 10-utterance subset that produces SenseVoice's 6.32% baseline.
+Measured Whisper-large-v3-turbo on the canonical FLEURS-ko 10-utt
+subset (see A.1). Result: **CER 1.96% vs SenseVoice 6.64%** —
+turbo wins by ~3.4× on accuracy, with RTF that is acceptable for
+production via whisper.cpp INT5 (estimated 0.1–0.2 vs SenseVoice 0.047).
 
-- If turbo CER is within ~+1 absolute pp of SenseVoice (rough parity), switch the `ko` default in Menura's `asr_models.toml` from `sensevoice` to `whisper-local` + the turbo model bundle. Keep `SenseVoiceFactory` registered but no longer mapped by default — license-clean status is achieved with zero new adapter work.
-- If turbo CER is significantly worse (≥ +3 pp), proceed to Step 2.
+**Recommendation:** switch the Menura `ko` default from `sensevoice`
+to `whisper-local` + `ggml-large-v3-turbo-q5_0.bin`. Concrete
+follow-up PR ([the "Step 1 enablement" PR][step1-enable]):
 
-The PR for this step is small: a setup script for the turbo GGML weights, an `examples/eval_l1_smoke.rs` branch, and a `ci_baseline.json` entry.
+- Add `scripts/setup_whisper_turbo.sh` to fetch the GGML turbo bundle
+  (or wire the existing `setup_whisper.sh` to accept the model id).
+- Update Menura's `asr_models.toml` to point `ko.runtime = "whisper-local"`,
+  `ko.model_source.path = ".../ggml-large-v3-turbo-q5_0.bin"`,
+  `ko.options.cli_path = ".../whisper-cli"`.
+- Optionally measure turbo via the actual `WhisperLocal` path in the
+  CI runner to get the production RTF for the `ci_baseline.json` entry.
+- Keep `SenseVoiceFactory` registered as a fallback runtime; flip
+  back if a regression appears.
+
+[step1-enable]: https://github.com/penta2himajin/euhadra/issues/83#step-1
 
 ### Step 2 (after #92 lands)
 
-Once `Wav2Vec2Adapter` (issue #92) is implemented, measure
-`kresnik/wav2vec2-large-xlsr-korean` on FLEURS-ko under the same harness.
-
-- If CER beats turbo, switch the `ko` default to `wav2vec2` + the kresnik bundle.
-- Either way, this adapter remains the recommended replacement for the Korean license-clean track because its licence chain (Apache-2.0 model + CC-BY-4.0 Zeroth) is the strictest match for euhadra's MIT/Apache-2.0 distribution policy.
+Once `Wav2Vec2Adapter` (issue #92) is implemented, **kresnik wav2vec2
+is now de-prioritised as a Korean replacement**: the measured
+CER 17.44% is too far below turbo's 1.96% to justify the switch on
+Korean alone. #92 may still be worth pursuing for other languages
+that wav2vec2 fine-tunes cover well (Thai, Javanese, Sundanese — see
+issue #83 discussion), but Korean routing should not gate on it.
 
 ### Step 3 (deferred)
 
 Revisit KsponSpeech-derived models only if AI Hub's commercial terms are
 either clarified upstream or covered by a separate written permission.
-Track `spow12/whisper-medium-zeroth_korean` and any future Korean
-Parakeet/Canary as backup paths if Steps 1–2 underperform.
+Track `spow12/whisper-medium-zeroth_korean` as a backup if turbo's
+production RTF turns out to be unacceptable. If a Korean Parakeet/Canary
+ever ships from NVIDIA, revisit via the existing factories.
 
 ## What this PR does and doesn't do
 
