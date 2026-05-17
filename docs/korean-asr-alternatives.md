@@ -182,6 +182,59 @@ The current NVIDIA Parakeet family (`parakeet-tdt-0.6b-v2` / `-v3` / `-ja`) and 
 
 Verdict: **not a 2026 candidate**. If NVIDIA releases a Korean Canary/Parakeet, revisit — the licence (CC-BY-4.0) and integration (existing `CanaryFactory` / `ParakeetFactory`) would both be straightforward.
 
+### G. Whisper-large-v3-turbo runtime backends (CPU)
+
+Once Section A.1 established turbo as the recommended ko model, the
+next question was *which inference engine* to ship it under. We
+benchmarked four candidate backends on the **same FLEURS-ko 10-utt
+subset, same 4-core Xeon @ 2.1 GHz VM, same `eval::metrics::cer_lenient`
+scorer** as Section A.1:
+
+| Path | Engine / format | weighted CER | RTF | p50 / p95 | Bundle | New deps |
+|---|---|---:|---:|---|---:|---|
+| **ORT `q4` turbo** (`whisper-onnx`) | `ort` crate on `onnx-community/whisper-large-v3-turbo` q4 export | **1.09%** ✅ | **0.484** ✅ | 5.4 / 5.7 s | ~1.1 GB | none (reuses existing `onnx` feature) |
+| CT2 FP16 turbo (`faster-whisper`) | `ct2rs` crate on `deepdml/faster-whisper-large-v3-turbo-ct2` FP16 (upcast to FP32 here) | 1.32% | 1.28 | 14.2 / 17.2 s | 1.5 GB | `ct2rs`, libctranslate2 built from source (`cmake` + C++17) |
+| whisper-rs Q4_0 GGML | `whisper-rs` crate on `ggml-large-v3-turbo-q4_0.bin` (locally quantised) | 1.74% | 1.78 | 19.7 / 20.1 s | 452 MB | `whisper-rs`, whisper.cpp built from source (`cmake` + C++) |
+| whisper-rs Q5_0 GGML | `whisper-rs` crate on `ggml-large-v3-turbo-q5_0.bin` | 1.74% | 1.99 | 22.1 / 22.4 s | 547 MB | `whisper-rs`, whisper.cpp built from source |
+| whisper.cpp Q5_0 subprocess | existing `WhisperLocal` adapter, `whisper-cli` subprocess (A.1 baseline) | 1.52% | 2.03 | 22.7 / 24.8 s | 547 MB | external `whisper-cli` binary at runtime |
+
+For context (Section A.1 reference rows):
+
+| | CER | RTF |
+|---|---:|---:|
+| SenseVoice INT8 ONNX (`ci_baseline.json`) | 6.64% | 0.047 |
+| transformers FP32 turbo (Python, sanity ref) | 1.96% | 0.567 |
+| ORT INT8 turbo | **broken (260%+)** | 0.255 |
+
+#### Findings
+
+- **ORT `q4` wins both axes.** CER 0.23 pp better than CT2, RTF 2.6× faster. CER 0.65 pp better than whisper-rs Q4_0, RTF 3.7× faster.
+- **No new system deps for ORT.** Reuses the existing `onnx` feature gate that already ships `ort`, `tokenizers`, `ndarray`, `rustfft`. CT2 and whisper-rs both pull in a `cmake` + C++17 build step.
+- **Q4_0 quantisation matters more than process model.** GGML Q4_0 vs Q5_0 (same in-process whisper-rs path) shaved ~10% off RTF with no CER loss. In-process vs subprocess on Q5_0 (whisper-rs vs whisper-cli) was a wash — subprocess startup wasn't the bottleneck on this VM.
+- **INT8 of turbo via ORT is broken.** The decoder collapses into repeating-token hallucinations after a few autoregressive steps (`"일 일 일 일 일 …"`). Use `q4` instead. (CT2 INT8 would likely be fine because CT2 internally upcasts where needed; we did not test CT2 INT8 in this session.)
+- **Container hardware is pessimistic.** The shared 4-core Xeon @ 2.1 GHz VM has no FP16 acceleration and modest single-core perf. Apple M-series / modern Ryzen would run all four paths several times faster; the ranking between them is what we should generalise, not the absolute RTF.
+
+#### Decision
+
+Use the **`whisper-onnx` runtime (ORT q4 turbo)** as the production
+Korean default. PR #105 ships the integration shape (factory + session
+loading + KV-cache schema discovery + tests) under the existing `onnx`
+feature; the autoregressive decode loop is a focused follow-up
+(~400-600 LOC of `ndarray` + `ort` plumbing — see the `transcribe_samples`
+module docs in `src/whisper_onnx.rs` for the loop sketch).
+
+The two sibling-path PRs explored as part of the same investigation
+were closed in favour of ORT q4:
+
+- **PR #103 (`whisper-rs` Q4_0 GGML)** — closed. Reusable as a fallback
+  if a future deployment target needs whisper.cpp specifically (e.g.
+  GPU offload via whisper.cpp's CUDA/Metal backends).
+- **PR #104 (CTranslate2 / `ct2rs`)** — closed. Reusable if INT8 quantised
+  CT2 bundles become available and benchmark closer to / above ORT q4
+  on production hardware.
+
+[#105]: https://github.com/penta2himajin/euhadra/pull/105
+
 ## Verdict and recommended sequencing
 
 License cleanliness (descending):
@@ -196,24 +249,37 @@ License cleanliness (descending):
 
 Measured Whisper-large-v3-turbo on the canonical FLEURS-ko 10-utt
 subset (see A.1). Result: **CER 1.96% vs SenseVoice 6.64%** —
-turbo wins by ~3.4× on accuracy, with RTF that is acceptable for
-production via whisper.cpp INT5 (estimated 0.1–0.2 vs SenseVoice 0.047).
+turbo wins by ~3.4× on accuracy.
+
+### Step 1.5 (done — 2026-05-17)
+
+Compared four CPU inference backends for the chosen turbo model
+(see G). Result: **ORT `q4` is both the most accurate (CER 1.09%)
+and the fastest (RTF 0.484) Whisper backend on x86 CPU**, and reuses
+the existing `onnx` feature gate with no new system deps.
 
 **Recommendation:** switch the Menura `ko` default from `sensevoice`
-to `whisper-local` + `ggml-large-v3-turbo-q5_0.bin`. Concrete
-follow-up PR ([the "Step 1 enablement" PR][step1-enable]):
+to **`whisper-onnx`** (runtime id, PR #105) + the
+`onnx-community/whisper-large-v3-turbo` q4 bundle. Concrete
+follow-up work:
 
-- Add `scripts/setup_whisper_turbo.sh` to fetch the GGML turbo bundle
-  (or wire the existing `setup_whisper.sh` to accept the model id).
-- Update Menura's `asr_models.toml` to point `ko.runtime = "whisper-local"`,
-  `ko.model_source.path = ".../ggml-large-v3-turbo-q5_0.bin"`,
-  `ko.options.cli_path = ".../whisper-cli"`.
-- Optionally measure turbo via the actual `WhisperLocal` path in the
-  CI runner to get the production RTF for the `ci_baseline.json` entry.
-- Keep `SenseVoiceFactory` registered as a fallback runtime; flip
-  back if a regression appears.
-
-[step1-enable]: https://github.com/penta2himajin/euhadra/issues/83#step-1
+- Complete the autoregressive decode loop in `src/whisper_onnx.rs`'s
+  `transcribe_samples` (mel → encoder → first decoder pass → KV-cache
+  loop → detokenise). The Python POC at `/tmp/ko_bench_ort_direct.py`
+  in the session container is the reference implementation; the
+  module docs sketch the steps. Estimated ~400-600 LOC of `ort` +
+  `ndarray` + `tokenizers` + `rustfft` plumbing, all of which are
+  already euhadra deps under the `onnx` feature.
+- Add `scripts/setup_whisper_onnx_turbo.sh` to fetch the q4 bundle
+  (`encoder_model_q4.onnx` + `decoder_model_q4.onnx` +
+  `decoder_with_past_model_q4.onnx` + `tokenizer.json` etc.,
+  ~1.1 GB total) from `onnx-community/whisper-large-v3-turbo`.
+- Update Menura's `asr_models.toml` to point `ko.runtime = "whisper-onnx"`,
+  `ko.model_source.path = "/models/whisper-onnx-turbo"`.
+- Optionally measure via the production `WhisperOnnxAdapter` once the
+  decode loop is in to refresh the `ci_baseline.json` ko entry.
+- Keep `SenseVoiceFactory` registered as a fallback runtime; flip back
+  if a regression appears.
 
 ### Step 2 (after #92 lands)
 
