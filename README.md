@@ -189,8 +189,32 @@ cargo build --features onnx
 This enables:
 - `OnnxEmbeddingFilter` — embedding-based filler detection (replaces Python script)
 - `OnnxPunctuationRestorer` — CNN-BiLSTM punctuation + capitalization model
+- `WhisperOnnxAdapter` — Whisper-large-v3-turbo ASR via ONNX Runtime (encoder + KV-cached decoder loop). Best CER+RTF for Korean on CPU per the [#83 backend bench](docs/korean-asr-alternatives.md): 1.09% / 0.484 on FLEURS-ko with the `q4` quantisation.
 
 Without the `onnx` feature, euhadra uses rule-based implementations with zero ML dependencies.
+
+### Whisper-ONNX setup
+
+```bash
+# Downloads tokenizer + q4 ONNX bundle (~900 MB) into vendor/whisper_onnx_turbo
+scripts/setup_whisper_onnx_turbo.sh
+
+# Use as the ASR stage
+cargo run --release --features onnx --example bench_whisper_onnx_ko -- \
+    --model-dir vendor/whisper_onnx_turbo \
+    --manifest data/fleurs_subset/ko/manifest.tsv \
+    --audio-root data/fleurs_subset
+```
+
+From Rust:
+
+```rust
+use euhadra::whisper_onnx::WhisperOnnxAdapter;
+
+let asr = WhisperOnnxAdapter::load("vendor/whisper_onnx_turbo")?
+    .with_language("ko");
+// ...then pass `asr` into PipelineBuilder::asr().
+```
 
 ## Architecture
 
