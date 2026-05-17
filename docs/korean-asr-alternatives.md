@@ -42,9 +42,51 @@ Current measured baseline (`docs/benchmarks/ci_baseline.json`):
 | Korean reported | **Zeroth-Korean test set: WER 4.74% / CER 1.78%**. No FLEURS-ko or CommonVoice-ko numbers in the model card. |
 | Last update | 2024-10-31 (active) |
 | Integration cost | **Needs the still-unbuilt `Wav2Vec2Adapter` (issue [#92] / #F)** — wav2vec2 CTC decode + tokenizer wiring. The factory shape we already merged in PR #101 stays unchanged; only a new runtime id `"wav2vec2"` is added. |
-| Verdict | **Best long-term candidate when #92 lands**. Both the model and the corpus are unambiguously commercial-friendly. Need to measure FLEURS-ko to confirm it stays competitive on read speech (Zeroth ↔ FLEURS shift is real). |
+| Verdict | **Not competitive on FLEURS-ko under this measurement** — see below. License remains the cleanest of the candidates, but the accuracy and latency gap relative to SenseVoice is too wide to justify the adapter work in #92 on Korean-only grounds. (#92 may still be worth implementing for the other languages that wav2vec2 fine-tunes cover well — Thai, Javanese, Sundanese — see issue [#83] discussion.) |
 
 [#92]: https://github.com/penta2himajin/euhadra/issues/92
+
+#### B.1 Measured FLEURS-ko 10-utt CER + RTF (2026-05-16)
+
+Bench run inside the standard cloud session container (CPU, 4 threads),
+on the same 10 FLEURS-ko utterances that drive the L1 baseline. kresnik
+was loaded via `transformers` (FP32, PyTorch) since `Wav2Vec2Adapter` is
+not yet implemented. SenseVoice's number is the canonical baseline from
+`docs/benchmarks/ci_baseline.json` (measured via euhadra's own
+`SenseVoiceAdapter`, INT8 ONNX) — the cleanest reference available.
+A direct sherpa-onnx Python wrapper of SenseVoice was attempted in the
+same env, but it returned truncated / empty / hallucinated text on
+several utts (a known reliability gap of the Python wrapper for
+SenseVoice mode) so it is not used as the comparison number.
+
+CER is computed with euhadra's `eval::metrics::cer_lenient` so both
+sides see identical text normalisation (Korean numeral conversion,
+punctuation stripping, whitespace collapsing).
+
+| Model | CER (lenient) | RTF | p50 / p95 latency | Weights size | Runtime |
+|---|---|---|---|---|---|
+| `kresnik/wav2vec2-large-xlsr-korean` | **17.44%** | **0.118** | 1390 / 2185 ms | ~1.3 GB FP32 | transformers + PyTorch CPU |
+| `FunAudioLLM/SenseVoiceSmall` (`ci_baseline.json`) | **6.64%** | **0.047** | 540 / 776 ms | ~234 MB INT8 | euhadra `SenseVoiceAdapter` |
+
+Read: kresnik is **~2.6× worse on CER and ~2.5× slower on RTF** on this
+test set. Caveats and what they would change:
+
+- **Quantisation gap**: kresnik is FP32; SenseVoice is INT8 ONNX.
+  Exporting kresnik to ONNX + INT8 would likely halve its RTF and drift
+  CER by ≤0.5 pp. Even at the best end of that range, kresnik would
+  still be ~1.2× slower and ~10pp worse than SenseVoice.
+- **Cross-environment timings**: SenseVoice RTF was measured on a CI
+  runner, kresnik in this container. The CER side of the comparison
+  is independent of the host.
+- **Domain shift**: kresnik's own model card reports Zeroth-Korean CER
+  1.78% (very narrow, easy read-speech corpus); on FLEURS-ko (more
+  varied read speech) the CER inflates to 17.44%. This is consistent
+  with prior reports of XLSR transfer brittleness across Korean corpora.
+
+The bench script and full per-utt transcripts are kept at
+`/tmp/ko_bench_final.py` / `/tmp/ko_bench_result.json` in the session
+container; they are not committed to the repo because they depend on
+ephemeral model downloads.
 
 ### C. `facebook/w2v-bert-2.0` + community Korean fine-tunes
 
