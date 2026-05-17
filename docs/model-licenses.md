@@ -29,6 +29,12 @@ license body.
 | `funasr/Paraformer-large` | `Apache-2.0` (per HF mirror — see note ¹) | <https://huggingface.co/funasr/Paraformer-large> (model-card YAML: `license: apache-2.0`) | <https://www.apache.org/licenses/LICENSE-2.0.txt> |
 | `FunAudioLLM/SenseVoiceSmall` | `LicenseRef-FunASR-MODEL-LICENSE-1.1` (HF declares `license: other`, `license_link` points at the file below) | <https://huggingface.co/FunAudioLLM/SenseVoiceSmall> (model-card YAML: `license: other`, `license_name: model-license`, `license_link: …/FunASR/MODEL_LICENSE`) | <https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE> |
 
+The SenseVoice licence posture is the subject of issue [#83] — a research
+log of license-clean Korean ASR alternatives lives at
+[`korean-asr-alternatives.md`](./korean-asr-alternatives.md).
+
+[#83]: https://github.com/penta2himajin/euhadra/issues/83
+
 **¹** Note on Paraformer-large: The FunASR project's repository README
 states that "the use of pretraining model is subject to the
 [model license](https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE)"
