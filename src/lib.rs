@@ -28,3 +28,6 @@ pub mod canary;
 
 #[cfg(feature = "onnx")]
 pub mod sensevoice;
+
+#[cfg(feature = "whisper-rs")]
+pub mod whisper_rs;

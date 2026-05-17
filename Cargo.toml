@@ -36,9 +36,17 @@ parakeet-rs = { git = "https://github.com/penta2himajin/parakeet-rs", branch = "
 # Optional + onnx-gated so the default build stays lean.
 rustfft = { version = "6", optional = true }
 
+# In-process whisper.cpp bindings. Replaces the subprocess `whisper-cli`
+# path of `WhisperLocal` with a Rust-callable inference loop; ships GGML
+# kernels alongside the crate so no external binary is required. Builds
+# the C/C++ portions from source, so consumers need `cmake` + a C++
+# compiler available when this feature is enabled.
+whisper-rs = { version = "0.14", optional = true }
+
 [features]
 default = []
 onnx = ["dep:ort", "dep:ndarray", "dep:tokenizers", "dep:parakeet-rs", "dep:rustfft"]
+whisper-rs = ["dep:whisper-rs"]
 
 [[bin]]
 name = "euhadra"
@@ -50,6 +58,12 @@ path = "src/main.rs"
 [[example]]
 name = "dump_canary_rust_tensors"
 required-features = ["onnx"]
+
+# Throwaway FLEURS-ko bench driver for the whisper-rs adapter
+# (issue #83 measurement work).
+[[example]]
+name = "bench_whisper_rs_ko"
+required-features = ["whisper-rs"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
