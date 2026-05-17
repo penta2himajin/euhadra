@@ -51,6 +51,13 @@ path = "src/main.rs"
 name = "dump_canary_rust_tensors"
 required-features = ["onnx"]
 
+# WhisperOnnxAdapter smoke bench on FLEURS-ko. Same 10-utt set the
+# #83 measurement session ran against the Python POC, so we can
+# directly compare the Rust port's CER + RTF against POC numbers.
+[[example]]
+name = "bench_whisper_onnx_ko"
+required-features = ["onnx"]
+
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
 async-trait = "0.1"
