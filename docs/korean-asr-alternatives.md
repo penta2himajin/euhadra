@@ -260,26 +260,27 @@ the existing `onnx` feature gate with no new system deps.
 
 **Recommendation:** switch the Menura `ko` default from `sensevoice`
 to **`whisper-onnx`** (runtime id, PR #105) + the
-`onnx-community/whisper-large-v3-turbo` q4 bundle. Concrete
-follow-up work:
+`onnx-community/whisper-large-v3-turbo` q4 bundle.
 
-- Complete the autoregressive decode loop in `src/whisper_onnx.rs`'s
-  `transcribe_samples` (mel → encoder → first decoder pass → KV-cache
-  loop → detokenise). The Python POC at `/tmp/ko_bench_ort_direct.py`
-  in the session container is the reference implementation; the
-  module docs sketch the steps. Estimated ~400-600 LOC of `ort` +
-  `ndarray` + `tokenizers` + `rustfft` plumbing, all of which are
-  already euhadra deps under the `onnx` feature.
-- Add `scripts/setup_whisper_onnx_turbo.sh` to fetch the q4 bundle
-  (`encoder_model_q4.onnx` + `decoder_model_q4.onnx` +
-  `decoder_with_past_model_q4.onnx` + `tokenizer.json` etc.,
-  ~1.1 GB total) from `onnx-community/whisper-large-v3-turbo`.
-- Update Menura's `asr_models.toml` to point `ko.runtime = "whisper-onnx"`,
-  `ko.model_source.path = "/models/whisper-onnx-turbo"`.
-- Optionally measure via the production `WhisperOnnxAdapter` once the
-  decode loop is in to refresh the `ci_baseline.json` ko entry.
-- Keep `SenseVoiceFactory` registered as a fallback runtime; flip back
-  if a regression appears.
+Concrete follow-up work, with status as of this writing:
+
+- **Done (PR #106).** Autoregressive decode loop in
+  `src/whisper_onnx/adapter.rs`'s `transcribe_samples` (mel → encoder
+  → first decoder pass → KV-cache loop → detokenise). End-to-end
+  bench reproduced the POC numbers (CER 0.95 % via `cer_lenient`).
+- **Done (PR #107).** `scripts/setup_whisper_onnx_turbo.sh` fetches
+  the q4 bundle (~900 MB) from `onnx-community/whisper-large-v3-turbo`,
+  README + `docs/model-licenses.md` updated.
+- **Done (this PR).** L1 eval routes `ko` through `WhisperOnnxAdapter`
+  via a new `--whisper-onnx-ko-dir` flag; `.github/workflows/ci.yml`
+  caches the bundle and passes the flag; `ci_baseline.json` ko entry
+  refreshed (CER 0.0664 → 0.0095, the SenseVoice → WhisperOnnx swap).
+  `--sensevoice-dir` is still supported as a fallback but is no longer
+  exercised by CI.
+- **Pending.** Update Menura's `asr_models.toml` to point
+  `ko.runtime = "whisper-onnx"`,
+  `ko.model_source.path = "/models/whisper-onnx-turbo"`. Out of scope
+  for this PR (separate repo).
 
 ### Step 2 (after #92 lands)
 

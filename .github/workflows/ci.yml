@@ -74,30 +74,30 @@ jobs:
         run: cargo clippy --features onnx --all-targets --locked -- -D warnings
 
   # L1 ASR live smoke (§1.1 / §3.8): runs Canary-180M-Flash (en + es),
-  # Parakeet (ja), Paraformer-large (zh), SenseVoice-Small (ko), and
-  # whisper-tiny (fallback) on a 10-utterance FLEURS subset per
-  # language, measures WER/CER + ASR/E2E latency + RTF, and gates
+  # Parakeet (ja), Paraformer-large (zh), Whisper-large-v3-turbo ONNX
+  # (ko), and whisper-tiny (fallback) on a 10-utterance FLEURS subset
+  # per language, measures WER/CER + ASR/E2E latency + RTF, and gates
   # against docs/benchmarks/ci_baseline.json. All large artefacts
   # (whisper.cpp build, GGML models, FLEURS subset, parakeet-ja
   # ONNX bundle, paraformer-zh ONNX bundle, canary en + es ONNX
-  # bundles, sensevoice ONNX bundle) are cached so warm runs finish
-  # in a couple of minutes.
+  # bundles, whisper-onnx-turbo ONNX bundle) are cached so warm
+  # runs finish in a couple of minutes.
   # Parakeet-ja replaced whisper-tiny for `ja` in PR #11 (CER 42% → 3.3%).
   # Parakeet-v3 replaced whisper-tiny.en for `en` in PR #12 (WER 8.4% → 7.5%),
   # then Canary-180M-Flash INT8 replaced Parakeet-v3 for `en` in
   # PR #61 / issue #57 (WER 7.5% → 4.4%, ~2.4 GB → ~213 MB).
   # Paraformer-large replaced whisper-tiny for `zh` in PR #14
   # (CER 37% → ~5%; baseline numbers recalibrated in a follow-up commit).
-  # SenseVoice-Small added `ko` in PR #45 — first run after merge has
-  # no baseline entry and emits a warn (not fail); the baseline is
-  # back-filled with the measured numbers in a follow-up commit.
+  # SenseVoice-Small added `ko` in PR #45, then Whisper-large-v3-turbo
+  # ONNX (q4) replaced SenseVoice for `ko` in PR #106 / issue #83
+  # (CER 6.64% → 0.95%, no Python deps, same `onnx` feature gate).
   evaluate-asr:
     name: evaluate (ASR live smoke)
     runs-on: ubuntu-latest
-    # Warm-cache runs finish in ~4 min, but a cold SenseVoice export
-    # (cache miss after a key bump) alone takes ~27 min on
-    # ubuntu-latest. 45 min gives enough headroom to survive a cold
-    # run plus the eval itself; subsequent runs hit cache and exit
+    # Warm-cache runs finish in ~4 min. The cold Whisper-ONNX-Turbo
+    # download is curl-only (~900 MB), much faster than the legacy
+    # SenseVoice self-export. 45 min still gives enough headroom for
+    # a fully cold run (whisper.cpp + GGML + ONNX bundles); subsequent runs hit cache and exit
     # well under the original 30 min budget.
     timeout-minutes: 45
     steps:
@@ -225,76 +225,26 @@ jobs:
         env:
           CANARY_DIR: vendor/canary_en
 
-      # SenseVoice-Small ONNX bundle (~1.1 GB total: ~895 MB FP32 +
-      # ~234 MB INT8 + sidecars). Self-exported from the official
-      # `iic/SenseVoiceSmall` HuggingFace repo via FunASR — no
-      # third-party pre-export. The cache key is bumped whenever the
-      # bundle layout changes; warm runs skip the heavy Python deps
-      # entirely.
-      - name: Cache sensevoice ONNX bundle (~234 MB INT8)
-        id: sensevoice-cache
+      # Whisper-large-v3-turbo ONNX bundle for ko (~900 MB total:
+      # tokenizer.json + 3 quantised ONNX files at `q4`). Direct
+      # download from the `onnx-community/whisper-large-v3-turbo`
+      # HuggingFace mirror — no re-export, no Python deps. Replaces
+      # the SenseVoice-Small slot we used to ship; the #83 bench
+      # measured CER 1.09% vs SenseVoice's 6.64% on FLEURS-ko.
+      - name: Cache whisper-onnx-turbo ko bundle (~900 MB, q4)
+        id: whisper-onnx-cache
         uses: actions/cache@v4
         with:
-          path: vendor/sensevoice
-          # v2 drops FP32 `model.onnx` (~660 MB savings) — issue #59 Phase 2.
-          key: sensevoice-small-funaudiollm-int8-v2
+          path: vendor/whisper_onnx_turbo
+          key: whisper-large-v3-turbo-onnx-q4-v1
 
-      - name: Install Python deps for SenseVoice export (cache miss only)
-        if: steps.sensevoice-cache.outputs.cache-hit != 'true'
-        run: |
-          # FunASR's runtime imports torchaudio at module scope, so it
-          # must be installed alongside torch (CPU wheels). libsndfile1
-          # backs torchaudio's audio I/O and isn't always preinstalled
-          # on minimal images. `onnxscript` is required by torch >= 2.5's
-          # ONNX exporter at runtime.
-          #
-          # torch is pinned to <2.5 (CPU wheels) because the 2.5+ ONNX
-          # exporter emits a `Less` op with mismatched int64/float
-          # operands inside the SenseVoice graph — onnxruntime then
-          # refuses to load with `Type Error: Type parameter (T) of
-          # Optype (Less) bound to different types`. The 2.4.x series
-          # exporter handles the same model cleanly. Once upstream
-          # funasr / sensevoice fix the export graph, the pin can be
-          # dropped.
-          #
-          # Drop --quiet so any resolver / build error surfaces in CI
-          # logs.
-          sudo apt-get install -y --no-install-recommends libsndfile1
-          python3 -m pip install --upgrade pip
-          python3 -m pip install \
-            --extra-index-url https://download.pytorch.org/whl/cpu \
-            'torch<2.5' 'torchaudio<2.5'
-          python3 -m pip install \
-            funasr modelscope onnx onnxruntime onnxscript sentencepiece
-
-      - name: Verify Python deps importable (cache miss only)
-        if: steps.sensevoice-cache.outputs.cache-hit != 'true'
-        run: |
-          python3 - <<'PY'
-          import sys
-          mods = ["torch", "torchaudio", "onnx", "onnxruntime",
-                  "sentencepiece", "modelscope", "funasr"]
-          failed = []
-          for m in mods:
-              try:
-                  mod = __import__(m)
-                  print(f"[ok] import {m} (version: {getattr(mod, '__version__', 'unknown')})")
-              except Exception as e:  # noqa: BLE001
-                  print(f"[FAIL] import {m}: {type(e).__name__}: {e}", file=sys.stderr)
-                  failed.append(m)
-          if failed:
-              print(f"\n[error] {len(failed)} module(s) failed to import: {failed}",
-                    file=sys.stderr)
-              sys.exit(1)
-          PY
-
-      - name: Self-export SenseVoice ONNX (cache miss only)
-        if: steps.sensevoice-cache.outputs.cache-hit != 'true'
-        run: bash scripts/setup_sensevoice.sh
+      - name: Download whisper-onnx-turbo (cache miss only)
+        if: steps.whisper-onnx-cache.outputs.cache-hit != 'true'
+        run: bash scripts/setup_whisper_onnx_turbo.sh
         env:
-          SENSEVOICE_DIR: vendor/sensevoice
+          WHISPER_ONNX_DIR: vendor/whisper_onnx_turbo
 
-      - name: Build eval binary (with onnx for Parakeet/Paraformer/Canary/SenseVoice adapters)
+      - name: Build eval binary (with onnx for Parakeet/Paraformer/Canary/WhisperOnnx adapters)
         run: cargo build --release --example eval_l1_smoke --features onnx --locked
 
       - name: Prepare ORT profile output dir
@@ -328,7 +278,7 @@ jobs:
             --parakeet-ja-dir vendor/parakeet_ja \
             --paraformer-zh-dir vendor/paraformer_zh \
             --canary-es-dir vendor/canary_es \
-            --sensevoice-dir vendor/sensevoice \
+            --whisper-onnx-ko-dir vendor/whisper_onnx_turbo \
             --langs en,ja,zh,es,ko \
             --baseline docs/benchmarks/ci_baseline.json \
             --dump-utterances

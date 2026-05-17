@@ -39,6 +39,8 @@ use euhadra::prelude::*;
 #[cfg(feature = "onnx")]
 use euhadra::sensevoice::{SenseVoiceAdapter, SenseVoiceConfig};
 use euhadra::whisper_local::{read_wav, WhisperLocal};
+#[cfg(feature = "onnx")]
+use euhadra::whisper_onnx::{WhisperOnnxAdapter, WhisperOnnxConfig};
 
 #[derive(Parser, Debug)]
 #[command(about = "L1 smoke: FLEURS subset → ASR → pipeline → WER/CER + latency")]
@@ -124,8 +126,24 @@ struct Cli {
     /// upstream model reports Korean CER far below whisper-tiny's
     /// multilingual baseline. Requires `--features onnx` at build
     /// time. Populate via `scripts/setup_sensevoice.sh`.
+    ///
+    /// Superseded by `--whisper-onnx-ko-dir` — when both flags are provided
+    /// the eval prefers the whisper-onnx route (issue #83 bench: CER 1.09 %
+    /// vs SenseVoice's 6.64 % on FLEURS-ko).
     #[arg(long, env = "SENSEVOICE_DIR")]
     sensevoice_dir: Option<PathBuf>,
+
+    /// Optional path to an `onnx-community/whisper-large-v3-turbo` bundle
+    /// (the layout `scripts/setup_whisper_onnx_turbo.sh` produces:
+    /// `tokenizer.json` + `onnx/encoder_model_q4.onnx` +
+    /// `onnx/decoder_model_q4.onnx` + `onnx/decoder_with_past_model_q4.onnx`).
+    /// When provided, the `ko` language is run through `WhisperOnnxAdapter` —
+    /// the issue #83 bench measured CER 1.09 % / RTF 0.484 on FLEURS-ko,
+    /// best in class across the four backends evaluated (SenseVoice INT8,
+    /// CT2 FP16, whisper-rs Q4_0, ORT q4). Takes precedence over
+    /// `--sensevoice-dir` when both are present. Requires `--features onnx`.
+    #[arg(long, env = "WHISPER_ONNX_KO_DIR")]
+    whisper_onnx_ko_dir: Option<PathBuf>,
 
     /// Print every utterance's reference / hypothesis / per-utterance
     /// WER + CER as the smoke runs. Useful when chasing residual
@@ -187,6 +205,7 @@ async fn run() -> Result<(), String> {
     let mut used_canary_en = false;
     let mut used_paraformer_zh = false;
     let mut used_sensevoice_ko = false;
+    let mut used_whisper_onnx_ko = false;
 
     for lang in &cli.langs {
         let manifest = load_manifest(&cli.data_dir, lang)
@@ -214,6 +233,7 @@ async fn run() -> Result<(), String> {
             cli.canary_es_dir.as_deref(),
             cli.canary_en_dir.as_deref(),
             cli.sensevoice_dir.as_deref(),
+            cli.whisper_onnx_ko_dir.as_deref(),
         )?;
         if lang == "ja" && cli.parakeet_ja_dir.is_some() {
             used_parakeet_ja = true;
@@ -224,7 +244,9 @@ async fn run() -> Result<(), String> {
         if lang == "zh" && cli.paraformer_zh_dir.is_some() {
             used_paraformer_zh = true;
         }
-        if lang == "ko" && cli.sensevoice_dir.is_some() {
+        if lang == "ko" && cli.whisper_onnx_ko_dir.is_some() {
+            used_whisper_onnx_ko = true;
+        } else if lang == "ko" && cli.sensevoice_dir.is_some() {
             used_sensevoice_ko = true;
         }
 
@@ -260,7 +282,9 @@ async fn run() -> Result<(), String> {
         } else {
             "ggml-tiny"
         },
-        ko_model = if used_sensevoice_ko {
+        ko_model = if used_whisper_onnx_ko {
+            "whisper-large-v3-turbo-q4"
+        } else if used_sensevoice_ko {
             "sensevoice-small"
         } else {
             "ggml-tiny"
@@ -475,6 +499,7 @@ fn build_pipeline(
     canary_es_dir: Option<&Path>,
     canary_en_dir: Option<&Path>,
     sensevoice_dir: Option<&Path>,
+    whisper_onnx_ko_dir: Option<&Path>,
 ) -> Result<Pipeline, String> {
     // Build the post-ASR stack first; ASR is bolted on per-language
     // because its concrete type depends on the model choice.
@@ -530,6 +555,18 @@ fn build_pipeline(
             #[cfg(not(feature = "onnx"))]
             {
                 return Err("--paraformer-zh-dir requires --features onnx at build time".into());
+            }
+        }
+        "ko" if whisper_onnx_ko_dir.is_some() => {
+            #[cfg(feature = "onnx")]
+            {
+                let dir = whisper_onnx_ko_dir.unwrap();
+                let asr = load_whisper_onnx_ko_adapter(dir)?;
+                builder.asr(asr)
+            }
+            #[cfg(not(feature = "onnx"))]
+            {
+                return Err("--whisper-onnx-ko-dir requires --features onnx at build time".into());
             }
         }
         "ko" if sensevoice_dir.is_some() => {
@@ -626,6 +663,19 @@ fn load_sensevoice_adapter(dir: &Path) -> Result<SenseVoiceAdapter, String> {
         .map_err(|e| format!("load sensevoice from {}: {e}", dir.display()))?
         .with_language("ko");
     Ok(adapter)
+}
+
+// Whisper-large-v3-turbo ONNX ko loader. Defaults to the `q4` quant
+// variant — the #83 bench found `int8` collapses on the autoregressive
+// decoder while `q4` gives CER 1.09% / RTF 0.484 on FLEURS-ko.
+#[cfg(feature = "onnx")]
+fn load_whisper_onnx_ko_adapter(dir: &Path) -> Result<WhisperOnnxAdapter, String> {
+    let cfg = WhisperOnnxConfig {
+        language: Some("ko".to_string()),
+        ..Default::default()
+    };
+    WhisperOnnxAdapter::load_with_config(dir, cfg)
+        .map_err(|e| format!("load whisper-onnx ko from {}: {e}", dir.display()))
 }
 
 fn print_language_result(lang: &str, r: &LanguageBaseline) {
