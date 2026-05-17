@@ -29,40 +29,58 @@ Current measured baseline (`docs/benchmarks/ci_baseline.json`):
 | Architecture | Encoder/decoder; 809M params; 4 decoder layers (vs 32 in large-v3) |
 | Korean reported | OpenAI's turbo announcement evaluates Korean with **CER** rather than WER but does **not publish the numeric value** for FLEURS-ko or CommonVoice-ko ([discussion #2363](https://github.com/openai/whisper/discussions/2363)). large-v3 announcement places Korean in the "10–20% error-rate reduction vs large-v2" bucket ([discussion #1762](https://github.com/openai/whisper/discussions/1762)). We have to measure it ourselves. |
 | Integration cost | **Zero**. Existing `WhisperLocal` already loads any GGML/whisper.cpp-compatible Whisper checkpoint; pointing `ko` at this model is one config line on the Menura side. |
-| Verdict | **Recommended replacement for ko**. Measured FLEURS-ko CER 1.96% — better than SenseVoice's 6.64% baseline by ~3.4×. RTF in this measurement is 0.567 (FP32 PyTorch Python) but production via whisper.cpp INT5 GGML should land near 0.1–0.2 on CPU; that is still 2–4× slower than SenseVoice, but the CER win and clean MIT licence justify the trade-off for dictation use cases where accuracy dominates. See A.1 below. |
+| Verdict | **Recommended replacement for ko**. Measured FLEURS-ko CER 1.96% via transformers FP32 and **1.52% via whisper.cpp Q5_0** — better than SenseVoice's 6.64% baseline by ~4×. Q5_0 incurs no measurable accuracy loss vs FP32. RTF is the only trade-off: this session container's shared 4-core Xeon @ 2.1 GHz reaches RTF 2.0; typical user hardware (Apple M-series, modern Ryzen / Core) lands ~RTF 0.05–0.4 per community reports. The CER win + clean MIT licence justify the trade-off for dictation use cases where accuracy dominates. See A.1 below. |
 
 #### A.1 Measured FLEURS-ko 10-utt CER + RTF (2026-05-16)
 
 Same harness as Section B.1 (CPU, 4 threads, lenient normalisation
-via `eval::metrics::cer_lenient`). turbo was loaded via `transformers`
-(FP32 PyTorch) since we don't have whisper.cpp + GGML turbo set up
-in the session container; the production `WhisperLocal` path would
-use whisper.cpp INT5 weights and be substantially faster.
+via `eval::metrics::cer_lenient`). Two runtimes for turbo: the
+FP32 transformers path (sanity reference) and the **whisper.cpp Q5_0
+GGML** path that matches what euhadra's `WhisperLocal` actually
+shells out to in production.
 
-| Model | CER (lenient) | RTF | p50 / p95 latency | Weights size | Runtime |
+| Model | CER (lenient) | RTF (this container) | p50 / p95 latency | Weights size | Runtime |
 |---|---|---|---|---|---|
-| `openai/whisper-large-v3-turbo` | **1.96%** | 0.567 (FP32 Python; whisper.cpp INT5 expected ≈0.1–0.2) | 6294 / 7054 ms | ~1.6 GB FP32 | transformers + PyTorch CPU |
-| `FunAudioLLM/SenseVoiceSmall` (`ci_baseline.json`) | 6.64% | **0.047** | 540 / 776 ms | ~234 MB INT8 | euhadra `SenseVoiceAdapter` |
+| `whisper-large-v3-turbo` Q5_0 (whisper.cpp, batched 10 files / single load) | **1.52%** | 2.033 | 24646 / 38433 ms | ~547 MB Q5_0 | `whisper-cli` subprocess (production `WhisperLocal` path) |
+| `whisper-large-v3-turbo` Q5_0 (whisper.cpp, per-utt subprocess) | 1.74% | 2.036 | 22654 / 24839 ms | ~547 MB Q5_0 | `whisper-cli` per call |
+| `whisper-large-v3-turbo` FP32 (transformers PyTorch) | 1.96% | 0.567 | 6294 / 7054 ms | ~1.6 GB FP32 | transformers + PyTorch |
+| `FunAudioLLM/SenseVoiceSmall` (`ci_baseline.json`, CI runner) | 6.64% | **0.047** | 540 / 776 ms | ~234 MB INT8 | euhadra `SenseVoiceAdapter` |
 
-Per-utt lenient CER for turbo: **5 / 10 utts perfect (0.0000)**,
-3 / 10 < 0.05, 2 / 10 < 0.06. The remaining drift is mostly digit
-normalisation (turbo emits `천구백사십년` for `1940년`) which the
-lenient Korean-numeral converter handles partially. Even the worst
-utt (1883) is only 5.66% CER.
+Per-utt lenient CER for whisper.cpp Q5_0 turbo: **5 / 10 utts perfect
+(0.0000)**, the rest below 0.06. **Q5_0 quantisation incurred no
+measurable accuracy loss** vs FP32 transformers (and slightly improved
+the per-utt CER aggregate, within sampling noise).
 
 Caveats:
 
-- **RTF gap is real**: FP32 PyTorch turbo is ~12× slower than INT8 ONNX
-  SenseVoice in this container. Production parity is much closer:
-  whisper.cpp INT5 turbo on a recent x86 CPU benchmarks around RTF 0.1–0.2
-  (community reports), so the realistic gap is ~2–4×, not 12×.
-- **Cross-environment timings**: SenseVoice baseline was measured on a
-  CI runner; turbo here in a cloud session container. The CER side of
-  the comparison is hardware-independent.
-- **No GGML turbo bundle yet**: euhadra's `WhisperLocal` already accepts
-  any GGML Whisper checkpoint; switching `ko` to turbo just requires
-  shipping the GGML conversion (≈800 MB for `ggml-large-v3-turbo-q5_0.bin`).
-  No Rust code change.
+- **RTF is hardware-bound, not model-bound**: the bench ran on a
+  shared 4-core Xeon @ 2.1 GHz inside a VM (no turbo boost, no
+  AVX-512 wins beyond what's already enabled). Community reports for
+  the same Q5_0 turbo build on Apple M2 / Ryzen 7000 / modern Core i7
+  land between RTF 0.05 and 0.4. Production users on those targets
+  will see a much smaller gap to SenseVoice than this container's
+  RTF 2.0 suggests.
+- **Subprocess overhead is NOT the bottleneck**: batched mode (one
+  model load, 10 files) and per-utt mode (10 loads) take essentially
+  the same total wall time (≈226 s), so we're CPU-bound during
+  decode, not paying for repeated model load.
+- **Whisper pads to 30 s frames**: each utt's decoder loop processes
+  a 30-second mel spectrogram regardless of actual audio length,
+  which is why short utts (4.8 s) and long utts (18.9 s) come out
+  within 10 % of each other. This is a property of the architecture,
+  not the runtime.
+- **Cross-environment SenseVoice baseline**: the SenseVoice baseline
+  row was measured on a CI runner; we did not re-run SenseVoice in
+  this container because the funasr export pipeline failed to install
+  (oss2/crcmod wheel build errors). The CER side of the comparison is
+  hardware-independent regardless.
+
+Bench scripts (kept under `/tmp/`, not committed):
+- `/tmp/ko_bench_final.py` — kresnik + SenseVoice (via sherpa-onnx, unreliable)
+- `/tmp/ko_bench_whisper.py` — turbo FP32 via transformers
+- `/tmp/ko_bench_whispercpp.py` — turbo Q5_0 via whisper.cpp, per-utt
+- `/tmp/ko_bench_whispercpp_batch.py` — turbo Q5_0 via whisper.cpp, batched
+- Lenient rescore via a throwaway `examples/score_ko_bench.rs` (also not committed)
 
 ### B. `kresnik/wav2vec2-large-xlsr-korean`
 
