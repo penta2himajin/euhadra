@@ -22,6 +22,8 @@ license body.
 | Model | SPDX / Label | License declaration | License text |
 |---|---|---|---|
 | OpenAI Whisper (`large-v3` / `base` / `tiny` etc.) | `Apache-2.0` | <https://github.com/openai/whisper/blob/main/LICENSE> | <https://www.apache.org/licenses/LICENSE-2.0.txt> |
+| `openai/whisper-large-v3-turbo` (HF weights) | `MIT` | <https://huggingface.co/openai/whisper-large-v3-turbo> (model-card YAML: `license: mit`) | <https://opensource.org/licenses/MIT> |
+| `onnx-community/whisper-large-v3-turbo` (ONNX mirror — what `scripts/setup_whisper_onnx_turbo.sh` downloads) | `MIT` (inherited) | <https://huggingface.co/onnx-community/whisper-large-v3-turbo> (model-card YAML: `license: mit`) | <https://opensource.org/licenses/MIT> |
 | `nvidia/canary-180m-flash` | `CC-BY-4.0` | <https://huggingface.co/nvidia/canary-180m-flash> (model-card YAML: `license: cc-by-4.0`) | <https://creativecommons.org/licenses/by/4.0/legalcode.en> |
 | `istupakov/canary-180m-flash-onnx` (ONNX mirror) | `CC-BY-4.0` (inherited) | <https://huggingface.co/istupakov/canary-180m-flash-onnx> (model-card YAML: `license: cc-by-4.0`) | <https://creativecommons.org/licenses/by/4.0/legalcode.en> |
 | `nvidia/parakeet-tdt_ctc-0.6b-ja` | `CC-BY-4.0` | <https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja> (model-card YAML: `license: cc-by-4.0`) | <https://creativecommons.org/licenses/by/4.0/legalcode.en> |
