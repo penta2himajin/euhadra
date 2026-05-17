@@ -28,3 +28,6 @@ pub mod canary;
 
 #[cfg(feature = "onnx")]
 pub mod sensevoice;
+
+#[cfg(feature = "ctranslate2")]
+pub mod faster_whisper;

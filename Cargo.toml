@@ -36,9 +36,17 @@ parakeet-rs = { git = "https://github.com/penta2himajin/parakeet-rs", branch = "
 # Optional + onnx-gated so the default build stays lean.
 rustfft = { version = "6", optional = true }
 
+# CTranslate2 in-process Rust bindings — for `deepdml/faster-whisper-*`
+# bundles. Builds the upstream libctranslate2 C++ library from source via
+# the crate's vendored CMake script, so consumers need cmake + a C++17
+# compiler available when this feature is enabled. INT8 + OpenBLAS path
+# is the target for the FLEURS-ko benchmark work.
+ct2rs = { version = "0.9", features = ["whisper"], optional = true }
+
 [features]
 default = []
 onnx = ["dep:ort", "dep:ndarray", "dep:tokenizers", "dep:parakeet-rs", "dep:rustfft"]
+ctranslate2 = ["dep:ct2rs"]
 
 [[bin]]
 name = "euhadra"
@@ -50,6 +58,12 @@ path = "src/main.rs"
 [[example]]
 name = "dump_canary_rust_tensors"
 required-features = ["onnx"]
+
+# Throwaway FLEURS-ko bench for the faster-whisper (ct2rs) adapter
+# (issue #83 measurement work).
+[[example]]
+name = "bench_faster_whisper_ko"
+required-features = ["ctranslate2"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
