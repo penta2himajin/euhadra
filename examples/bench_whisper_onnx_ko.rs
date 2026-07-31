@@ -29,21 +29,53 @@ struct Cli {
     audio_root: PathBuf,
     #[arg(long, default_value = "ko")]
     language: String,
+    /// Quantisation suffix applied to all three graphs unless one of
+    /// the per-component overrides below is given.
     #[arg(long, default_value = "q4")]
     quant: String,
+    /// Override the encoder's quantisation independently.
+    ///
+    /// Whisper-turbo moved almost all of its parameters into the
+    /// encoder (4 decoder layers against large-v3's 32), and the
+    /// encoder runs on a fixed 30-second window whatever the audio
+    /// length. So encoder and decoder are worth quantising separately:
+    /// the encoder is where the time goes, while the decoder is where
+    /// `docs/korean-asr-alternatives.md` found int8 degenerating into
+    /// repeated tokens.
+    #[arg(long)]
+    encoder_quant: Option<String>,
+    /// Override both decoder graphs' quantisation independently.
+    #[arg(long)]
+    decoder_quant: Option<String>,
 }
 
 fn main() {
     let cli = Cli::parse();
 
+    let enc_q = cli.encoder_quant.clone().unwrap_or_else(|| cli.quant.clone());
+    let dec_q = cli.decoder_quant.clone().unwrap_or_else(|| cli.quant.clone());
+    // The unquantised export carries no suffix, so `fp32` is a sentinel
+    // for "the plain graph" rather than a filename fragment.
+    let graph = |stem: &str, q: &str| {
+        if q == "fp32" {
+            format!("{stem}.onnx")
+        } else {
+            format!("{stem}_{q}.onnx")
+        }
+    };
     let cfg = euhadra::whisper_onnx::WhisperOnnxConfig {
-        encoder_file: Some(format!("encoder_model_{}.onnx", cli.quant)),
-        decoder_file: Some(format!("decoder_model_{}.onnx", cli.quant)),
-        decoder_with_past_file: Some(format!("decoder_with_past_model_{}.onnx", cli.quant)),
+        encoder_file: Some(graph("encoder_model", &enc_q)),
+        decoder_file: Some(graph("decoder_model", &dec_q)),
+        decoder_with_past_file: Some(graph("decoder_with_past_model", &dec_q)),
         language: Some(cli.language.clone()),
     };
 
-    println!("loading {} ({})...", cli.model_dir.display(), cli.quant);
+    println!(
+        "loading {} (encoder={} decoder={})...",
+        cli.model_dir.display(),
+        enc_q,
+        dec_q
+    );
     let t0 = Instant::now();
     let adapter = WhisperOnnxAdapter::load_with_config(&cli.model_dir, cfg).expect("load");
     println!("loaded in {:.1}s", t0.elapsed().as_secs_f64());
