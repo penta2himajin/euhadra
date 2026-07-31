@@ -315,53 +315,108 @@ else. So the entire semantic half of the design had never been scored.
 Same class of finding as §3.1: a documented mechanism that was inert
 in practice.
 
-### 5.2 Alpha calibration
+### 5.2 Alpha calibration, and why the table is gone
 
 Correction-pair F1 on `en_phoneme_correction.jsonl` (25 utterances,
-13-word dictionary) at the default threshold 0.85. The phoneme-only
-baseline is **F1 1.000** — the gold set is saturated, so the embedding
-term cannot improve on it and the question is only how much it costs.
+13-word dictionary). The phoneme-only baseline is **F1 1.000** — the
+gold set is saturated, so the embedding term cannot improve on it and
+the question is only how much it costs.
 
-| alpha | `bge-small-en-v1.5` | `granite-97m-multilingual-r2` |
-|---|---|---|
-| 0.50 | 0.643 | 0.973 |
-| 0.60 | 0.733 | **1.000** |
-| 0.70 | 0.882 | **1.000** |
-| 0.80 | 0.973 | **1.000** |
-| 0.90 | **1.000** | **1.000** |
-| 1.00 (phoneme only) | 1.000 | 1.000 |
+The first pass measured the composite with the raw cosine, and found
+the operating point was backend-specific: granite held 1.000 down to
+alpha 0.60, `bge-small` needed 0.90, and at the **alpha = 0.70 that
+`docs/spec.md` §6.4 works its example at** bge-small lost three of
+nineteen corrections. That produced a per-backend `calibrated_alpha`
+table.
 
-Precision stayed at 1.000 everywhere; only recall moved, as dilution
-pushed real matches under the threshold.
+The table was the wrong fix. `alpha` blends a normalised edit distance
+(genuinely on `[0, 1]`, 0 meaning "nothing alike") with a raw cosine
+whose own zero point sits wherever the model puts it — 0.45 on
+bge-small, 0.70 on granite. So the same alpha weighted the two terms
+differently on every backend. Rescaling the semantic term against the
+backend's measured floor (`similarity::rescale`, floor measured once
+per backend from `embedding::FLOOR_PROBES`) removes the cause instead
+of tabulating the symptom:
 
-**granite holds F1 1.000 down to alpha 0.60; bge-small needs 0.90.**
-That gap has a direct consequence: `docs/spec.md` §6.4 works its
-example at **alpha = 0.70**, where bge-small loses three of nineteen
-corrections (F1 0.882) and granite loses none. The documented
-configuration was broken on the shipped backend.
+| alpha | `bge-small-en-v1.5` | `granite-97m-multilingual-r2` | |
+|---|---|---|---|
+| 0.30 | 0.480 | 0.593 | diverge |
+| 0.40 | 0.643 | 0.733 | diverge |
+| 0.50 | 0.643 | 0.813 | diverge |
+| 0.60 | 0.733 | 0.944 | diverge |
+| **0.70** (spec §6.4) | **1.000** | **1.000** | **agree** |
+| 0.80 | 0.950 | 0.950 | agree |
+| 0.90 | 0.950 | 0.950 | agree |
 
-This is the measured argument for the migration, and it is a stronger
-one than multilingual coverage — because unlike coverage, it can be
-verified against data that exists today. Recorded as
-`phoneme::calibrated_alpha`; raw sweep in
+The documented alpha now holds on both backends, and the CI gate at
+alpha 0.70 passes on either — it failed on bge-small before.
+
+**It is not a complete fix, and the table above says so.** Below alpha
+0.70, where the semantic term starts to dominate, the two backends
+still diverge. Rescaling is affine: it aligns where each model puts
+"unrelated" but not the shape of the range above it. The honest claim
+is that alpha is portable **in the region worth operating in**, not
+that cosine has been made universal.
+
+**Acceptance thresholds had to split.** Rescaling removes the free
+points a 0.70 floor was contributing (0.3 × 0.70 = 0.21 of every
+composite score), so the composite legitimately sits lower and the old
+0.85 bar lost real matches. Measured: the composite wants **0.65** on
+both backends, while phoneme-only still wants **0.85** — applying 0.65
+there admits two false positives. These are two thresholds on two
+different quantities, and unlike the alpha table, one value each covers
+every backend. `PhonemeCorrector::threshold` and
+`::composite_threshold`.
+
+Raw sweep in
 [`benchmarks/embedder_calibration/phoneme_alpha_sweep.json`](./benchmarks/embedder_calibration/phoneme_alpha_sweep.json).
 
-INT8 costs one correction at alpha 0.70 (F1 0.973) and needs alpha
-≥ 0.75 to hold 1.000, which is why CI pulls the fp32 bundle.
+### 5.3 ParagraphSplitter: from a threshold that cannot fire to a shape rule
 
-### 5.3 ParagraphSplitter: a default that cannot fire
-
-`ParagraphSplitter` breaks a paragraph when adjacent-sentence cosine
-similarity falls **below** `similarity_threshold`, default **0.5**.
-The multilingual probes in `examples/check_embedder.rs` put granite's
+`ParagraphSplitter` broke a paragraph where adjacent-sentence cosine
+fell **below** `similarity_threshold`, default **0.5**. The
+multilingual probes in `examples/check_embedder.rs` put granite's
 similarity for deliberately *unrelated* short strings at **0.62–0.75**
-across en/ja/zh/ko/es — above the threshold. On granite the semantic
-path would therefore never fire, silently degrading the splitter to
-its max-sentences constraint.
+across en/ja/zh/ko/es — above that threshold. On granite the semantic
+path could never fire, silently reducing the splitter to its
+max-sentences constraint.
 
-`paragraph::calibrated_similarity` records provisional thresholds
-(0.65 bge-small, 0.80 granite) to prevent that. They are marked
-provisional in the source for a reason: see §5.5.
+Same root cause as §5.2, so the same treatment: stop comparing a raw
+cosine to a constant. Breaks are now placed at **valleys** — local
+minima in the similarity sequence, scored by how far they sit below the
+peaks reachable on either side:
+
+```
+depth(i) = (left_peak − sim(i)) + (right_peak − sim(i))
+```
+
+Built from differences only, so a backend that shifts every similarity
+up by 0.2 produces identical depths. Worked example, same text on two
+backends:
+
+| boundary | 0 | 1 | 2 | 3 | 4 |
+|---|---|---|---|---|---|
+| bge-small | 0.68 | 0.66 | **0.51** | 0.67 | 0.69 |
+| granite | 0.88 | 0.86 | **0.71** | 0.87 | 0.89 |
+
+An absolute rule cannot serve both: 0.5 fires on neither, and a
+threshold tuned so bge-small fires once leaves granite's entire range
+above it. Depth at index 2 is 0.35 on both. `ParagraphSplitter` now
+takes a break where a minimum reaches `depth_ratio` (default 0.5) of
+the document's deepest valley.
+
+Two guards keep the relative rule honest. A purely relative criterion
+always finds *some* lowest point, so uniform text would be split
+arbitrarily: `min_similarity_range` (default 0.05) requires the text to
+show some spread before any semantic split is attempted. And fewer than
+two boundaries, or any failed embedding, defers entirely to
+max-sentences rather than inventing a valley.
+
+This replaces the provisional per-backend `calibrated_similarity`
+constants an earlier revision of this PR introduced. It does **not**
+resolve §5.5: the rule is portable and cannot silently go dead, but
+whether the valleys it picks are the *right* places to break is still
+unmeasured in every language.
 
 ### 5.4 Multilingual: what CI asserts, and what it does not
 

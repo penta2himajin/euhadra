@@ -113,6 +113,17 @@ impl IpaDictionary {
 pub trait TextEmbedder: Send + Sync {
     /// Return an L2-normalized embedding vector.
     fn embed(&self, text: &str) -> Result<Vec<f32>, ProcessError>;
+
+    /// The cosine this embedder assigns to unrelated text.
+    ///
+    /// Consumers that blend a cosine with a differently-scaled quantity
+    /// use it to put the cosine on a `[0, 1]` scale first. The default
+    /// of 0.0 means "no rescaling", which is the correct behaviour for
+    /// synthetic embedders in tests and preserves the pre-existing
+    /// arithmetic for any implementation that does not override it.
+    fn similarity_floor(&self) -> f32 {
+        0.0
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -156,32 +167,6 @@ pub trait G2pBackend: Send + Sync {
 /// For multi-word ASR errors (e.g., "use effect" for "useEffect"), the
 /// corrector also tries merging adjacent words and comparing the merged
 /// phoneme string.
-/// Minimum safe `alpha` for the composite phoneme+semantic score,
-/// measured per embedding backend.
-///
-/// `PhonemeCorrector` blends `alpha * phoneme_sim + (1-alpha) *
-/// text_sim`. Lowering `alpha` gives the semantic term more weight; how
-/// far it can be lowered before real corrections fall under
-/// `threshold` is a property of the embedding space, not of the task.
-///
-/// Measured on `tests/evaluation/annotations/en_phoneme_correction.jsonl`
-/// via `eval_l3 --task phoneme-correction --embedder-dir ... --alpha ...`
-/// at the default threshold 0.85. Full sweep in
-/// `docs/model-upgrade-candidates.md` §5.
-pub mod calibrated_alpha {
-    /// `BAAI/bge-small-en-v1.5`. Correction-pair F1 holds at 1.000 only
-    /// from 0.90 up; it degrades to 0.973 at 0.85, 0.882 at 0.70 and
-    /// 0.643 at 0.50. Note this means the `alpha = 0.7` configuration
-    /// that `docs/spec.md` §6.4 gives as the worked example loses three
-    /// of nineteen corrections on this backend.
-    pub const BGE_SMALL_EN_V1_5: f32 = 0.90;
-
-    /// `ibm-granite/granite-embedding-97m-multilingual-r2`. Holds 1.000
-    /// all the way down to 0.60, so the documented 0.70 works as
-    /// written and there is real headroom below it.
-    pub const GRANITE_97M_MULTILINGUAL_R2: f32 = 0.60;
-}
-
 pub struct PhonemeCorrector {
     ipa_dict: IpaDictionary,
     custom_entries: Vec<CustomEntry>,
@@ -191,10 +176,26 @@ pub struct PhonemeCorrector {
     /// Composite = alpha * phoneme_sim + (1-alpha) * text_sim.
     /// Default: 1.0 (phoneme only, no text embedding).
     pub alpha: f32,
-    /// Minimum similarity to accept a match (0.0–1.0).
-    /// Applied to the composite score when embedder is set.
+    /// Minimum phoneme similarity to accept a match, used when scoring
+    /// is phoneme-only (no embedder, or `alpha` = 1.0).
     /// Default: 0.85
     pub threshold: f32,
+    /// Minimum composite score to accept a match when the semantic term
+    /// is in play.
+    ///
+    /// Lower than `threshold`, and necessarily so: the composite is a
+    /// convex blend that includes a genuinely weaker signal, so correct
+    /// matches score lower than they do on phoneme distance alone.
+    /// Applying `threshold` to it loses real corrections; applying this
+    /// to the phoneme-only path admits false ones — measured at 2 of 21
+    /// on the English gold set.
+    ///
+    /// Unlike the per-backend `alpha` table this replaced, it is one
+    /// number for every backend: rescaling the semantic term against
+    /// each embedder's own floor (`similarity::rescale`) is what makes
+    /// that possible.
+    /// Default: 0.65
+    pub composite_threshold: f32,
     /// Maximum number of adjacent words to merge for compound matching.
     /// Default: 3
     pub max_merge: usize,
@@ -210,13 +211,20 @@ impl PhonemeCorrector {
             embedder: None,
             alpha: 1.0,
             threshold: 0.85,
+            composite_threshold: 0.65,
             max_merge: 3,
         }
     }
 
-    /// Builder: set similarity threshold.
+    /// Builder: set the phoneme-only acceptance threshold.
     pub fn with_threshold(mut self, threshold: f32) -> Self {
         self.threshold = threshold;
+        self
+    }
+
+    /// Builder: set the composite-score acceptance threshold.
+    pub fn with_composite_threshold(mut self, threshold: f32) -> Self {
+        self.composite_threshold = threshold;
         self
     }
 
@@ -279,10 +287,9 @@ impl PhonemeCorrector {
     ///   score = alpha * phoneme_sim + (1-alpha) * text_sim
     /// Returns (entry_index, score) or None if below threshold.
     fn best_match(&self, phonemes: &str, text_span: &str) -> Option<(usize, f32)> {
-        let text_emb = if self.alpha < 1.0 {
-            self.embedder.as_ref().and_then(|e| e.embed(text_span).ok())
-        } else {
-            None
+        let (text_emb, floor) = match (self.alpha < 1.0, self.embedder.as_ref()) {
+            (true, Some(e)) => (e.embed(text_span).ok(), e.similarity_floor()),
+            _ => (None, 0.0),
         };
 
         let mut best: Option<(usize, f32)> = None;
@@ -290,15 +297,32 @@ impl PhonemeCorrector {
         for (i, entry) in self.custom_entries.iter().enumerate() {
             let phon_sim = phoneme_similarity(phonemes, &entry.phonemes);
 
-            let score = match (&text_emb, &entry.embedding) {
+            // Score and acceptance threshold are decided together and
+            // per candidate: an entry whose embedding failed is scored
+            // phoneme-only and must be judged by the phoneme-only bar,
+            // even when its neighbours in the dictionary were scored
+            // compositely.
+            let (score, accept_at) = match (&text_emb, &entry.embedding) {
                 (Some(span_emb), Some(entry_emb)) => {
                     let text_sim = cosine_similarity(span_emb, entry_emb);
-                    self.alpha * phon_sim + (1.0 - self.alpha) * text_sim
+                    // Rescale the cosine against this backend's own
+                    // floor before blending. Raw cosine and normalised
+                    // edit distance do not share a scale — granite
+                    // calls unrelated strings 0.70 where bge-small
+                    // says 0.45 — so without this `alpha` weights the
+                    // two terms differently on every backend, and the
+                    // alpha that docs/spec.md §6.4 documents silently
+                    // fails on one of them.
+                    let text_sim = crate::similarity::rescale(text_sim, floor);
+                    (
+                        self.alpha * phon_sim + (1.0 - self.alpha) * text_sim,
+                        self.composite_threshold,
+                    )
                 }
-                _ => phon_sim,
+                _ => (phon_sim, self.threshold),
             };
 
-            if score >= self.threshold && (best.is_none() || score > best.unwrap().1) {
+            if score >= accept_at && (best.is_none() || score > best.unwrap().1) {
                 best = Some((i, score));
             }
         }
@@ -678,6 +702,19 @@ impl TextEmbedder for OnnxTextEmbedder {
             })?;
         backend.embed(text).map_err(|e| ProcessError { message: e })
     }
+
+    /// Delegates to the backend's lazily measured floor, so the first
+    /// composite-scored correction pays for the probes and the rest
+    /// read a cached value.
+    fn similarity_floor(&self) -> f32 {
+        match self.backend.lock() {
+            Ok(mut b) => b.similarity_floor(),
+            Err(e) => {
+                tracing::warn!(error = %e, "embedder mutex poisoned; floor defaults to 0");
+                0.0
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -688,35 +725,119 @@ impl TextEmbedder for OnnxTextEmbedder {
 mod tests {
     use super::*;
 
-    #[test]
-    fn calibrated_alpha_values_are_valid_weights() {
-        for a in [
-            calibrated_alpha::BGE_SMALL_EN_V1_5,
-            calibrated_alpha::GRANITE_97M_MULTILINGUAL_R2,
-        ] {
-            assert!((0.0..=1.0).contains(&a), "alpha {a} out of range");
+    // The `calibrated_alpha` table these replace recorded a minimum
+    // safe weight per embedding backend. Rescaling the semantic term
+    // against each backend's own floor removes the need for the table;
+    // what it was protecting against is asserted on the mechanism.
+
+    /// An embedder that reports a floor and returns fixed vectors, so
+    /// the scoring arithmetic can be exercised without a model bundle.
+    struct FlooredEmbedder {
+        floor: f32,
+        vector: Vec<f32>,
+    }
+
+    impl TextEmbedder for FlooredEmbedder {
+        fn embed(&self, _text: &str) -> Result<Vec<f32>, ProcessError> {
+            Ok(self.vector.clone())
+        }
+        fn similarity_floor(&self) -> f32 {
+            self.floor
         }
     }
 
     #[test]
-    fn granite_tolerates_a_lower_alpha_than_bge_small() {
-        // The measured reason to migrate the Tier 2 embedder: granite
-        // keeps the semantic term usable at weights where bge-small
-        // has already started dropping real corrections.
-        const {
-            assert!(
-                calibrated_alpha::GRANITE_97M_MULTILINGUAL_R2
-                    < calibrated_alpha::BGE_SMALL_EN_V1_5
-            )
-        };
+    fn default_embedder_floor_is_zero_so_behaviour_is_unchanged() {
+        struct Plain;
+        impl TextEmbedder for Plain {
+            fn embed(&self, _t: &str) -> Result<Vec<f32>, ProcessError> {
+                Ok(vec![1.0, 0.0])
+            }
+        }
+        assert_eq!(Plain.similarity_floor(), 0.0);
     }
 
     #[test]
-    fn documented_spec_alpha_is_safe_only_on_granite() {
-        // `docs/spec.md` §6.4 works its example at alpha = 0.7.
-        const SPEC_EXAMPLE_ALPHA: f32 = 0.7;
-        const { assert!(SPEC_EXAMPLE_ALPHA >= calibrated_alpha::GRANITE_97M_MULTILINGUAL_R2) };
-        const { assert!(SPEC_EXAMPLE_ALPHA < calibrated_alpha::BGE_SMALL_EN_V1_5) };
+    fn two_backends_with_different_floors_score_alike() {
+        // The portability property. Two embedders that place the same
+        // pair the same fraction of the way up their own range must
+        // produce the same composite score at the same alpha — which
+        // is exactly what the per-backend alpha table existed to work
+        // around.
+        let entry = CustomEntry {
+            word: "TensorFlow".into(),
+            phonemes: "tɛnsɝfloʊ".into(),
+            embedding: Some(vec![1.0, 0.0]),
+        };
+
+        // cos = 0.725 against a 0.45 floor, and 0.850 against 0.70:
+        // both are halfway up their backend's usable range.
+        let low_floor = FlooredEmbedder {
+            floor: 0.45,
+            vector: vec![0.725, (1.0f32 - 0.725 * 0.725).sqrt()],
+        };
+        let high_floor = FlooredEmbedder {
+            floor: 0.70,
+            vector: vec![0.850, (1.0f32 - 0.850 * 0.850).sqrt()],
+        };
+
+        let score = |e: FlooredEmbedder| {
+            let c = PhonemeCorrector::new(IpaDictionary::empty(), vec![entry.clone()])
+                .with_embedder(e, 0.7);
+            c.best_match("tɛnsɝfloʊ", "tensor flow").map(|(_, s)| s)
+        };
+
+        let a = score(low_floor).expect("low-floor backend produced no match");
+        let b = score(high_floor).expect("high-floor backend produced no match");
+        assert!((a - b).abs() < 1e-4, "{a} vs {b}");
+    }
+
+    #[test]
+    fn without_rescaling_the_same_alpha_would_have_diverged() {
+        // Documents the defect. Raw cosines of 0.725 and 0.850 blended
+        // at alpha 0.7 against an identical phoneme score differ by
+        // 0.3 * 0.125 — enough to move a candidate across the 0.85
+        // acceptance threshold, which is how the alpha documented in
+        // spec §6.4 came to drop three of nineteen corrections.
+        const ALPHA: f32 = 0.7;
+        let phon = 1.0f32;
+        let raw_low = ALPHA * phon + (1.0 - ALPHA) * 0.725;
+        let raw_high = ALPHA * phon + (1.0 - ALPHA) * 0.850;
+        assert!((raw_high - raw_low).abs() > 1e-3);
+
+        // After rescaling both land on the same number.
+        let scaled_low = ALPHA * phon + (1.0 - ALPHA) * crate::similarity::rescale(0.725, 0.45);
+        let scaled_high = ALPHA * phon + (1.0 - ALPHA) * crate::similarity::rescale(0.850, 0.70);
+        assert!((scaled_high - scaled_low).abs() < 1e-5);
+    }
+
+    #[test]
+    fn composite_threshold_is_lower_than_the_phoneme_only_one() {
+        // They gate different quantities. Measured on the English gold
+        // set: applying 0.85 to the composite loses real corrections,
+        // applying 0.65 to phoneme-only admits two false ones.
+        let c = PhonemeCorrector::new(IpaDictionary::empty(), vec![]);
+        assert!(c.composite_threshold < c.threshold);
+    }
+
+    #[test]
+    fn a_failed_entry_embedding_is_judged_by_the_phoneme_only_bar() {
+        // Mixed dictionaries are possible when an entry fails to embed.
+        // Such an entry is scored on phonemes alone, so it must clear
+        // the phoneme-only threshold rather than the lower composite
+        // one — otherwise a failed embedding would quietly make a
+        // candidate easier to accept.
+        let entry = CustomEntry {
+            word: "Kubernetes".into(),
+            phonemes: "kubɝnɛtiz".into(),
+            embedding: None,
+        };
+        let corrector = PhonemeCorrector::new(IpaDictionary::empty(), vec![entry])
+            .with_composite_threshold(0.0);
+
+        // Phoneme similarity here is far below 0.85, and the permissive
+        // composite threshold must not rescue it.
+        assert!(corrector.best_match("kupɚnɛt", "cooper net").is_none());
     }
 
     #[test]

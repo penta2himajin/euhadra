@@ -334,7 +334,7 @@ enum CorrectionKind {
 - `PunctuationRestorer` — CNN-BiLSTM ベースの句読点・大文字化モデル（ONNX, ~5MB）
 - `DisfluencyDetector` — 自己訂正検出モデル（reparandum/repair パターン検出, ~50MB）
 - `PhonemeCorrector` — 音素距離 + テキスト埋め込みによるカスタム辞書補正（CMUdict + G2P ONNX + bge-small）
-- `ParagraphSplitter` — 隣接文の埋め込みコサイン類似度による段落分割。**分割閾値もバックエンド固有**（`paragraph::calibrated_similarity`）。granite は無関係な文字列でも 0.62–0.75 を返すため、旧既定値 0.5 では意味的分割が一度も発火しない。ただし段落境界の gold データが存在せず、現状の較正値は暫定（[`model-upgrade-candidates.md`](./model-upgrade-candidates.md) §5.3 / §5.5）
+- `ParagraphSplitter` — 隣接文の類似度列の**谷**（局所最小 + 深さ `depth(i) = (left_peak − sim(i)) + (right_peak − sim(i))`）で分割する。深さは差分のみで決まるためバックエンド間のオフセットに不変。旧実装は絶対コサイン閾値 0.5 で、granite は無関係な文字列でも 0.62–0.75 を返すため意味的分割が一度も発火しなかった。ただし段落境界の gold データが存在せず、「切る位置が適切か」は全言語で未検証（[`model-upgrade-candidates.md`](./model-upgrade-candidates.md) §5.3 / §5.5）
 - `EntityRecognizer` — NER トークン分類モデル（DistilBERT-NER ONNX, ~65MB INT8）による固有表現検出（PER / LOC / ORG / MISC）
 - `RuleBasedProcessor` — ルールベースの整形（リスト検出、数値フォーマット等、依存ゼロ）
 
@@ -723,11 +723,24 @@ ContextSnapshot の `app_name` / `field_type` に基づいて、refinement プ�
 - 拡張（`onnx` feature）: `α × phoneme_similarity + (1-α) × text_embedding_similarity`
   テキスト埋め込み（bge-small）との複合スコアで、音素的に曖昧な候補を意味的に判別
 
-**α はバックエンド固有の値であり、移植できない。** 上の例が使う α=0.7 は
-granite-embedding-97m-multilingual-r2 でのみ安全で、bge-small-en-v1.5 では
-実測 F1 が 1.000 → 0.882 に落ちる（19 件中 3 件の補正を取りこぼす）。F1 1.000 を
-保てる下限は granite が 0.60、bge-small が 0.90。較正値は
-`phoneme::calibrated_alpha`、測定は
+**text_sim はバックエンドの下限で正規化してから blend する。** 生のコサインは
+モデルごとに零点が違い（無関係な文字列が bge-small-en-v1.5 では ≈0.45、
+granite-embedding-97m-multilingual-r2 では ≈0.70）、正規化 Levenshtein である
+phoneme_sim と尺度が揃わない。そのままだと同じ α が各バックエンドで違う重み付けになり、
+上の α=0.7 は実測で bge-small では 19 件中 3 件の補正を取りこぼしていた
+（F1 0.882、granite は 1.000）。`similarity::rescale` で
+`(cos − floor)/(1 − floor)` に写すと α=0.7 は**両バックエンドで F1 1.000** になる。
+`floor` は `EmbeddingBackend` が load 後の初回利用時に自己測定する。
+
+ただし正規化はアフィン変換であり、零点は揃うが上側の分布形状までは揃わない。
+α ≤ 0.60（意味項が支配的な領域）では依然としてバックエンド間で差が出る。
+移植可能なのは「運用に値する領域」に限られる。
+
+**受理閾値は経路ごとに分かれる。** 正規化で下駄（floor 0.70 なら全スコアに
+0.3 × 0.70 = 0.21）が外れるため複合スコアは正当に下がる。実測での最適値は
+複合が 0.65、phoneme-only が 0.85（複合側の 0.65 を phoneme-only に適用すると
+false positive が 2 件出る）。これらは別の量に対する別の閾値だが、旧 α 表と違い
+**バックエンドごとの値は不要**。測定は
 [`model-upgrade-candidates.md`](./model-upgrade-candidates.md) §5.2 を参照。
 
 **OOV 語の音素生成**:

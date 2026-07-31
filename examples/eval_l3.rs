@@ -102,9 +102,15 @@ struct Cli {
     #[arg(long, default_value_t = 1.0)]
     alpha: f32,
 
-    /// Minimum composite score to accept a dictionary match.
+    /// Minimum phoneme similarity to accept a match on the
+    /// phoneme-only path.
     #[arg(long, default_value_t = 0.85)]
     threshold: f32,
+
+    /// Minimum composite score to accept a match when `--embedder-dir`
+    /// puts the semantic term in play.
+    #[arg(long, default_value_t = 0.65)]
+    composite_threshold: f32,
 
     /// Fail the run (exit 2) when the headline F1 falls below this.
     /// Turns the otherwise report-only L3 runner into a CI gate;
@@ -761,7 +767,8 @@ async fn run_phoneme_correction(cli: &Cli) -> Result<(), String> {
     // builder chain is complete as-is.
     #[allow(unused_mut)]
     let mut corrector = euhadra::phoneme::PhonemeCorrector::new(base_dict, custom_entries)
-        .with_threshold(cli.threshold);
+        .with_threshold(cli.threshold)
+        .with_composite_threshold(cli.composite_threshold);
 
     #[cfg(feature = "onnx")]
     if let Some(dir) = &cli.embedder_dir {
@@ -769,10 +776,10 @@ async fn run_phoneme_correction(cli: &Cli) -> Result<(), String> {
             .map_err(|e| format!("loading embedder {}: {}", dir.display(), e.message))?;
         corrector = corrector.with_embedder(embedder, cli.alpha);
         eprintln!(
-            "[phoneme] embedder={} alpha={:.2} threshold={:.2}",
+            "[phoneme] embedder={} alpha={:.2} composite_threshold={:.2}",
             dir.display(),
             cli.alpha,
-            cli.threshold
+            cli.composite_threshold
         );
     }
     #[cfg(not(feature = "onnx"))]

@@ -108,12 +108,32 @@ pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b).map(|(x, y)| x * y).sum()
 }
 
+/// Mutually unrelated strings used to measure a backend's similarity
+/// floor. Spread across the pipeline's five languages and several
+/// semantic fields so no two are plausibly related — the mean cosine
+/// among them is then a reading of where that backend puts "nothing in
+/// common", which is emphatically *not* zero.
+const FLOOR_PROBES: &[&str] = &[
+    "database migration",
+    "strawberry jam",
+    "オーケストラの練習",
+    "台風が接近している",
+    "감자를 삶았다",
+    "el tipo de cambio",
+    "quarterly revenue forecast",
+    "他昨天去了医院",
+    "shoelace",
+    "volcanic ash cloud",
+];
+
 /// A loaded sentence-embedding model: session + tokenizer + the
 /// signature probed from the graph.
 pub struct EmbeddingBackend {
     session: Session,
     tokenizer: Tokenizer,
     signature: EmbeddingSignature,
+    /// Lazily measured; see [`EmbeddingBackend::similarity_floor`].
+    similarity_floor: Option<f32>,
 }
 
 impl EmbeddingBackend {
@@ -142,11 +162,74 @@ impl EmbeddingBackend {
             session,
             tokenizer,
             signature,
+            similarity_floor: None,
         })
     }
 
     pub fn signature(&self) -> EmbeddingSignature {
         self.signature
+    }
+
+    /// Mean cosine this backend assigns to unrelated text.
+    ///
+    /// Cosine is not comparable across embedding models: the same
+    /// "these are unrelated" verdict reads as ~0.45 on
+    /// `bge-small-en-v1.5` and ~0.70 on
+    /// `granite-embedding-97m-multilingual-r2`. Any consumer that
+    /// blends a cosine with a differently-scaled quantity — as
+    /// `PhonemeCorrector` blends it with a normalised edit distance —
+    /// is therefore weighting the two terms differently on every
+    /// backend, without saying so.
+    ///
+    /// Measuring the floor lets [`Self::rescale_similarity`] put every
+    /// backend on the same scale, so the weight means one thing.
+    ///
+    /// Computed once, on first use, from [`FLOOR_PROBES`] — ten embeds,
+    /// paid only by callers that rescale. Falls back to 0.0 (no
+    /// rescaling) if the probes cannot be embedded, which keeps a
+    /// degraded backend behaving as it did before rather than
+    /// distorting scores with a bad floor.
+    pub fn similarity_floor(&mut self) -> f32 {
+        if let Some(f) = self.similarity_floor {
+            return f;
+        }
+
+        let mut vectors = Vec::with_capacity(FLOOR_PROBES.len());
+        for p in FLOOR_PROBES {
+            match self.embed(p) {
+                Ok(v) => vectors.push(v),
+                Err(e) => {
+                    tracing::warn!(probe = %p, error = %e, "floor probe failed");
+                    self.similarity_floor = Some(0.0);
+                    return 0.0;
+                }
+            }
+        }
+
+        let mut total = 0.0f32;
+        let mut pairs = 0usize;
+        for i in 0..vectors.len() {
+            for j in (i + 1)..vectors.len() {
+                total += cosine(&vectors[i], &vectors[j]);
+                pairs += 1;
+            }
+        }
+        let floor = if pairs == 0 {
+            0.0
+        } else {
+            (total / pairs as f32).clamp(0.0, 0.99)
+        };
+
+        tracing::info!(floor, "measured embedding similarity floor");
+        self.similarity_floor = Some(floor);
+        floor
+    }
+
+    /// Map a raw cosine onto `[0, 1]` against this backend's own floor,
+    /// so that "unrelated" reads as 0 and "identical" as 1 whichever
+    /// model produced it.
+    pub fn rescale_similarity(&mut self, cos: f32) -> f32 {
+        crate::similarity::rescale(cos, self.similarity_floor())
     }
 
     /// Encode `text` into an L2-normalised embedding.
@@ -306,6 +389,18 @@ mod tests {
         let mut v = vec![0.0, 0.0];
         l2_normalize(&mut v);
         assert_eq!(v, vec![0.0, 0.0]);
+    }
+
+    #[test]
+    fn floor_probes_are_mutually_distinct() {
+        // A duplicated probe would drag the measured floor toward 1.0
+        // and flatten the rescaled range for everyone.
+        for (i, a) in FLOOR_PROBES.iter().enumerate() {
+            for b in &FLOOR_PROBES[i + 1..] {
+                assert_ne!(a, b, "duplicate floor probe");
+            }
+        }
+        assert!(FLOOR_PROBES.len() >= 4, "too few probes to average over");
     }
 
     #[test]
