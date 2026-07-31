@@ -277,7 +277,7 @@ struct FilterResult {
 
 **想定実装**:
 - `SimpleFillerFilter` — 辞書照合ベースのフィラー除去（階層化: pure / contextual / multi-word）
-- `EmbeddingFillerFilter` — 埋め込みコサイン類似度によるフィラー検出（fastembed, ONNX, bge-small-en 33MB）
+- ~~`EmbeddingFillerFilter` / `OnnxEmbeddingFilter`~~ — 埋め込みコサイン類似度によるフィラー検出。**撤去済み**。実測でルールベース実装が全言語で上回ったため（[`model-upgrade-candidates.md`](./model-upgrade-candidates.md) §3.2）、Tier 1 のフィラー除去はルールベースのみとする
 - `JapaneseFillerFilter` — 読点区切り3パス検出 + ASR アーティファクト対応
 - `ChineseFillerFilter` — 中文 `，` 区切り 3 パス (pure: 嗯 / 呃 / 哦, contextual: 那个 / 这个 / 就是 / 然后 / 怎么说)
 
@@ -334,7 +334,7 @@ enum CorrectionKind {
 - `PunctuationRestorer` — CNN-BiLSTM ベースの句読点・大文字化モデル（ONNX, ~5MB）
 - `DisfluencyDetector` — 自己訂正検出モデル（reparandum/repair パターン検出, ~50MB）
 - `PhonemeCorrector` — 音素距離 + テキスト埋め込みによるカスタム辞書補正（CMUdict + G2P ONNX + bge-small）
-- `ParagraphSplitter` — 隣接文の埋め込みコサイン類似度による段落分割
+- `ParagraphSplitter` — 隣接文の埋め込みコサイン類似度による段落分割。**分割閾値もバックエンド固有**（`paragraph::calibrated_similarity`）。granite は無関係な文字列でも 0.62–0.75 を返すため、旧既定値 0.5 では意味的分割が一度も発火しない。ただし段落境界の gold データが存在せず、現状の較正値は暫定（[`model-upgrade-candidates.md`](./model-upgrade-candidates.md) §5.3 / §5.5）
 - `EntityRecognizer` — NER トークン分類モデル（DistilBERT-NER ONNX, ~65MB INT8）による固有表現検出（PER / LOC / ORG / MISC）
 - `RuleBasedProcessor` — ルールベースの整形（リスト検出、数値フォーマット等、依存ゼロ）
 
@@ -614,7 +614,7 @@ ASR Output (raw text)
     │  - SimpleFillerFilter: ルールベース（英語）     ✅ 実装済み
     │  - JapaneseFillerFilter: ルールベース（日本語） ✅ 実装済み
     │  - ChineseFillerFilter: ルールベース（中国語）  ✅ 実装済み
-    │  - OnnxEmbeddingFilter: bge-small 埋め込み     ✅ 実装済み [onnx]
+    │  - OnnxEmbeddingFilter: bge-small 埋め込み     ❌ 非推奨・未配線
     │
     ▼
 [Tier 2: TextProcessor]  ← LLM 不要、数十ミリ秒、5〜250MB ONNX
@@ -629,7 +629,7 @@ ASR Output (raw text)
     │  - PER / LOC / ORG / MISC のトークン分類
     │  - PhonemeCorrector の候補範囲絞り込みに使用
     │  段落分割（意味的距離 + 最大文数制約）           ✅ 実装済み [onnx]
-    │  - 隣接文の bge-small 埋め込みコサイン類似度による分割
+    │  - 隣接文の埋め込みコサイン類似度による分割（gold 未整備）
     │  数詞正規化 ITN（text-processing-rs）           ✅ 実装済み
     │  - en: normalize_sentence / ja・zh: normalize_with_lang
     │  - es・ko は upstream 対応待ち（patches/ に同梱）
@@ -722,6 +722,13 @@ ContextSnapshot の `app_name` / `field_type` に基づいて、refinement プ�
 - 基本: IPA 音素列の Levenshtein 距離（正規化類似度）
 - 拡張（`onnx` feature）: `α × phoneme_similarity + (1-α) × text_embedding_similarity`
   テキスト埋め込み（bge-small）との複合スコアで、音素的に曖昧な候補を意味的に判別
+
+**α はバックエンド固有の値であり、移植できない。** 上の例が使う α=0.7 は
+granite-embedding-97m-multilingual-r2 でのみ安全で、bge-small-en-v1.5 では
+実測 F1 が 1.000 → 0.882 に落ちる（19 件中 3 件の補正を取りこぼす）。F1 1.000 を
+保てる下限は granite が 0.60、bge-small が 0.90。較正値は
+`phoneme::calibrated_alpha`、測定は
+[`model-upgrade-candidates.md`](./model-upgrade-candidates.md) §5.2 を参照。
 
 **OOV 語の音素生成**:
 - CMUdict に載っていない語（固有名詞、技術用語等）は G2P ONNX モデル（DeepPhonemizer、59MB）で音素列を自動生成
@@ -881,7 +888,7 @@ MIT / Apache ライセンスのため、コード自体による参入障壁は�
 - [x] SimpleFillerFilter（英語、ルールベース）
 - [x] JapaneseFillerFilter（日本語、ルールベース）
 - [x] ChineseFillerFilter（中国語、ルールベース）
-- [x] OnnxEmbeddingFilter（bge-small 埋め込み距離）[onnx]
+- [x] ~~OnnxEmbeddingFilter（bge-small 埋め込み距離）[onnx]~~ — 非推奨・未配線（§3.5 参照）
 
 **Tier 2: TextProcessor**:
 - [x] TextProcessor trait 定義
@@ -952,7 +959,7 @@ let pipeline = PipelineBuilder::new()
 // ONNX モデルを使った高品質構成（LLM なし）
 let pipeline_onnx = PipelineBuilder::new()
     .asr(ParakeetAdapter::load("parakeet-tdt-0.6b-v3-int8")?)
-    .filter(OnnxEmbeddingFilter::load("bge-small-en")?)
+    .filter(SimpleFillerFilter::english())
     .processor(SelfCorrectionDetector::new())
     .processor(OnnxPunctuationRestorer::load("punct/model.onnx", ...)?)
     .processor(PhonemeCorrector::new(ipa_dict, custom_entries)

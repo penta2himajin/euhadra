@@ -328,3 +328,80 @@ jobs:
           ./target/release/examples/eval_l1_fast \
             --fixtures-dir tests/evaluation/fixtures \
             --baseline docs/benchmarks/ci_baseline_layers.json
+
+  # Embedding-backend coverage for the Tier 2 consumers.
+  #
+  # Two assertions, both narrow on purpose:
+  #
+  #   1. `check_embedder` — the backend loads and produces same-width,
+  #      finite, unit-norm vectors in all five pipeline languages, and
+  #      ranks a related string above an unrelated one. This catches a
+  #      broken CJK tokenizer, a bad quantised export, or an input
+  #      signature regression. bge-small-en-v1.5 fails it on `zh`.
+  #   2. `eval_l3 --task phoneme-correction` at the alpha = 0.70 that
+  #      docs/spec.md §6.4 works its example at, gated on
+  #      correction-pair F1. This is the composite phoneme+semantic
+  #      path, which shipped unmeasured until --embedder-dir existed.
+  #
+  # What it deliberately does NOT assert: any multilingual *accuracy*
+  # claim. No gold data exists for ParagraphSplitter (none at all) or
+  # for PhonemeCorrector outside English, so there is nothing to score.
+  # See docs/model-upgrade-candidates.md §5.
+  evaluate-embedder:
+    name: evaluate (embedding backend)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: eval-embedder
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
+
+      # fp32, not the INT8 variant: quantisation costs a correction at
+      # alpha 0.70 (F1 0.973), so INT8 would force the gate below the
+      # value the spec documents. Recorded in
+      # docs/benchmarks/embedder_calibration/phoneme_alpha_sweep.json.
+      - name: Cache granite embedding bundle (~390 MB fp32)
+        id: granite-embedder-cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/embedder_granite_97m
+          key: granite-embedding-97m-multilingual-r2-fp32-v1
+
+      - name: Download granite embedder (cache miss only)
+        if: steps.granite-embedder-cache.outputs.cache-hit != 'true'
+        run: bash scripts/setup_embedders.sh
+        env:
+          EMBEDDER_MODEL: granite
+          EMBEDDER_DIR: vendor/embedder_granite_97m
+
+      - name: Build eval binaries (onnx)
+        run: |
+          cargo build --release --features onnx --locked \
+            --example check_embedder --example eval_l3
+
+      - name: Embedding backend smoke (en / ja / zh / ko / es)
+        run: |
+          ./target/release/examples/check_embedder \
+            --model-dir vendor/embedder_granite_97m
+
+      - name: Phoneme correction with composite scoring (alpha 0.70)
+        run: |
+          ./target/release/examples/eval_l3 \
+            --task phoneme-correction --lang en \
+            --input tests/evaluation/annotations/en_phoneme_correction.jsonl \
+            --dict tests/evaluation/annotations/en_phoneme_correction_dict.json \
+            --base-dict tests/evaluation/annotations/en_phoneme_correction_base_dict.json \
+            --embedder-dir vendor/embedder_granite_97m \
+            --alpha 0.70 \
+            --min-f1 1.0

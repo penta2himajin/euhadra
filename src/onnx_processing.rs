@@ -238,6 +238,28 @@ impl FillerLexicon {
 /// with ModernBERT exports that have no `token_type_ids`
 /// (`granite-embedding-97m-multilingual-r2`), and with static
 /// embedding-bag exports (`potion-multilingual-128M`).
+///
+/// # Unwired
+///
+/// Nothing in the pipeline constructs this. It was never reachable
+/// from the CLI or `prelude`, and the measurement in
+/// `docs/model-upgrade-candidates.md` §3.2 found the rule-based
+/// filters beating every embedding backend in every language tested
+/// (en 1.000 vs 0.828, ja 0.941 vs 0.909, zh 1.000 vs 1.000,
+/// ko 0.977 vs 0.562). The remaining argument for it — generalising
+/// past a closed lexicon — was never actually exercised, because the
+/// cosine gate was inert until §3.1 fixed it.
+///
+/// It is kept, with `examples/bench_embedder.rs`, so that case can be
+/// re-opened against data containing out-of-lexicon filler variants
+/// rather than re-derived from scratch. Until such data exists, use
+/// [`crate::filter::SimpleFillerFilter`] and its language siblings.
+#[deprecated(
+    since = "0.1.0",
+    note = "unwired: rule-based filters outscore every measured embedding backend. \
+            See docs/model-upgrade-candidates.md §3.2. Kept only for re-evaluation \
+            via examples/bench_embedder.rs."
+)]
 pub struct OnnxEmbeddingFilter {
     backend: Arc<Mutex<EmbeddingBackend>>,
     filler_embeddings: Vec<Vec<f32>>,
@@ -247,6 +269,7 @@ pub struct OnnxEmbeddingFilter {
     segmenter: Segmenter,
 }
 
+#[allow(deprecated)]
 impl OnnxEmbeddingFilter {
     /// Load a backend from `model_dir` and drive it with the English
     /// lexicon. Preserved as the zero-argument entry point the
@@ -434,6 +457,7 @@ impl OnnxEmbeddingFilter {
     }
 }
 
+#[allow(deprecated)]
 #[async_trait]
 impl TextFilter for OnnxEmbeddingFilter {
     async fn filter(&self, text: &str) -> Result<FilterResult, FilterError> {

@@ -1,0 +1,188 @@
+{
+  "schema_version": 1,
+  "description": "PhonemeCorrector composite-score calibration: alpha sweep of `alpha*phoneme_sim + (1-alpha)*text_sim` against tests/evaluation/annotations/en_phoneme_correction.jsonl at threshold 0.85. Produced by examples/eval_l3.rs --task phoneme-correction. Correction-pair F1.",
+  "phoneme_only_baseline": {
+    "alpha": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0
+  },
+  "runs": [
+    {
+      "label": "bge-small-en-v1.5",
+      "model_dir": "vendor/embedder_bge_small",
+      "lang": "en",
+      "threshold": 0.85,
+      "sweep": {
+        "0.50": {
+          "tp": 9,
+          "fp": 0,
+          "fn": 10,
+          "precision": 1.0,
+          "recall": 0.474,
+          "f1": 0.643
+        },
+        "0.55": {
+          "tp": 10,
+          "fp": 0,
+          "fn": 9,
+          "precision": 1.0,
+          "recall": 0.526,
+          "f1": 0.69
+        },
+        "0.60": {
+          "tp": 11,
+          "fp": 0,
+          "fn": 8,
+          "precision": 1.0,
+          "recall": 0.579,
+          "f1": 0.733
+        },
+        "0.65": {
+          "tp": 15,
+          "fp": 0,
+          "fn": 4,
+          "precision": 1.0,
+          "recall": 0.789,
+          "f1": 0.882
+        },
+        "0.70": {
+          "tp": 15,
+          "fp": 0,
+          "fn": 4,
+          "precision": 1.0,
+          "recall": 0.789,
+          "f1": 0.882
+        },
+        "0.75": {
+          "tp": 18,
+          "fp": 0,
+          "fn": 1,
+          "precision": 1.0,
+          "recall": 0.947,
+          "f1": 0.973
+        },
+        "0.80": {
+          "tp": 18,
+          "fp": 0,
+          "fn": 1,
+          "precision": 1.0,
+          "recall": 0.947,
+          "f1": 0.973
+        },
+        "0.85": {
+          "tp": 18,
+          "fp": 0,
+          "fn": 1,
+          "precision": 1.0,
+          "recall": 0.947,
+          "f1": 0.973
+        },
+        "0.90": {
+          "tp": 19,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "0.95": {
+          "tp": 19,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        }
+      }
+    },
+    {
+      "label": "granite-embedding-97m-multilingual-r2",
+      "model_dir": "vendor/embedder_granite_97m",
+      "lang": "en",
+      "threshold": 0.85,
+      "sweep": {
+        "0.50": {
+          "tp": 18,
+          "fp": 0,
+          "fn": 1,
+          "precision": 1.0,
+          "recall": 0.947,
+          "f1": 0.973
+        },
+        "0.55": {
+          "tp": 18,
+          "fp": 0,
+          "fn": 1,
+          "precision": 1.0,
+          "recall": 0.947,
+          "f1": 0.973
+        },
+        "0.60": {
+          "tp": 19,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "0.65": {
+          "tp": 19,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "0.70": {
+          "tp": 19,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "0.75": {
+          "tp": 19,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "0.80": {
+          "tp": 19,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "0.85": {
+          "tp": 19,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "0.90": {
+          "tp": 19,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "0.95": {
+          "tp": 19,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        }
+      }
+    }
+  ]
+}

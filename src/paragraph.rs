@@ -49,6 +49,32 @@ fn split_sentences(text: &str) -> Vec<String> {
 // ParagraphSplitter
 // ---------------------------------------------------------------------------
 
+/// Adjacent-sentence similarity thresholds below which a paragraph
+/// break is inserted, per embedding backend.
+///
+/// **Provisional.** Unlike `onnx_processing::calibrated` and
+/// `phoneme::calibrated_alpha`, these are *not* fitted to gold data —
+/// no paragraph-boundary corpus exists in this repository
+/// (`docs/model-upgrade-candidates.md` §5). They are derived from the
+/// similarity range the backends produce on the multilingual probes in
+/// `examples/check_embedder.rs`, which is enough to avoid a threshold
+/// that can never fire but not enough to claim an operating point.
+///
+/// The failure they exist to prevent is silent: `granite` scores even
+/// unrelated short strings at 0.62–0.75, so the historical default of
+/// 0.5 would leave the semantic path dead on that backend and quietly
+/// reduce `ParagraphSplitter` to its max-sentences constraint.
+pub mod calibrated_similarity {
+    /// `BAAI/bge-small-en-v1.5`. Unrelated English pairs measured
+    /// 0.45, related 0.83.
+    pub const BGE_SMALL_EN_V1_5: f32 = 0.65;
+
+    /// `ibm-granite/granite-embedding-97m-multilingual-r2`. Unrelated
+    /// pairs measured 0.62–0.75 across en/ja/zh/ko/es, related
+    /// 0.85–0.95.
+    pub const GRANITE_97M_MULTILINGUAL_R2: f32 = 0.80;
+}
+
 /// Splits dictation text into paragraphs using semantic similarity
 /// and maximum-length constraints.
 ///
@@ -328,6 +354,42 @@ mod tests {
     fn test_split_sentences_empty() {
         let s = split_sentences("");
         assert!(s.is_empty());
+    }
+
+    #[test]
+    fn calibrated_similarity_values_are_valid_cosines() {
+        for t in [
+            calibrated_similarity::BGE_SMALL_EN_V1_5,
+            calibrated_similarity::GRANITE_97M_MULTILINGUAL_R2,
+        ] {
+            assert!((0.0..=1.0).contains(&t), "threshold {t} out of range");
+        }
+    }
+
+    #[test]
+    fn granite_needs_a_higher_split_threshold_than_bge_small() {
+        const {
+            assert!(
+                calibrated_similarity::GRANITE_97M_MULTILINGUAL_R2
+                    > calibrated_similarity::BGE_SMALL_EN_V1_5
+            )
+        };
+    }
+
+    #[test]
+    fn historical_default_would_never_fire_on_granite() {
+        // Documents the bug the constants exist to prevent: unrelated
+        // strings score 0.62+ on granite, so a 0.5 threshold is below
+        // the entire observed range and the semantic path goes dead.
+        const HISTORICAL_DEFAULT: f32 = 0.5;
+        const GRANITE_OBSERVED_MIN_UNRELATED: f32 = 0.62;
+        const { assert!(HISTORICAL_DEFAULT < GRANITE_OBSERVED_MIN_UNRELATED) };
+        const {
+            assert!(
+                calibrated_similarity::GRANITE_97M_MULTILINGUAL_R2
+                    > GRANITE_OBSERVED_MIN_UNRELATED
+            )
+        };
     }
 
     #[tokio::test]

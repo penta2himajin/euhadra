@@ -156,6 +156,32 @@ pub trait G2pBackend: Send + Sync {
 /// For multi-word ASR errors (e.g., "use effect" for "useEffect"), the
 /// corrector also tries merging adjacent words and comparing the merged
 /// phoneme string.
+/// Minimum safe `alpha` for the composite phoneme+semantic score,
+/// measured per embedding backend.
+///
+/// `PhonemeCorrector` blends `alpha * phoneme_sim + (1-alpha) *
+/// text_sim`. Lowering `alpha` gives the semantic term more weight; how
+/// far it can be lowered before real corrections fall under
+/// `threshold` is a property of the embedding space, not of the task.
+///
+/// Measured on `tests/evaluation/annotations/en_phoneme_correction.jsonl`
+/// via `eval_l3 --task phoneme-correction --embedder-dir ... --alpha ...`
+/// at the default threshold 0.85. Full sweep in
+/// `docs/model-upgrade-candidates.md` §5.
+pub mod calibrated_alpha {
+    /// `BAAI/bge-small-en-v1.5`. Correction-pair F1 holds at 1.000 only
+    /// from 0.90 up; it degrades to 0.973 at 0.85, 0.882 at 0.70 and
+    /// 0.643 at 0.50. Note this means the `alpha = 0.7` configuration
+    /// that `docs/spec.md` §6.4 gives as the worked example loses three
+    /// of nineteen corrections on this backend.
+    pub const BGE_SMALL_EN_V1_5: f32 = 0.90;
+
+    /// `ibm-granite/granite-embedding-97m-multilingual-r2`. Holds 1.000
+    /// all the way down to 0.60, so the documented 0.70 works as
+    /// written and there is real headroom below it.
+    pub const GRANITE_97M_MULTILINGUAL_R2: f32 = 0.60;
+}
+
 pub struct PhonemeCorrector {
     ipa_dict: IpaDictionary,
     custom_entries: Vec<CustomEntry>,
@@ -661,6 +687,45 @@ impl TextEmbedder for OnnxTextEmbedder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn calibrated_alpha_values_are_valid_weights() {
+        for a in [
+            calibrated_alpha::BGE_SMALL_EN_V1_5,
+            calibrated_alpha::GRANITE_97M_MULTILINGUAL_R2,
+        ] {
+            assert!((0.0..=1.0).contains(&a), "alpha {a} out of range");
+        }
+    }
+
+    #[test]
+    fn granite_tolerates_a_lower_alpha_than_bge_small() {
+        // The measured reason to migrate the Tier 2 embedder: granite
+        // keeps the semantic term usable at weights where bge-small
+        // has already started dropping real corrections.
+        const {
+            assert!(
+                calibrated_alpha::GRANITE_97M_MULTILINGUAL_R2
+                    < calibrated_alpha::BGE_SMALL_EN_V1_5
+            )
+        };
+    }
+
+    #[test]
+    fn documented_spec_alpha_is_safe_only_on_granite() {
+        // `docs/spec.md` §6.4 works its example at alpha = 0.7.
+        const SPEC_EXAMPLE_ALPHA: f32 = 0.7;
+        const { assert!(SPEC_EXAMPLE_ALPHA >= calibrated_alpha::GRANITE_97M_MULTILINGUAL_R2) };
+        const { assert!(SPEC_EXAMPLE_ALPHA < calibrated_alpha::BGE_SMALL_EN_V1_5) };
+    }
+
+    #[test]
+    fn default_corrector_uses_phoneme_only_scoring() {
+        // alpha = 1.0 means the embedder is never consulted, which is
+        // why the composite path shipped unmeasured until now.
+        let c = PhonemeCorrector::new(IpaDictionary::empty(), vec![]);
+        assert_eq!(c.alpha, 1.0);
+    }
 
     #[test]
     fn test_phoneme_distance_identical() {

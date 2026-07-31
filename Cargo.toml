@@ -71,3 +71,9 @@ rustfft = "6"
 [[example]]
 name = "bench_embedder"
 required-features = ["onnx"]
+
+# CI smoke check that an embedding backend is functional in all five
+# pipeline languages. Instantiates `EmbeddingBackend` directly.
+[[example]]
+name = "check_embedder"
+required-features = ["onnx"]

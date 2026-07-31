@@ -54,7 +54,9 @@ Used by the Tier 1 `OnnxEmbeddingFilter` and the Tier 2
 `OnnxTextEmbedder` (`PhonemeCorrector` / `ParagraphSplitter`).
 `scripts/setup_embedders.sh` downloads these; the comparison behind
 the shortlist is in
-[`model-upgrade-candidates.md`](./model-upgrade-candidates.md) §3.
+[`model-upgrade-candidates.md`](./model-upgrade-candidates.md) §3 and
+§5. `granite-embedding-97m-multilingual-r2` is what the
+`evaluate (embedding backend)` CI job pulls.
 
 | Model | SPDX / Label | License declaration | License text |
 |---|---|---|---|
