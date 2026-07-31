@@ -29,6 +29,7 @@ Current measured baseline (`docs/benchmarks/ci_baseline.json`):
 | Architecture | Encoder/decoder; 809M params; 4 decoder layers (vs 32 in large-v3) |
 | Korean reported | OpenAI's turbo announcement evaluates Korean with **CER** rather than WER but does **not publish the numeric value** for FLEURS-ko or CommonVoice-ko ([discussion #2363](https://github.com/openai/whisper/discussions/2363)). large-v3 announcement places Korean in the "10–20% error-rate reduction vs large-v2" bucket ([discussion #1762](https://github.com/openai/whisper/discussions/1762)). We have to measure it ourselves. |
 | Integration cost | **Zero**. Existing `WhisperLocal` already loads any GGML/whisper.cpp-compatible Whisper checkpoint; pointing `ko` at this model is one config line on the Menura side. |
+| Latency breakdown | §A.2: ~90% of per-utterance cost is a fixed 30-second encoder pass that runs identically for 0.5 s and 18.9 s of audio, and the q4 quantisation we default to is *slower* than no quantisation on the ORT CPU EP. |
 | Verdict | **Recommended replacement for ko**. Measured FLEURS-ko CER 1.96% via transformers FP32 and **1.52% via whisper.cpp Q5_0** — better than SenseVoice's 6.64% baseline by ~4×. Q5_0 incurs no measurable accuracy loss vs FP32. RTF is the only trade-off: this session container's shared 4-core Xeon @ 2.1 GHz reaches RTF 2.0; typical user hardware (Apple M-series, modern Ryzen / Core) lands ~RTF 0.05–0.4 per community reports. The CER win + clean MIT licence justify the trade-off for dictation use cases where accuracy dominates. See A.1 below. |
 
 #### A.1 Measured FLEURS-ko 10-utt CER + RTF (2026-05-16)
@@ -81,6 +82,115 @@ Bench scripts (kept under `/tmp/`, not committed):
 - `/tmp/ko_bench_whispercpp.py` — turbo Q5_0 via whisper.cpp, per-utt
 - `/tmp/ko_bench_whispercpp_batch.py` — turbo Q5_0 via whisper.cpp, batched
 - Lenient rescore via a throwaway `examples/score_ko_bench.rs` (also not committed)
+
+#### A.2 Where the time actually goes (2026-07-31)
+
+Section A.1 established that turbo is accurate on `ko` and slow. This
+run decomposes the slowness, on the same 10-utterance FLEURS-ko subset
+via `examples/bench_whisper_onnx_ko.rs`.
+
+**This container is roughly 2× faster than the CI runner**: the same q4
+configuration that `ci_baseline.json` records at RTF 1.339 measures
+0.675 here. Absolute numbers below are therefore not comparable with
+the committed baseline; every comparison in this section is
+within-container and holds.
+
+##### Cost is fixed per utterance, not per second of audio
+
+The mel front-end pads every input to 30 seconds (`whisper_onnx::mel`,
+`N_SAMPLES = 480_000`), so the encoder runs the same amount of work
+whatever the audio length. Measured at q4, across audio spanning 3.9×
+in duration:
+
+| audio | ASR time | implied RTF |
+|---|---|---|
+| 4.80 s | 7048 ms | 1.47 |
+| 7.02 s | 7004 ms | 1.00 |
+| 12.48 s | 8470 ms | 0.68 |
+| 18.90 s | 8363 ms | 0.44 |
+
+Duration varies 3.9×, time varies 1.21×. Feeding **0.5 s of silence**
+costs 6.5–9.5 s — the same as a twelve-second sentence. So better than
+90% of per-utterance cost is the fixed encoder pass, and **RTF is a
+misleading headline for this workload**: it improves with longer audio
+purely because the constant is amortised. The number that matters for
+dictation is the fixed ~7 s wait, and dictation utterances are short.
+
+This bites turbo specifically. `large-v3-turbo` cut the decoder from 32
+layers to 4, which leaves roughly 78% of its 809M parameters in the
+encoder — the part that always runs on 30 seconds.
+
+##### q4 buys no speed at all
+
+Isolated on 0.5 s of silence, so the measurement is the encoder pass:
+
+| encoder | fixed pass |
+|---|---|
+| **int8** | **~3.6 s** |
+| fp32 | ~7.2 s |
+| q4 (current default) | ~7.8 s |
+
+**q4 is slower than not quantising.** ONNX Runtime's CPU EP has no
+optimised 4-bit kernels, so dequantisation costs more than the memory
+traffic it saves. q4 was chosen in the first place for accuracy and
+loadability — the int8 decoder degenerates and fp16 will not load on
+the CPU EP — never for speed. It is a cost being paid for nothing.
+
+##### Full comparison, 10 utterances
+
+| encoder | decoder | RTF | CER (lenient) |
+|---|---|---|---|
+| q4 | q4 (current default) | 0.675 | **0.0095** |
+| fp32 | q4 | 0.737 | 0.0135 |
+| **int8** | q4 | **0.367** | 0.0505 |
+| int8 | int8 | 0.415 | 1.2671 |
+| quantized | quantized | 0.420 | 1.5548 |
+
+The int8 and `quantized` decoders collapse, confirming §A.1's note.
+
+The int8 **encoder** is more interesting: 1.8× faster overall, and its
+CER regression is not a uniform degradation but a single utterance
+falling into a repetition loop —
+
+```
+1715 (18.90 s): cer=2.7763 asr=19700 ms
+  hyp="지하철의 정규 안내 방송은 카탈로니아어로라잇라잇라잇라잇…"
+```
+
+The other nine ran in 4.2–4.8 s at CER 0.0000–0.0566. The loop also
+destroys latency, since it runs to the token limit. A repetition
+penalty or no-repeat-ngram constraint might contain it; untested.
+
+##### The 30 s window cannot be shortened in this export
+
+```
+input : input_features ['batch_size', 128, 3000]
+```
+
+The mel axis is fixed, not dynamic, so shorter audio cannot simply be
+fed as-is. Shortening it means re-exporting from PyTorch with the
+positional embeddings sliced — the approach faster-whisper and
+whisper.cpp take — which is a known technique but a real piece of work.
+
+##### What this implies
+
+The slowness decomposes into a fixed 30-second encoder pass (~90% of
+the cost) multiplied by a quantisation that is slower than none. Both
+follow from the model choice, and the headroom available without
+changing it is limited:
+
+- **int8 encoder** — 1.8× faster, contingent on containing the
+  repetition collapse. Even if that works, RTF 0.37 is still an order
+  of magnitude behind `paraformer-large`'s 0.035 on `zh`.
+- **Shortening the window** — up to 2.7× on this utterance-length
+  distribution, but requires a re-export and only pays off while we
+  stay on Whisper.
+
+Against that, `Qwen3-ASR-0.6B` carries a **180M** encoder against
+turbo's 635M and has no fixed-window constraint
+([`model-upgrade-candidates.md`](./model-upgrade-candidates.md) §2.1).
+Replacing the backend looks like better value than tuning this one.
+
 
 ### B. `kresnik/wav2vec2-large-xlsr-korean`
 
