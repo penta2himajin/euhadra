@@ -65,3 +65,9 @@ async-trait = "0.1"
 # so default cargo build stays lean.
 rustfft = "6"
 
+
+# Tier 1 embedding-backend calibration bench. Needs the onnx feature
+# because it instantiates `OnnxEmbeddingFilter` directly.
+[[example]]
+name = "bench_embedder"
+required-features = ["onnx"]

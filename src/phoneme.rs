@@ -625,30 +625,18 @@ impl G2pBackend for OnnxG2p {
 /// - `tokenizer.json` — HuggingFace tokenizer
 #[cfg(feature = "onnx")]
 pub struct OnnxTextEmbedder {
-    session: std::sync::Mutex<ort::session::Session>,
-    tokenizer: tokenizers::Tokenizer,
+    backend: std::sync::Mutex<crate::embedding::EmbeddingBackend>,
 }
 
 #[cfg(feature = "onnx")]
 impl OnnxTextEmbedder {
     /// Load from a directory containing `model.onnx` and `tokenizer.json`.
     pub fn load(model_dir: impl AsRef<Path>) -> Result<Self, ProcessError> {
-        let dir = model_dir.as_ref();
-        let session = ort::session::Session::builder()
-            .and_then(|mut b| b.commit_from_file(dir.join("model.onnx")))
-            .map_err(|e| ProcessError {
-                message: format!("load embedder: {e}"),
-            })?;
-        let tokenizer =
-            tokenizers::Tokenizer::from_file(dir.join("tokenizer.json")).map_err(|e| {
-                ProcessError {
-                    message: format!("load tokenizer: {e}"),
-                }
-            })?;
+        let backend = crate::embedding::EmbeddingBackend::load(model_dir)
+            .map_err(|e| ProcessError { message: e })?;
         tracing::info!("ONNX text embedder loaded");
         Ok(Self {
-            session: std::sync::Mutex::new(session),
-            tokenizer,
+            backend: std::sync::Mutex::new(backend),
         })
     }
 }
@@ -656,82 +644,13 @@ impl OnnxTextEmbedder {
 #[cfg(feature = "onnx")]
 impl TextEmbedder for OnnxTextEmbedder {
     fn embed(&self, text: &str) -> Result<Vec<f32>, ProcessError> {
-        use ndarray::Array2;
-        use ort::value::Value;
-
-        let enc = self
-            .tokenizer
-            .encode(text, true)
+        let mut backend = self
+            .backend
+            .lock()
             .map_err(|e| ProcessError {
-                message: format!("tokenize: {e}"),
+                message: format!("embedder mutex poisoned: {e}"),
             })?;
-
-        let len = enc.get_ids().len();
-        let ids =
-            Array2::from_shape_vec((1, len), enc.get_ids().iter().map(|&x| x as i64).collect())
-                .unwrap();
-        let mask = Array2::from_shape_vec(
-            (1, len),
-            enc.get_attention_mask().iter().map(|&x| x as i64).collect(),
-        )
-        .unwrap();
-        let tids = Array2::from_shape_vec(
-            (1, len),
-            enc.get_type_ids().iter().map(|&x| x as i64).collect(),
-        )
-        .unwrap();
-
-        let mut session = self.session.lock().unwrap();
-        let outputs = session
-            .run(vec![
-                (
-                    "input_ids",
-                    Value::from_array(ids)
-                        .map_err(|e| ProcessError {
-                            message: format!("{e}"),
-                        })?
-                        .into_dyn(),
-                ),
-                (
-                    "attention_mask",
-                    Value::from_array(mask)
-                        .map_err(|e| ProcessError {
-                            message: format!("{e}"),
-                        })?
-                        .into_dyn(),
-                ),
-                (
-                    "token_type_ids",
-                    Value::from_array(tids)
-                        .map_err(|e| ProcessError {
-                            message: format!("{e}"),
-                        })?
-                        .into_dyn(),
-                ),
-            ])
-            .map_err(|e| ProcessError {
-                message: format!("embed: {e}"),
-            })?;
-
-        let arr = outputs[0]
-            .try_extract_array::<f32>()
-            .map_err(|e| ProcessError {
-                message: format!("extract: {e}"),
-            })?;
-        let view = arr.view();
-        let hidden_dim = view.shape()[2];
-        let cls: Vec<f32> = (0..hidden_dim).map(|i| view[[0, 0, i]]).collect();
-
-        drop(outputs);
-        drop(session);
-
-        // L2 normalize
-        let norm: f32 = cls.iter().map(|x| x * x).sum::<f32>().sqrt();
-        if norm > 0.0 {
-            Ok(cls.iter().map(|x| x / norm).collect())
-        } else {
-            Ok(cls)
-        }
+        backend.embed(text).map_err(|e| ProcessError { message: e })
     }
 }
 

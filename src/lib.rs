@@ -15,6 +15,9 @@ pub mod types;
 pub mod whisper_local;
 
 #[cfg(feature = "onnx")]
+pub mod embedding;
+
+#[cfg(feature = "onnx")]
 pub mod onnx_processing;
 
 #[cfg(feature = "onnx")]
