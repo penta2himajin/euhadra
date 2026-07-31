@@ -77,3 +77,9 @@ required-features = ["onnx"]
 [[example]]
 name = "check_embedder"
 required-features = ["onnx"]
+
+# Paragraph-segmentation evaluation (Pk / WindowDiff). Needs the onnx
+# feature for the embedding segmenters; the baselines alone would not.
+[[example]]
+name = "eval_paragraph"
+required-features = ["onnx"]

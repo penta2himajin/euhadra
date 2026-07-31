@@ -1,0 +1,79 @@
+{
+  "corpus": "data/paragraph_corpus/choi_ko.jsonl",
+  "documents": 30,
+  "gold_boundaries": 150,
+  "lang": "ko",
+  "results": [
+    {
+      "boundary_f1": 0.0,
+      "fn": 150,
+      "fp": 0,
+      "pk": 0.42529694172946025,
+      "predicted": 0,
+      "segmenter": "baseline: no split",
+      "tp": 0,
+      "window_diff": 0.42529694172946025
+    },
+    {
+      "boundary_f1": 0.2138364779874214,
+      "fn": 116,
+      "fp": 134,
+      "pk": 0.4401085367099512,
+      "predicted": 168,
+      "segmenter": "baseline: uniform every 5",
+      "tp": 34,
+      "window_diff": 0.4456526284207097
+    },
+    {
+      "boundary_f1": 0.09333333333333334,
+      "fn": 136,
+      "fp": 136,
+      "pk": 0.5017481909544819,
+      "predicted": 150,
+      "segmenter": "baseline: random (gold count)",
+      "tp": 14,
+      "window_diff": 0.5155456851424342
+    },
+    {
+      "boundary_f1": 0.7022471910112359,
+      "fn": 25,
+      "fp": 81,
+      "pk": 0.2164157786975581,
+      "predicted": 206,
+      "segmenter": "depth ratio 0.3",
+      "tp": 125,
+      "window_diff": 0.24878951759310367
+    },
+    {
+      "boundary_f1": 0.7137809187279153,
+      "fn": 49,
+      "fp": 32,
+      "pk": 0.18410264585111344,
+      "predicted": 133,
+      "segmenter": "depth ratio 0.5",
+      "tp": 101,
+      "window_diff": 0.19438180601645247
+    },
+    {
+      "boundary_f1": 0.593886462882096,
+      "fn": 82,
+      "fp": 11,
+      "pk": 0.24155709782881854,
+      "predicted": 79,
+      "segmenter": "depth ratio 0.7",
+      "tp": 68,
+      "window_diff": 0.24493800719346778
+    },
+    {
+      "boundary_f1": 0.7016393442622951,
+      "fn": 43,
+      "fp": 48,
+      "pk": 0.207134549947925,
+      "predicted": 155,
+      "segmenter": "depth ratio 0.5 + centring",
+      "tp": 107,
+      "window_diff": 0.23067772195054728
+    }
+  ],
+  "sentences": 932
+}

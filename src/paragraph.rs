@@ -21,7 +21,12 @@ use crate::types::{ContextSnapshot, FieldType};
 
 /// Split text into sentences on `.` `!` `?` boundaries.
 /// Preserves the delimiter attached to the sentence.
-fn split_sentences(text: &str) -> Vec<String> {
+///
+/// Public so the segmentation evaluator can build gold boundary
+/// indices with the same tokenisation the splitter uses. A second,
+/// subtly different sentence splitter in the evaluator would silently
+/// shift every gold index.
+pub fn split_sentences(text: &str) -> Vec<String> {
     let mut sentences = Vec::new();
     let mut current = String::new();
 
@@ -91,6 +96,19 @@ pub struct ParagraphSplitter {
     /// down does not move it.
     /// Default: 0.05
     pub min_similarity_range: f32,
+    /// Subtract the document's own mean sentence embedding before
+    /// computing similarities.
+    ///
+    /// Embedding spaces are anisotropic — vectors occupy a narrow cone,
+    /// which is why unrelated text still scores 0.6-0.7. Centring on
+    /// the document mean removes that shared component and spreads the
+    /// remaining similarities out, so valleys become more pronounced.
+    /// It is the cheapest member of the whitening family (one mean
+    /// vector, no covariance estimate).
+    /// Default: false — the depth rule is already shift-invariant, so
+    /// this is an accuracy question rather than a correctness one, and
+    /// `docs/model-upgrade-candidates.md` §6 measures whether it pays.
+    pub center_embeddings: bool,
     /// Maximum number of sentences per paragraph.
     /// When exceeded, the paragraph is split at the point of lowest
     /// inter-sentence similarity (or at the midpoint if no embedder).
@@ -114,6 +132,7 @@ impl ParagraphSplitter {
             embedder: None,
             depth_ratio: 0.5,
             min_similarity_range: 0.05,
+            center_embeddings: false,
             max_sentences: 8,
             separator: "\n\n".to_string(),
         }
@@ -136,6 +155,25 @@ impl ParagraphSplitter {
     pub fn with_min_similarity_range(mut self, range: f32) -> Self {
         self.min_similarity_range = range;
         self
+    }
+
+    /// Builder: centre sentence embeddings on the document mean.
+    pub fn with_center_embeddings(mut self, center: bool) -> Self {
+        self.center_embeddings = center;
+        self
+    }
+
+    /// Break points for an already-split sentence list.
+    ///
+    /// The evaluation entry point: `process` has to round-trip through
+    /// text, which makes it impossible to line predicted breaks up with
+    /// gold sentence indices. Scoring the same function the pipeline
+    /// uses avoids a second, subtly different implementation in the
+    /// evaluator.
+    pub fn breaks_for_sentences(&self, sentences: &[String]) -> Vec<usize> {
+        let embeddings = self.embed_sentences(sentences);
+        let similarities = self.inter_sentence_similarities(&embeddings);
+        self.find_breaks(sentences.len(), &similarities)
     }
 
     /// Builder: set max sentences per paragraph.
@@ -179,12 +217,59 @@ impl ParagraphSplitter {
             .max(0.0)
     }
 
+    /// Subtract the mean of the present embeddings from each, then
+    /// re-normalise. A no-op when fewer than two are present, since a
+    /// single vector centred on itself is zero.
+    fn center(embeddings: &[Option<Vec<f32>>]) -> Vec<Option<Vec<f32>>> {
+        let present: Vec<&Vec<f32>> = embeddings.iter().flatten().collect();
+        if present.len() < 2 {
+            return embeddings.to_vec();
+        }
+        let dim = present[0].len();
+        if present.iter().any(|v| v.len() != dim) {
+            return embeddings.to_vec();
+        }
+
+        let mut mean = vec![0.0f32; dim];
+        for v in &present {
+            for (m, x) in mean.iter_mut().zip(v.iter()) {
+                *m += x;
+            }
+        }
+        for m in mean.iter_mut() {
+            *m /= present.len() as f32;
+        }
+
+        embeddings
+            .iter()
+            .map(|e| {
+                e.as_ref().map(|v| {
+                    let mut c: Vec<f32> = v.iter().zip(&mean).map(|(x, m)| x - m).collect();
+                    let norm: f32 = c.iter().map(|x| x * x).sum::<f32>().sqrt();
+                    if norm > 0.0 {
+                        for x in c.iter_mut() {
+                            *x /= norm;
+                        }
+                    }
+                    c
+                })
+            })
+            .collect()
+    }
+
     /// Compute inter-sentence similarities. Returns N-1 similarity values
     /// where result[i] = similarity(sentence[i], sentence[i+1]).
     fn inter_sentence_similarities(&self, embeddings: &[Option<Vec<f32>>]) -> Vec<Option<f32>> {
         if embeddings.len() < 2 {
             return vec![];
         }
+        let owned;
+        let embeddings = if self.center_embeddings {
+            owned = Self::center(embeddings);
+            &owned[..]
+        } else {
+            embeddings
+        };
 
         (0..embeddings.len() - 1)
             .map(|i| match (&embeddings[i], &embeddings[i + 1]) {

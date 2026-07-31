@@ -436,9 +436,11 @@ nothing to assert it against — see below.
 Both Tier 2 consumers are limited by missing data, and no threshold or
 backend choice changes that:
 
-- **No paragraph-boundary corpus exists at all.** `ParagraphSplitter`
-  has never been scored, in any language. §5.3's thresholds are
-  inferred from probe behaviour, not fitted.
+- ~~**No paragraph-boundary corpus exists at all.**~~ **Closed by §6.**
+  `scripts/download_paragraph_corpus.py` builds one from Wikipedia and
+  `examples/eval_paragraph.rs` scores against it in all five languages.
+  The result is split: the valley rule finds real topic shifts well
+  (§6.1) and does not reproduce author paragraphing (§6.2).
 - **Phoneme-correction gold is English-only**, and saturated at F1
   1.000 by the phoneme-only path. It can detect a backend making
   things *worse* — which is exactly what it did in §5.2 — but it
@@ -450,3 +452,124 @@ correction beyond English (which needs per-language G2P and IPA
 tables), are the prerequisites for any real multilingual accuracy
 claim. Until then the honest framing is: granite is a strictly safer
 backend on the evidence available, not a demonstrated better one.
+
+---
+
+## 6. Measured: does the splitter break in the right places?
+
+§5.3 replaced the splitter's absolute threshold with a valley rule and
+proved it portable. §5.5 recorded what that still did not establish:
+whether the valleys it picks are the *right* places to break. That was
+unmeasured in every language because no paragraph-boundary corpus
+existed. This section is that measurement.
+
+**Corpus**: `scripts/download_paragraph_corpus.py` builds one from
+Wikipedia (CC-BY-SA 4.0, fetched on demand, gitignored) in the two
+shapes the segmentation literature uses:
+
+- **`choi`** — Choi-style synthetic concatenation: six paragraphs drawn
+  from six *different* articles, so boundaries are known by
+  construction rather than annotated. 30 documents per language.
+- **`author`** — one article's own paragraphs in order, with the gold
+  boundaries where its author put them. Harder and noisier, since
+  paragraph breaks are partly stylistic.
+
+**Metrics**: Pk and WindowDiff, both window penalties where **lower is
+better**. Exact-match F1 is the wrong instrument — it scores a break
+one sentence off as both a false positive and a false negative, so it
+cannot tell "nearly right" from "random".
+
+Reproduce with:
+
+```bash
+scripts/download_paragraph_corpus.py
+EMBEDDER_MODEL=granite scripts/setup_embedders.sh
+cargo run --release --features onnx --example eval_paragraph -- \
+    --corpus data/paragraph_corpus/choi_ja.jsonl \
+    --embedder-dir vendor/embedder_granite_97m
+```
+
+Raw reports:
+[`benchmarks/paragraph_segmentation/`](./benchmarks/paragraph_segmentation/).
+
+### 6.1 Synthetic topic shifts: the rule works, in all five languages
+
+WindowDiff, `granite-embedding-97m-multilingual-r2`:
+
+| segmenter | en | ja | zh | ko | es |
+|---|---|---|---|---|---|
+| baseline: no split | 0.460 | 0.459 | 0.445 | 0.425 | 0.466 |
+| baseline: uniform (per-corpus k) | 0.509 | 0.508 | 0.484 | 0.446 | 0.487 |
+| baseline: random (gold count) | 0.528 | 0.552 | 0.509 | 0.516 | 0.522 |
+| depth ratio 0.3 | 0.162 | 0.244 | 0.249 | 0.249 | 0.291 |
+| **depth ratio 0.5** (default) | **0.122** | **0.154** | **0.178** | **0.194** | **0.244** |
+| depth ratio 0.7 | 0.172 | 0.252 | 0.191 | 0.245 | 0.304 |
+| depth ratio 0.5 + centring | 0.160 | 0.180 | 0.162 | 0.231 | 0.328 |
+
+Two to four times better than every baseline, in every language, and it
+predicts close to the right number of boundaries (133–172 against 150
+gold). **The valleys are at real topic changes.** This is also the
+first evidence of any kind that the splitter works outside English.
+
+The uniform baseline scoring *worse* than not splitting at all is worth
+noting on its own: the gold segments are not uniform in length, so the
+`max_sentences` constraint alone would be a poor segmenter. The
+semantic path is carrying the result.
+
+**depth ratio 0.5 wins in all five languages**, which is the shipped
+default — chosen before this corpus existed, and now supported by it.
+
+### 6.2 Author paragraph structure: it does not reproduce that
+
+Same corpus builder, real articles:
+
+| segmenter | en | ja | zh | ko | es |
+|---|---|---|---|---|---|
+| baseline: no split | 0.515 | 0.432 | 0.427 | 0.434 | 0.487 |
+| baseline: random (gold count) | 0.561 | 0.490 | 0.464 | 0.460 | 0.529 |
+| depth ratio 0.5 | 0.499 | 0.391 | 0.366 | 0.368 | 0.454 |
+| depth ratio 0.5 + centring | 0.421 | 0.365 | 0.403 | 0.395 | 0.467 |
+
+On English it is 0.499 against 0.515 for **not splitting at all** —
+inside the noise. CJK does better (0.366–0.391 against 0.427–0.434) but
+the margin is nothing like §6.1's.
+
+Stated plainly: **the semantic signal does not recover an author's
+paragraphing.** That is not surprising — paragraph breaks inside one
+article are largely stylistic and length-driven, and the topic barely
+moves across them — but it is a real limit and it bounds what this
+layer should be claimed to do.
+
+Which task matters more depends on the use case. A user dictating who
+finishes one subject and starts another is the §6.1 situation, and the
+splitter handles it well. Matching a writer's stylistic paragraphing is
+the §6.2 situation, and it does not. For a dictation tool the first is
+the competence worth having, but the second is what a user comparing
+output against their own writing would notice.
+
+### 6.3 Centring does not pay
+
+Subtracting the document's mean sentence embedding — the cheapest
+member of the whitening family, the standard first move against
+embedding anisotropy — helps in 4 of the 10 cells above and hurts in 6,
+with no pattern by language or task. It stays available
+(`with_center_embeddings`) and stays **off by default**.
+
+The reason it was worth testing anyway: anisotropy is why unrelated
+text scores 0.6–0.7 in the first place, and correcting it at the vector
+level would have improved every consumer at once rather than each
+consumer's scoring rule separately. On this evidence it does not, for
+this consumer. §5.2's residual — that affine rescaling does not align
+the backends below alpha 0.60 — remains open, and a stronger vector-level
+correction (ZCA / all-but-the-top) or a distribution-free score mapping
+(empirical CDF) are the untested candidates.
+
+### 6.4 What is still not measured
+
+- Only `granite-embedding-97m-multilingual-r2` was run. The rule is
+  provably backend-invariant under a uniform shift (§5.3), but that is
+  an argument, not a second measurement.
+- Wikipedia prose is not dictation. Sentences are longer, better formed
+  and more topically coherent than ASR output, so §6.1 is likely
+  optimistic for the real input.
+- 30 synthetic documents and 14–20 articles per language.
