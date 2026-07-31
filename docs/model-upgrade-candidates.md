@@ -447,11 +447,13 @@ backend choice changes that:
   cannot demonstrate the semantic term making things better, and it
   says nothing about ja/zh/ko/es.
 
-Building a paragraph-boundary gold set, and extending phoneme
-correction beyond English (which needs per-language G2P and IPA
-tables), are the prerequisites for any real multilingual accuracy
-claim. Until then the honest framing is: granite is a strictly safer
-backend on the evidence available, not a demonstrated better one.
+The paragraph half of that is now done (§6). The phoneme half is not,
+and extending it beyond English needs per-language G2P and IPA tables
+before any multilingual accuracy claim is possible there. So the
+framing splits by consumer: for paragraph splitting there is now direct
+multilingual evidence; for phoneme correction, granite remains a
+strictly *safer* backend on the evidence available rather than a
+demonstrated better one.
 
 ---
 
@@ -572,4 +574,23 @@ correction (ZCA / all-but-the-top) or a distribution-free score mapping
 - Wikipedia prose is not dictation. Sentences are longer, better formed
   and more topically coherent than ASR output, so §6.1 is likely
   optimistic for the real input.
-- 30 synthetic documents and 14–20 articles per language.
+- 30 synthetic documents and 14–20 articles per language. Small enough
+  that a few-point difference between neighbouring `depth_ratio` values
+  should not be read as meaningful; the gap to the baselines is what
+  the sample supports.
+- **Not run in CI**, deliberately. The corpus is fetched over the
+  network from a third party, which does not belong in a per-PR gate:
+  a Wikipedia outage or an edit to one of the source articles would
+  turn into a red build unrelated to the change under review. It is a
+  release-time / research measurement, like the rest of L3
+  (`docs/evaluation.md` §1.3), and the committed reports under
+  `benchmarks/paragraph_segmentation/` are the record.
+- `min_similarity_range` (0.05) is unvalidated. It exists because a
+  purely relative rule always finds *some* lowest point and would split
+  uniform text, so *something* absolute has to stop it — but no
+  measurement here distinguishes 0.05 from 0.02 or 0.10. It is the
+  weakest number in the splitter.
+- The synthetic task joins paragraphs from unrelated articles, so its
+  topic shifts are sharper than the ones a dictating user produces when
+  moving between related subjects. §6.1 is an upper bound on that axis
+  too, not just on prose quality.

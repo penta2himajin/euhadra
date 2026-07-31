@@ -334,7 +334,12 @@ enum CorrectionKind {
 - `PunctuationRestorer` — CNN-BiLSTM ベースの句読点・大文字化モデル（ONNX, ~5MB）
 - `DisfluencyDetector` — 自己訂正検出モデル（reparandum/repair パターン検出, ~50MB）
 - `PhonemeCorrector` — 音素距離 + テキスト埋め込みによるカスタム辞書補正（CMUdict + G2P ONNX + bge-small）
-- `ParagraphSplitter` — 隣接文の類似度列の**谷**（局所最小 + 深さ `depth(i) = (left_peak − sim(i)) + (right_peak − sim(i))`）で分割する。深さは差分のみで決まるためバックエンド間のオフセットに不変。旧実装は絶対コサイン閾値 0.5 で、granite は無関係な文字列でも 0.62–0.75 を返すため意味的分割が一度も発火しなかった。ただし段落境界の gold データが存在せず、「切る位置が適切か」は全言語で未検証（[`model-upgrade-candidates.md`](./model-upgrade-candidates.md) §5.3 / §5.5）
+- `ParagraphSplitter` — 隣接文の類似度列の**谷**（局所最小 + 深さ `depth(i) = (left_peak − sim(i)) + (right_peak − sim(i))`）で分割する。深さは差分のみで決まるためバックエンド間のオフセットに不変。旧実装は絶対コサイン閾値 0.5 で、granite は無関係な文字列でも 0.62–0.75 を返すため意味的分割が一度も発火しなかった（[`model-upgrade-candidates.md`](./model-upgrade-candidates.md) §5.3）
+
+  **実測済みの能力と限界**（同 §6、Wikipedia 由来コーパス・WindowDiff）:
+  - **話題転換の検出は 5 言語すべてで機能する**。合成連結タスクで WD 0.122 (en) / 0.154 (ja) / 0.178 (zh) / 0.194 (ko) / 0.244 (es)、対して「分割なし」0.43–0.47、等間隔分割 0.45–0.51。既定の深さ比 0.5 が全言語で最良
+  - **著者の段落構成は再現できない**。実記事タスクでは en が 0.499 で「分割なし」の 0.515 と誤差の範囲。記事内の段落分けは文体・長さの都合が支配的で話題がほとんど動かないため。**この層は「話者が話題を変えた位置」を切るものであって、書き手の段落感覚を再現するものではない**
+  - 測定は granite のみ。Wikipedia の散文は dictation より整っているため §6.1 は楽観側。`min_similarity_range` は未検証。CI には入れていない（third-party のネットワーク取得のため）
 - `EntityRecognizer` — NER トークン分類モデル（DistilBERT-NER ONNX, ~65MB INT8）による固有表現検出（PER / LOC / ORG / MISC）
 - `RuleBasedProcessor` — ルールベースの整形（リスト検出、数値フォーマット等、依存ゼロ）
 

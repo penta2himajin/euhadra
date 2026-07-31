@@ -73,6 +73,22 @@ OSS default commercially clean (`docs/spec.md` §8), so it is not a
 candidate for a bundled default. Declaration:
 <https://www.liquid.ai/lfm-license>.
 
+## Evaluation corpora
+
+Fetched on demand by scripts under `scripts/`, never redistributed
+through this repository. Derived files land under gitignored paths.
+
+| Corpus | SPDX / Label | License declaration | License text |
+|---|---|---|---|
+| Wikipedia article text (`scripts/download_paragraph_corpus.py`, paragraph-segmentation evaluation) | `CC-BY-SA-4.0` | <https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use> | <https://creativecommons.org/licenses/by-sa/4.0/legalcode> |
+
+**CC-BY-SA note**: the share-alike condition attaches to the *text*.
+Only measurement outputs (Pk / WindowDiff figures under
+`docs/benchmarks/paragraph_segmentation/`) are committed, and those are
+factual results about our own code rather than derivative works of the
+articles. The article text itself is downloaded at evaluation time and
+is gitignored — see `docs/evaluation.md` §1 for the general policy.
+
 ## Runtime / framework licenses
 
 | Component | SPDX | License URL |
