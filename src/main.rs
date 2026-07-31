@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use euhadra::emitters::ClipboardEmitter;
 use euhadra::filter::{
-    ChineseFillerFilter, EmbeddingFillerFilter, JapaneseFillerFilter, SimpleFillerFilter,
+    ChineseFillerFilter, JapaneseFillerFilter, SimpleFillerFilter,
     SpanishFillerFilter,
 };
 use euhadra::mic::{self, MicConfig};
@@ -40,11 +40,6 @@ enum Commands {
         /// Language hint (e.g. "en", "ja"). Omit for auto-detect.
         #[arg(short, long)]
         language: Option<String>,
-
-        /// Path to filler_filter.py for embedding-based filler removal.
-        /// If omitted, uses the simple keyword-based filter.
-        #[arg(long)]
-        filler_script: Option<PathBuf>,
 
         /// Skip filler removal entirely.
         #[arg(long, default_value_t = false)]
@@ -131,7 +126,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             whisper_cli,
             model,
             language,
-            filler_script,
             no_filter,
             no_process,
         } => {
@@ -149,20 +143,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             builder = builder.asr(asr);
 
-            // Filter — auto-select based on language
+            // Filter — auto-select based on language.
+            //
+            // Rule-based only. The embedding-backed alternatives were
+            // retired: `filler_filter.py` gated a lexicon hit on a cosine
+            // threshold with AND, which the calibration in
+            // docs/model-upgrade-candidates.md §3.1 showed cannot
+            // discriminate, so it produced the same decisions as the rule
+            // based filter while paying a Python subprocess and a
+            // bge-small load per utterance.
             if !no_filter {
-                if let Some(ref script) = filler_script {
-                    builder = builder.filter(EmbeddingFillerFilter::new(script));
-                } else {
-                    builder = match language.as_deref() {
-                        Some("ja") | Some("japanese") => {
-                            builder.filter(JapaneseFillerFilter::new())
-                        }
-                        Some("zh") | Some("chinese") => builder.filter(ChineseFillerFilter::new()),
-                        Some("es") | Some("spanish") => builder.filter(SpanishFillerFilter::new()),
-                        _ => builder.filter(SimpleFillerFilter::english()),
-                    };
-                }
+                builder = match language.as_deref() {
+                    Some("ja") | Some("japanese") => builder.filter(JapaneseFillerFilter::new()),
+                    Some("zh") | Some("chinese") => builder.filter(ChineseFillerFilter::new()),
+                    Some("es") | Some("spanish") => builder.filter(SpanishFillerFilter::new()),
+                    _ => builder.filter(SimpleFillerFilter::english()),
+                };
             }
 
             // Processors — self-correction detection + punctuation

@@ -37,6 +37,10 @@ use clap::Parser;
 
 use euhadra::eval::annotations::load_jsonl as load_annotations;
 use euhadra::eval::f1::{strict_f1, Span};
+// `OnnxEmbeddingFilter` is deprecated and unwired — this bench is the
+// one remaining entry point, kept so the retire-or-keep call can be
+// re-made against better data. See docs/model-upgrade-candidates.md §4.
+#[allow(deprecated)]
 use euhadra::onnx_processing::{FillerLexicon, OnnxEmbeddingFilter};
 
 #[derive(Parser, Debug)]
@@ -99,6 +103,7 @@ async fn main() {
     }
 }
 
+#[allow(deprecated)]
 async fn run() -> Result<(), String> {
     let cli = Cli::parse();
 

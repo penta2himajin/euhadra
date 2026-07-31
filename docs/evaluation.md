@@ -81,12 +81,16 @@ euhadra のパイプラインを評価する際に使用する ASR テストデ�
 | 直接 (F1) | filler / 自己訂正 | CSJ (有償または学術無償)、CEJC (NINJAL、free edition + 有償版) | ja |
 | 直接 (F1) | filler | MagicData-RAMC (OpenSLR 123、無償)、CS2W (text-only、CC-BY-SA) | zh |
 | 直接 (F1) | filler | CIEMPIESS Test (CC-BY-SA 4.0、HF `ciempiess/ciempiess_test`、download-only) | es |
-| 直接 (F1) | 段落分割 | TED-LIUM 3 (CC-BY-NC-ND、OSS のみ) | en |
+| 直接 (Pk / WindowDiff) | 段落分割 | **Wikipedia 由来コーパス (CC-BY-SA 4.0、`scripts/download_paragraph_corpus.py` で都度取得)** — 実装済み。TED-LIUM 3 (CC-BY-NC-ND、OSS のみ) は将来の追加候補 | en / ja / zh / ko / es |
 | Ablation (ΔWER) | 各層の最終出力寄与 | §3.7 の E2E 推奨データを流用 | en / ja / zh / es |
 
 **期待実行時間**: 半日〜1 日
 
-**メトリクス**: §3 のレイヤー別マッピングを参照。専用評価指標 (filler 除去 F1、自己訂正検出 F1、段落境界 P/R、各層の ablation ΔWER/CER) を実装する必要がある。
+**メトリクス**: §3 のレイヤー別マッピングを参照。専用評価指標 (filler 除去 F1、自己訂正検出 F1、段落境界 Pk / WindowDiff、各層の ablation ΔWER/CER)。
+
+**段落分割は Pk / WindowDiff を使う**（P/R/F1 ではない）。境界が 1 文ずれた予測を exact-match F1 は false positive と false negative の二重に数えるため、「惜しい」と「でたらめ」を区別できない。実装は `src/eval/segmentation.rs`、ランナーは `examples/eval_paragraph.rs`。
+
+**このコーパスは CI に入れない**。third-party からのネットワーク取得を per-PR ゲートに置くと、上流の記事編集や一時的な障害が変更と無関係な赤ビルドになる。L3 の他の項目と同じくリリース時 / 研究時の実行とし、結果は `docs/benchmarks/paragraph_segmentation/` に記録する。
 
 ---
 

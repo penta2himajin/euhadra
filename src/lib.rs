@@ -9,6 +9,7 @@ pub mod pipeline;
 pub mod prelude;
 pub mod processor;
 pub mod router;
+pub mod similarity;
 pub mod state;
 pub mod traits;
 pub mod types;

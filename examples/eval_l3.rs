@@ -5,10 +5,11 @@
 //! - **`filler`** (Phase C-1): runs the language-specific filler
 //!   filter's `detect_spans` against a token-span gold standard and
 //!   reports utterance- and span-level F1. Wired for `en` / `ja` /
-//!   `zh` / `es` / `ko`. With `--embedder-dir` (and `--features onnx`)
-//!   it scores `OnnxEmbeddingFilter` on the same gold set instead, so
-//!   embedding backends can be compared against the rule-based
-//!   baseline — see `docs/model-upgrade-candidates.md` §3.2.
+//!   `zh` / `es` / `ko`. Rule-based only: the embedding filler filter
+//!   was unwired after `docs/model-upgrade-candidates.md` §3.2 measured
+//!   the rule-based filters beating every embedding backend in every
+//!   language. `examples/bench_embedder.rs` remains the way to re-open
+//!   that comparison.
 //! - **`self-correction`** (Phase C-1): runs `SelfCorrectionDetector`
 //!   against an annotated JSONL file and reports utterance-level +
 //!   span-level F1. Used to measure how well the detector finds
@@ -87,18 +88,91 @@ struct Cli {
     #[arg(long)]
     verbose: bool,
 
-    /// `--task filler` only: score `OnnxEmbeddingFilter` loaded from
-    /// this directory instead of the language's rule-based filter.
+    /// `--task phoneme-correction` only: load an ONNX sentence embedder
+    /// from this directory and score matches with the composite
+    /// `alpha * phoneme_sim + (1-alpha) * text_sim`. Without it the
+    /// corrector runs phoneme-only (alpha = 1.0), which is what every
+    /// evaluation did before — the embedding path shipped unmeasured.
     /// Requires `--features onnx`.
     #[arg(long)]
     embedder_dir: Option<PathBuf>,
 
-    /// Override the embedding filter's pure-filler cosine threshold.
-    /// Defaults to the lexicon value, which is calibrated for
-    /// `bge-small-en-v1.5` — see `docs/model-upgrade-candidates.md` §3.2
-    /// for the per-backend numbers.
+    /// Weight of phoneme similarity in the composite score. Only has an
+    /// effect together with `--embedder-dir`. 1.0 = phoneme only.
+    #[arg(long, default_value_t = 1.0)]
+    alpha: f32,
+
+    /// Minimum phoneme similarity to accept a match on the
+    /// phoneme-only path.
+    #[arg(long, default_value_t = 0.85)]
+    threshold: f32,
+
+    /// Minimum composite score to accept a match when `--embedder-dir`
+    /// puts the semantic term in play.
+    #[arg(long, default_value_t = 0.65)]
+    composite_threshold: f32,
+
+    /// Fail the run (exit 2) when the headline F1 falls below this.
+    /// Turns the otherwise report-only L3 runner into a CI gate;
+    /// `--task phoneme-correction` gates on correction-pair F1 and
+    /// `--task filler` on span-level F1.
     #[arg(long)]
-    embedder_threshold: Option<f32>,
+    min_f1: Option<f64>,
+}
+
+/// Enforce `--min-f1` if it was given.
+///
+/// `F1Stats` yields NaN when a task produced no positives at all, and
+/// NaN is incomparable rather than merely small — so it is matched
+/// explicitly (`None` from `partial_cmp`) and treated as a failure.
+/// A silent pass there would be the worst outcome: the gate would go
+/// green precisely when the evaluator found nothing.
+fn enforce_min_f1(min_f1: Option<f64>, measured: f64, metric: &str) -> Result<(), String> {
+    use std::cmp::Ordering;
+    match min_f1 {
+        Some(min)
+            if matches!(
+                measured.partial_cmp(&min),
+                Some(Ordering::Less) | None
+            ) =>
+        {
+            Err(format!(
+                "{metric} F1 {measured:.4} is below the required minimum {min:.4}"
+            ))
+        }
+        _ => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::enforce_min_f1;
+
+    #[test]
+    fn no_minimum_never_fails() {
+        assert!(enforce_min_f1(None, 0.0, "x").is_ok());
+    }
+
+    #[test]
+    fn meeting_the_minimum_passes() {
+        assert!(enforce_min_f1(Some(0.9), 0.9, "x").is_ok());
+        assert!(enforce_min_f1(Some(0.9), 1.0, "x").is_ok());
+    }
+
+    #[test]
+    fn falling_short_fails_with_both_numbers() {
+        let err = enforce_min_f1(Some(0.9), 0.88, "correction-pair").unwrap_err();
+        assert!(err.contains("0.8800"), "{err}");
+        assert!(err.contains("0.9000"), "{err}");
+        assert!(err.contains("correction-pair"), "{err}");
+    }
+
+    #[test]
+    fn nan_f1_fails_rather_than_silently_passing() {
+        // F1Stats yields NaN when a task produced no positives at all;
+        // `NaN >= min` is false, so the gate must reject it.
+        assert!(enforce_min_f1(Some(0.5), f64::NAN, "x").is_err());
+    }
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -273,7 +347,8 @@ async fn run_self_correction(cli: &Cli) -> Result<(), String> {
             .map_err(|e| format!("write {}: {e}", out.display()))?;
         eprintln!("report written to {}", out.display());
     }
-    Ok(())
+
+    enforce_min_f1(cli.min_f1, span_strict_agg.f1, "self-correction span-level")
 }
 
 fn cue_set_for(lang: &str) -> Result<Vec<&'static str>, String> {
@@ -493,51 +568,10 @@ fn fmt_pct(x: f64) -> String {
 // them up case-by-case as filter span emitters land.
 // ---------------------------------------------------------------------------
 
-/// Either a rule-based filter (sync) or the ONNX embedding filter
-/// (async, needs a session lock). Both emit codepoint spans against
-/// the same gold annotations, so the F1 bookkeeping below is shared.
 type RuleDetector = Box<dyn Fn(&str) -> Vec<Span>>;
-
-enum SpanDetector {
-    Rule(RuleDetector),
-    #[cfg(feature = "onnx")]
-    Embedding(Box<euhadra::onnx_processing::OnnxEmbeddingFilter>),
-}
-
-impl SpanDetector {
-    async fn detect(&self, text: &str) -> Result<Vec<Span>, String> {
-        match self {
-            Self::Rule(f) => Ok(f(text)),
-            #[cfg(feature = "onnx")]
-            Self::Embedding(f) => f.detect_spans(text).await.map_err(|e| e.message),
-        }
-    }
-}
 
 async fn run_filler(cli: &Cli) -> Result<(), String> {
     let lang = cli.lang.as_str();
-
-    // `--embedder-dir` swaps the rule-based filter for the ONNX
-    // embedding filter, so the same gold set scores both. Threshold
-    // calibration for a given backend lives in
-    // `examples/bench_embedder.rs`.
-    #[cfg(feature = "onnx")]
-    if let Some(dir) = &cli.embedder_dir {
-        use euhadra::onnx_processing::{FillerLexicon, OnnxEmbeddingFilter};
-        let mut lexicon = FillerLexicon::for_language(lang)
-            .ok_or_else(|| format!("filler task: no lexicon for --lang {lang}"))?;
-        if let Some(t) = cli.embedder_threshold {
-            lexicon.pure_threshold = t;
-        }
-        let filter = OnnxEmbeddingFilter::load_with_lexicon(dir, lexicon)
-            .map_err(|e| format!("loading embedder {}: {}", dir.display(), e.message))?;
-        eprintln!(
-            "[filler] backend=onnx-embedding dir={} threshold={:.2}",
-            dir.display(),
-            filter.pure_threshold()
-        );
-        return score_filler(cli, SpanDetector::Embedding(Box::new(filter))).await;
-    }
 
     let detect_spans: RuleDetector = match lang {
         "en" | "english" => {
@@ -568,10 +602,10 @@ async fn run_filler(cli: &Cli) -> Result<(), String> {
         }
     };
 
-    score_filler(cli, SpanDetector::Rule(detect_spans)).await
+    score_filler(cli, detect_spans).await
 }
 
-async fn score_filler(cli: &Cli, detector: SpanDetector) -> Result<(), String> {
+async fn score_filler(cli: &Cli, detect_spans: RuleDetector) -> Result<(), String> {
     let annotations = load_annotations(&cli.input)
         .map_err(|e| format!("loading {}: {e}", cli.input.display()))?;
     if annotations.is_empty() {
@@ -585,7 +619,7 @@ async fn score_filler(cli: &Cli, detector: SpanDetector) -> Result<(), String> {
     let mut span_stats: Vec<F1Stats> = Vec::new();
 
     for anno in &annotations {
-        let predicted = detector.detect(&anno.text).await?;
+        let predicted = detect_spans(&anno.text);
         let gold: Vec<Span> = anno.fillers.iter().map(|f| f.span()).collect();
 
         // Utterance-level fire / no-fire (ignores positions): a single
@@ -674,7 +708,8 @@ async fn score_filler(cli: &Cli, detector: SpanDetector) -> Result<(), String> {
             .map_err(|e| format!("write {}: {e}", out.display()))?;
         eprintln!("report written to {}", out.display());
     }
-    Ok(())
+
+    enforce_min_f1(cli.min_f1, span_agg.f1, "span-level")
 }
 
 // ---------------------------------------------------------------------------
@@ -683,10 +718,15 @@ async fn score_filler(cli: &Cli, detector: SpanDetector) -> Result<(), String> {
 //
 // PhonemeCorrector is configured with an empty CMUdict and a small
 // hand-curated `{word: ipa}` dict shipped alongside the annotation
-// JSONL. No G2P / text-embedder backends are wired here so the eval
-// runs in default (non-onnx) builds; the alpha=1.0 phoneme-only
-// scoring path handles every test case in the bundled annotation
-// corpus.
+// JSONL. No G2P backend is wired, so the eval runs in default
+// (non-onnx) builds; the alpha=1.0 phoneme-only scoring path handles
+// every test case in the bundled annotation corpus.
+//
+// `--embedder-dir` (onnx builds) additionally wires a text embedder so
+// the composite `alpha * phoneme_sim + (1-alpha) * text_sim` path is
+// exercised. It shipped unmeasured before that flag existed, and the
+// weight at which it stops dropping real corrections turns out to be
+// backend-specific — see `phoneme::calibrated_alpha`.
 // ---------------------------------------------------------------------------
 
 async fn run_phoneme_correction(cli: &Cli) -> Result<(), String> {
@@ -723,7 +763,31 @@ async fn run_phoneme_correction(cli: &Cli) -> Result<(), String> {
             .map_err(|e| format!("loading base dict {}: {}", path.display(), e.message))?,
         None => euhadra::phoneme::IpaDictionary::empty(),
     };
-    let corrector = euhadra::phoneme::PhonemeCorrector::new(base_dict, custom_entries);
+    // `mut` is only needed on the onnx path; without the feature the
+    // builder chain is complete as-is.
+    #[allow(unused_mut)]
+    let mut corrector = euhadra::phoneme::PhonemeCorrector::new(base_dict, custom_entries)
+        .with_threshold(cli.threshold)
+        .with_composite_threshold(cli.composite_threshold);
+
+    #[cfg(feature = "onnx")]
+    if let Some(dir) = &cli.embedder_dir {
+        let embedder = euhadra::phoneme::OnnxTextEmbedder::load(dir)
+            .map_err(|e| format!("loading embedder {}: {}", dir.display(), e.message))?;
+        corrector = corrector.with_embedder(embedder, cli.alpha);
+        eprintln!(
+            "[phoneme] embedder={} alpha={:.2} composite_threshold={:.2}",
+            dir.display(),
+            cli.alpha,
+            cli.composite_threshold
+        );
+    }
+    #[cfg(not(feature = "onnx"))]
+    if cli.embedder_dir.is_some() {
+        return Err("--embedder-dir requires --features onnx".to_string());
+    }
+
+    let corrector = corrector;
     let ctx = ContextSnapshot::default();
 
     let annotations = load_annotations(&cli.input)
@@ -869,7 +933,8 @@ async fn run_phoneme_correction(cli: &Cli) -> Result<(), String> {
             .map_err(|e| format!("write {}: {e}", out.display()))?;
         eprintln!("report written to {}", out.display());
     }
-    Ok(())
+
+    enforce_min_f1(cli.min_f1, pair_f1.f1, "correction-pair")
 }
 
 // ---------------------------------------------------------------------------

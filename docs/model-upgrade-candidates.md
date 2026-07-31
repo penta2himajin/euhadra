@@ -253,8 +253,11 @@ Stated plainly, because the sample is small:
 
 In priority order, each small enough to be its own PR:
 
-1. **Move `ParagraphSplitter` and `PhonemeCorrector` to
-   `granite-embedding-97m-multilingual-r2`, not the filler filter.**
+> **Status**: items 1 and 2 shipped — see §5 for the measurements they
+> produced. Items 3–5 remain open.
+
+1. ~~**Move `ParagraphSplitter` and `PhonemeCorrector` to
+   `granite-embedding-97m-multilingual-r2`, not the filler filter.**~~
    This is the corrected priority. Those two Tier 2 consumers are
    English-locked with *no* rule-based fallback, so today they simply
    do not work for ja/zh/ko/es — that is the real coverage hole. The
@@ -263,7 +266,11 @@ In priority order, each small enough to be its own PR:
    its backend buys nothing on current evidence. Both consumers need
    their own thresholds swept the same way; neither is covered by
    this bench.
-2. **Decide what `OnnxEmbeddingFilter` is actually for.** On these
+2. ~~**Decide what `OnnxEmbeddingFilter` is actually for.**~~
+   Retired: deprecated and unwired, along with the Python
+   `EmbeddingFillerFilter` path, which turned out to carry the same
+   inert-AND-gate as §3.1 and to be a rule-based filter in all but
+   cost. Filler removal is rule-based only now. On these
    gold sets it is strictly worse than the rule-based filters it sits
    beside. Its one defensible advantage is generalising past a closed
    lexicon — which the AND-bug (§3.1) meant it never did. Either
@@ -287,3 +294,303 @@ secondary prize: it needs no transformer pass, so
 give the default build multilingual embedding at zero ML dependency,
 in line with `docs/spec.md` §10.2. That is contingent on step 2
 concluding the filter is worth keeping.
+
+---
+
+## 5. Measured: Tier 2 embedding consumers
+
+§4 argued the case for a multilingual embedder is the Tier 2
+consumers, not the filler filter. This section is that work.
+
+### 5.1 The composite score shipped unmeasured
+
+`PhonemeCorrector` blends phoneme distance with text-embedding
+similarity as `alpha * phoneme_sim + (1-alpha) * text_sim`
+(`docs/spec.md` §6.4). Its `alpha` defaults to **1.0**, and no
+evaluation wired an embedder — `eval_l3 --task phoneme-correction`
+constructed the corrector with `PhonemeCorrector::new(..)` and nothing
+else. So the entire semantic half of the design had never been scored.
+`--embedder-dir` / `--alpha` / `--threshold` now exist for that.
+
+Same class of finding as §3.1: a documented mechanism that was inert
+in practice.
+
+### 5.2 Alpha calibration, and why the table is gone
+
+Correction-pair F1 on `en_phoneme_correction.jsonl` (25 utterances,
+13-word dictionary). The phoneme-only baseline is **F1 1.000** — the
+gold set is saturated, so the embedding term cannot improve on it and
+the question is only how much it costs.
+
+The first pass measured the composite with the raw cosine, and found
+the operating point was backend-specific: granite held 1.000 down to
+alpha 0.60, `bge-small` needed 0.90, and at the **alpha = 0.70 that
+`docs/spec.md` §6.4 works its example at** bge-small lost three of
+nineteen corrections. That produced a per-backend `calibrated_alpha`
+table.
+
+The table was the wrong fix. `alpha` blends a normalised edit distance
+(genuinely on `[0, 1]`, 0 meaning "nothing alike") with a raw cosine
+whose own zero point sits wherever the model puts it — 0.45 on
+bge-small, 0.70 on granite. So the same alpha weighted the two terms
+differently on every backend. Rescaling the semantic term against the
+backend's measured floor (`similarity::rescale`, floor measured once
+per backend from `embedding::FLOOR_PROBES`) removes the cause instead
+of tabulating the symptom:
+
+| alpha | `bge-small-en-v1.5` | `granite-97m-multilingual-r2` | |
+|---|---|---|---|
+| 0.30 | 0.480 | 0.593 | diverge |
+| 0.40 | 0.643 | 0.733 | diverge |
+| 0.50 | 0.643 | 0.813 | diverge |
+| 0.60 | 0.733 | 0.944 | diverge |
+| **0.70** (spec §6.4) | **1.000** | **1.000** | **agree** |
+| 0.80 | 0.950 | 0.950 | agree |
+| 0.90 | 0.950 | 0.950 | agree |
+
+The documented alpha now holds on both backends, and the CI gate at
+alpha 0.70 passes on either — it failed on bge-small before.
+
+**It is not a complete fix, and the table above says so.** Below alpha
+0.70, where the semantic term starts to dominate, the two backends
+still diverge. Rescaling is affine: it aligns where each model puts
+"unrelated" but not the shape of the range above it. The honest claim
+is that alpha is portable **in the region worth operating in**, not
+that cosine has been made universal.
+
+**Acceptance thresholds had to split.** Rescaling removes the free
+points a 0.70 floor was contributing (0.3 × 0.70 = 0.21 of every
+composite score), so the composite legitimately sits lower and the old
+0.85 bar lost real matches. Measured: the composite wants **0.65** on
+both backends, while phoneme-only still wants **0.85** — applying 0.65
+there admits two false positives. These are two thresholds on two
+different quantities, and unlike the alpha table, one value each covers
+every backend. `PhonemeCorrector::threshold` and
+`::composite_threshold`.
+
+Raw sweep in
+[`benchmarks/embedder_calibration/phoneme_alpha_sweep.json`](./benchmarks/embedder_calibration/phoneme_alpha_sweep.json).
+
+### 5.3 ParagraphSplitter: from a threshold that cannot fire to a shape rule
+
+`ParagraphSplitter` broke a paragraph where adjacent-sentence cosine
+fell **below** `similarity_threshold`, default **0.5**. The
+multilingual probes in `examples/check_embedder.rs` put granite's
+similarity for deliberately *unrelated* short strings at **0.62–0.75**
+across en/ja/zh/ko/es — above that threshold. On granite the semantic
+path could never fire, silently reducing the splitter to its
+max-sentences constraint.
+
+Same root cause as §5.2, so the same treatment: stop comparing a raw
+cosine to a constant. Breaks are now placed at **valleys** — local
+minima in the similarity sequence, scored by how far they sit below the
+peaks reachable on either side:
+
+```
+depth(i) = (left_peak − sim(i)) + (right_peak − sim(i))
+```
+
+Built from differences only, so a backend that shifts every similarity
+up by 0.2 produces identical depths. Worked example, same text on two
+backends:
+
+| boundary | 0 | 1 | 2 | 3 | 4 |
+|---|---|---|---|---|---|
+| bge-small | 0.68 | 0.66 | **0.51** | 0.67 | 0.69 |
+| granite | 0.88 | 0.86 | **0.71** | 0.87 | 0.89 |
+
+An absolute rule cannot serve both: 0.5 fires on neither, and a
+threshold tuned so bge-small fires once leaves granite's entire range
+above it. Depth at index 2 is 0.35 on both. `ParagraphSplitter` now
+takes a break where a minimum reaches `depth_ratio` (default 0.5) of
+the document's deepest valley.
+
+Two guards keep the relative rule honest. A purely relative criterion
+always finds *some* lowest point, so uniform text would be split
+arbitrarily: `min_similarity_range` (default 0.05) requires the text to
+show some spread before any semantic split is attempted. And fewer than
+two boundaries, or any failed embedding, defers entirely to
+max-sentences rather than inventing a valley.
+
+This replaces the provisional per-backend `calibrated_similarity`
+constants an earlier revision of this PR introduced. It does **not**
+resolve §5.5: the rule is portable and cannot silently go dead, but
+whether the valleys it picks are the *right* places to break is still
+unmeasured in every language.
+
+### 5.4 Multilingual: what CI asserts, and what it does not
+
+The new `evaluate (embedding backend)` job asserts the backend is
+*functional* per language — same-width, finite, unit-norm vectors, and
+a related string ranking above an unrelated one in each of en/ja/zh/ko/es.
+`bge-small-en-v1.5` fails that check on **zh**, scoring 草莓果酱
+("strawberry jam") *more* similar to 数据库 ("database") than
+数据库服务器 ("database server") is, for a margin of −0.048. granite
+passes all five with margins of +0.13 to +0.27.
+
+It asserts nothing about multilingual **accuracy**, because there is
+nothing to assert it against — see below.
+
+### 5.5 The gold-data gap
+
+Both Tier 2 consumers are limited by missing data, and no threshold or
+backend choice changes that:
+
+- ~~**No paragraph-boundary corpus exists at all.**~~ **Closed by §6.**
+  `scripts/download_paragraph_corpus.py` builds one from Wikipedia and
+  `examples/eval_paragraph.rs` scores against it in all five languages.
+  The result is split: the valley rule finds real topic shifts well
+  (§6.1) and does not reproduce author paragraphing (§6.2).
+- **Phoneme-correction gold is English-only**, and saturated at F1
+  1.000 by the phoneme-only path. It can detect a backend making
+  things *worse* — which is exactly what it did in §5.2 — but it
+  cannot demonstrate the semantic term making things better, and it
+  says nothing about ja/zh/ko/es.
+
+The paragraph half of that is now done (§6). The phoneme half is not,
+and extending it beyond English needs per-language G2P and IPA tables
+before any multilingual accuracy claim is possible there. So the
+framing splits by consumer: for paragraph splitting there is now direct
+multilingual evidence; for phoneme correction, granite remains a
+strictly *safer* backend on the evidence available rather than a
+demonstrated better one.
+
+---
+
+## 6. Measured: does the splitter break in the right places?
+
+§5.3 replaced the splitter's absolute threshold with a valley rule and
+proved it portable. §5.5 recorded what that still did not establish:
+whether the valleys it picks are the *right* places to break. That was
+unmeasured in every language because no paragraph-boundary corpus
+existed. This section is that measurement.
+
+**Corpus**: `scripts/download_paragraph_corpus.py` builds one from
+Wikipedia (CC-BY-SA 4.0, fetched on demand, gitignored) in the two
+shapes the segmentation literature uses:
+
+- **`choi`** — Choi-style synthetic concatenation: six paragraphs drawn
+  from six *different* articles, so boundaries are known by
+  construction rather than annotated. 30 documents per language.
+- **`author`** — one article's own paragraphs in order, with the gold
+  boundaries where its author put them. Harder and noisier, since
+  paragraph breaks are partly stylistic.
+
+**Metrics**: Pk and WindowDiff, both window penalties where **lower is
+better**. Exact-match F1 is the wrong instrument — it scores a break
+one sentence off as both a false positive and a false negative, so it
+cannot tell "nearly right" from "random".
+
+Reproduce with:
+
+```bash
+scripts/download_paragraph_corpus.py
+EMBEDDER_MODEL=granite scripts/setup_embedders.sh
+cargo run --release --features onnx --example eval_paragraph -- \
+    --corpus data/paragraph_corpus/choi_ja.jsonl \
+    --embedder-dir vendor/embedder_granite_97m
+```
+
+Raw reports:
+[`benchmarks/paragraph_segmentation/`](./benchmarks/paragraph_segmentation/).
+
+### 6.1 Synthetic topic shifts: the rule works, in all five languages
+
+WindowDiff, `granite-embedding-97m-multilingual-r2`:
+
+| segmenter | en | ja | zh | ko | es |
+|---|---|---|---|---|---|
+| baseline: no split | 0.460 | 0.459 | 0.445 | 0.425 | 0.466 |
+| baseline: uniform (per-corpus k) | 0.509 | 0.508 | 0.484 | 0.446 | 0.487 |
+| baseline: random (gold count) | 0.528 | 0.552 | 0.509 | 0.516 | 0.522 |
+| depth ratio 0.3 | 0.162 | 0.244 | 0.249 | 0.249 | 0.291 |
+| **depth ratio 0.5** (default) | **0.122** | **0.154** | **0.178** | **0.194** | **0.244** |
+| depth ratio 0.7 | 0.172 | 0.252 | 0.191 | 0.245 | 0.304 |
+| depth ratio 0.5 + centring | 0.160 | 0.180 | 0.162 | 0.231 | 0.328 |
+
+Two to four times better than every baseline, in every language, and it
+predicts close to the right number of boundaries (133–172 against 150
+gold). **The valleys are at real topic changes.** This is also the
+first evidence of any kind that the splitter works outside English.
+
+The uniform baseline scoring *worse* than not splitting at all is worth
+noting on its own: the gold segments are not uniform in length, so the
+`max_sentences` constraint alone would be a poor segmenter. The
+semantic path is carrying the result.
+
+**depth ratio 0.5 wins in all five languages**, which is the shipped
+default — chosen before this corpus existed, and now supported by it.
+
+### 6.2 Author paragraph structure: it does not reproduce that
+
+Same corpus builder, real articles:
+
+| segmenter | en | ja | zh | ko | es |
+|---|---|---|---|---|---|
+| baseline: no split | 0.515 | 0.432 | 0.427 | 0.434 | 0.487 |
+| baseline: random (gold count) | 0.561 | 0.490 | 0.464 | 0.460 | 0.529 |
+| depth ratio 0.5 | 0.499 | 0.391 | 0.366 | 0.368 | 0.454 |
+| depth ratio 0.5 + centring | 0.421 | 0.365 | 0.403 | 0.395 | 0.467 |
+
+On English it is 0.499 against 0.515 for **not splitting at all** —
+inside the noise. CJK does better (0.366–0.391 against 0.427–0.434) but
+the margin is nothing like §6.1's.
+
+Stated plainly: **the semantic signal does not recover an author's
+paragraphing.** That is not surprising — paragraph breaks inside one
+article are largely stylistic and length-driven, and the topic barely
+moves across them — but it is a real limit and it bounds what this
+layer should be claimed to do.
+
+Which task matters more depends on the use case. A user dictating who
+finishes one subject and starts another is the §6.1 situation, and the
+splitter handles it well. Matching a writer's stylistic paragraphing is
+the §6.2 situation, and it does not. For a dictation tool the first is
+the competence worth having, but the second is what a user comparing
+output against their own writing would notice.
+
+### 6.3 Centring does not pay
+
+Subtracting the document's mean sentence embedding — the cheapest
+member of the whitening family, the standard first move against
+embedding anisotropy — helps in 4 of the 10 cells above and hurts in 6,
+with no pattern by language or task. It stays available
+(`with_center_embeddings`) and stays **off by default**.
+
+The reason it was worth testing anyway: anisotropy is why unrelated
+text scores 0.6–0.7 in the first place, and correcting it at the vector
+level would have improved every consumer at once rather than each
+consumer's scoring rule separately. On this evidence it does not, for
+this consumer. §5.2's residual — that affine rescaling does not align
+the backends below alpha 0.60 — remains open, and a stronger vector-level
+correction (ZCA / all-but-the-top) or a distribution-free score mapping
+(empirical CDF) are the untested candidates.
+
+### 6.4 What is still not measured
+
+- Only `granite-embedding-97m-multilingual-r2` was run. The rule is
+  provably backend-invariant under a uniform shift (§5.3), but that is
+  an argument, not a second measurement.
+- Wikipedia prose is not dictation. Sentences are longer, better formed
+  and more topically coherent than ASR output, so §6.1 is likely
+  optimistic for the real input.
+- 30 synthetic documents and 14–20 articles per language. Small enough
+  that a few-point difference between neighbouring `depth_ratio` values
+  should not be read as meaningful; the gap to the baselines is what
+  the sample supports.
+- **Not run in CI**, deliberately. The corpus is fetched over the
+  network from a third party, which does not belong in a per-PR gate:
+  a Wikipedia outage or an edit to one of the source articles would
+  turn into a red build unrelated to the change under review. It is a
+  release-time / research measurement, like the rest of L3
+  (`docs/evaluation.md` §1.3), and the committed reports under
+  `benchmarks/paragraph_segmentation/` are the record.
+- `min_similarity_range` (0.05) is unvalidated. It exists because a
+  purely relative rule always finds *some* lowest point and would split
+  uniform text, so *something* absolute has to stop it — but no
+  measurement here distinguishes 0.05 from 0.02 or 0.10. It is the
+  weakest number in the splitter.
+- The synthetic task joins paragraphs from unrelated articles, so its
+  topic shifts are sharper than the ones a dictating user produces when
+  moving between related subjects. §6.1 is an upper bound on that axis
+  too, not just on prose quality.

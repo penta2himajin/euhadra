@@ -8,3 +8,4 @@ pub mod f1;
 pub mod fixtures;
 pub mod latency;
 pub mod metrics;
+pub mod segmentation;

@@ -21,7 +21,12 @@ use crate::types::{ContextSnapshot, FieldType};
 
 /// Split text into sentences on `.` `!` `?` boundaries.
 /// Preserves the delimiter attached to the sentence.
-fn split_sentences(text: &str) -> Vec<String> {
+///
+/// Public so the segmentation evaluator can build gold boundary
+/// indices with the same tokenisation the splitter uses. A second,
+/// subtly different sentence splitter in the evaluator would silently
+/// shift every gold index.
+pub fn split_sentences(text: &str) -> Vec<String> {
     let mut sentences = Vec::new();
     let mut current = String::new();
 
@@ -52,20 +57,58 @@ fn split_sentences(text: &str) -> Vec<String> {
 /// Splits dictation text into paragraphs using semantic similarity
 /// and maximum-length constraints.
 ///
-/// When an embedder is provided, consecutive sentences whose cosine
-/// similarity falls below `similarity_threshold` are separated by a
-/// paragraph break.  Without an embedder, only the max-sentences
-/// constraint is applied.
+/// When an embedder is provided, breaks are placed at *valleys* in the
+/// adjacent-sentence similarity sequence — local minima that sit
+/// measurably below their surroundings — rather than wherever
+/// similarity falls under a fixed number. The distinction matters
+/// because a raw cosine's absolute position is a property of the
+/// embedding model, not of the sentences: the same pair scores ~0.2
+/// higher on `granite-embedding-97m-multilingual-r2` than on
+/// `bge-small-en-v1.5`. Comparing valleys to each other cancels that
+/// offset out; comparing them to a constant does not.
+///
+/// Without an embedder, only the max-sentences constraint is applied.
 ///
 /// Paragraph splitting is only applied for field types where it makes
 /// sense (Document, EmailCompose).  For ChatMessage, Terminal, SearchBar,
 /// the text passes through unchanged.
 pub struct ParagraphSplitter {
     embedder: Option<Box<dyn TextEmbedder>>,
-    /// Cosine similarity threshold below which a paragraph break is inserted.
-    /// Lower = fewer breaks, higher = more breaks.
+    /// Fraction of the document's deepest valley that a local minimum
+    /// must reach to become a paragraph break.
+    ///
+    /// A **shape** parameter, not a location: it compares valleys to
+    /// each other within one text, so it carries across embedding
+    /// backends unchanged. The absolute cosine threshold it replaced
+    /// did not — granite scores even unrelated strings at 0.62-0.75,
+    /// so the old default of 0.5 sat below that backend's entire
+    /// output range and the semantic path never fired at all.
     /// Default: 0.5
-    pub similarity_threshold: f32,
+    pub depth_ratio: f32,
+    /// Minimum spread (max - min) of adjacent-sentence similarities for
+    /// a text to be considered to have any topic structure worth
+    /// splitting on.
+    ///
+    /// Purely a degeneracy guard: without it, a relative rule always
+    /// finds *some* lowest point and would split uniform text. It is a
+    /// magnitude, but a magnitude of a *range* rather than of a
+    /// position, so a backend that shifts all its similarities up or
+    /// down does not move it.
+    /// Default: 0.05
+    pub min_similarity_range: f32,
+    /// Subtract the document's own mean sentence embedding before
+    /// computing similarities.
+    ///
+    /// Embedding spaces are anisotropic — vectors occupy a narrow cone,
+    /// which is why unrelated text still scores 0.6-0.7. Centring on
+    /// the document mean removes that shared component and spreads the
+    /// remaining similarities out, so valleys become more pronounced.
+    /// It is the cheapest member of the whitening family (one mean
+    /// vector, no covariance estimate).
+    /// Default: false — the depth rule is already shift-invariant, so
+    /// this is an accuracy question rather than a correctness one, and
+    /// `docs/model-upgrade-candidates.md` §6 measures whether it pays.
+    pub center_embeddings: bool,
     /// Maximum number of sentences per paragraph.
     /// When exceeded, the paragraph is split at the point of lowest
     /// inter-sentence similarity (or at the midpoint if no embedder).
@@ -87,7 +130,9 @@ impl ParagraphSplitter {
     pub fn new() -> Self {
         Self {
             embedder: None,
-            similarity_threshold: 0.5,
+            depth_ratio: 0.5,
+            min_similarity_range: 0.05,
+            center_embeddings: false,
             max_sentences: 8,
             separator: "\n\n".to_string(),
         }
@@ -99,10 +144,36 @@ impl ParagraphSplitter {
         self
     }
 
-    /// Builder: set similarity threshold.
-    pub fn with_similarity_threshold(mut self, threshold: f32) -> Self {
-        self.similarity_threshold = threshold;
+    /// Builder: set the valley-depth ratio.
+    pub fn with_depth_ratio(mut self, ratio: f32) -> Self {
+        self.depth_ratio = ratio;
         self
+    }
+
+    /// Builder: set the minimum similarity spread required before any
+    /// semantic split is attempted.
+    pub fn with_min_similarity_range(mut self, range: f32) -> Self {
+        self.min_similarity_range = range;
+        self
+    }
+
+    /// Builder: centre sentence embeddings on the document mean.
+    pub fn with_center_embeddings(mut self, center: bool) -> Self {
+        self.center_embeddings = center;
+        self
+    }
+
+    /// Break points for an already-split sentence list.
+    ///
+    /// The evaluation entry point: `process` has to round-trip through
+    /// text, which makes it impossible to line predicted breaks up with
+    /// gold sentence indices. Scoring the same function the pipeline
+    /// uses avoids a second, subtly different implementation in the
+    /// evaluator.
+    pub fn breaks_for_sentences(&self, sentences: &[String]) -> Vec<usize> {
+        let embeddings = self.embed_sentences(sentences);
+        let similarities = self.inter_sentence_similarities(&embeddings);
+        self.find_breaks(sentences.len(), &similarities)
     }
 
     /// Builder: set max sentences per paragraph.
@@ -146,12 +217,59 @@ impl ParagraphSplitter {
             .max(0.0)
     }
 
+    /// Subtract the mean of the present embeddings from each, then
+    /// re-normalise. A no-op when fewer than two are present, since a
+    /// single vector centred on itself is zero.
+    fn center(embeddings: &[Option<Vec<f32>>]) -> Vec<Option<Vec<f32>>> {
+        let present: Vec<&Vec<f32>> = embeddings.iter().flatten().collect();
+        if present.len() < 2 {
+            return embeddings.to_vec();
+        }
+        let dim = present[0].len();
+        if present.iter().any(|v| v.len() != dim) {
+            return embeddings.to_vec();
+        }
+
+        let mut mean = vec![0.0f32; dim];
+        for v in &present {
+            for (m, x) in mean.iter_mut().zip(v.iter()) {
+                *m += x;
+            }
+        }
+        for m in mean.iter_mut() {
+            *m /= present.len() as f32;
+        }
+
+        embeddings
+            .iter()
+            .map(|e| {
+                e.as_ref().map(|v| {
+                    let mut c: Vec<f32> = v.iter().zip(&mean).map(|(x, m)| x - m).collect();
+                    let norm: f32 = c.iter().map(|x| x * x).sum::<f32>().sqrt();
+                    if norm > 0.0 {
+                        for x in c.iter_mut() {
+                            *x /= norm;
+                        }
+                    }
+                    c
+                })
+            })
+            .collect()
+    }
+
     /// Compute inter-sentence similarities. Returns N-1 similarity values
     /// where result[i] = similarity(sentence[i], sentence[i+1]).
     fn inter_sentence_similarities(&self, embeddings: &[Option<Vec<f32>>]) -> Vec<Option<f32>> {
         if embeddings.len() < 2 {
             return vec![];
         }
+        let owned;
+        let embeddings = if self.center_embeddings {
+            owned = Self::center(embeddings);
+            &owned[..]
+        } else {
+            embeddings
+        };
 
         (0..embeddings.len() - 1)
             .map(|i| match (&embeddings[i], &embeddings[i + 1]) {
@@ -167,16 +285,8 @@ impl ParagraphSplitter {
             return vec![];
         }
 
-        let mut breaks = Vec::new();
-
-        // Phase 1: semantic breaks (similarity below threshold)
-        for (i, sim) in similarities.iter().enumerate() {
-            if let Some(s) = sim {
-                if *s < self.similarity_threshold {
-                    breaks.push(i + 1); // break BEFORE sentence i+1
-                }
-            }
-        }
+        // Phase 1: semantic breaks at similarity valleys.
+        let breaks = self.semantic_breaks(similarities);
 
         // Phase 2: enforce max_sentences constraint on each resulting paragraph
         let mut final_breaks = Vec::new();
@@ -194,6 +304,86 @@ impl ParagraphSplitter {
         final_breaks.sort();
         final_breaks.dedup();
         final_breaks
+    }
+
+
+    /// Depth of the valley at `i`: how far it sits below the highest
+    /// point reachable by walking outward in each direction without
+    /// descending.
+    ///
+    /// This is the quantity that makes the rule portable. It is built
+    /// entirely from *differences* between similarities, so adding a
+    /// constant offset to every similarity — which is what changing
+    /// embedding backend largely does — leaves it unchanged.
+    fn valley_depth(sims: &[f32], i: usize) -> f32 {
+        let mut left = sims[i];
+        let mut j = i;
+        while j > 0 && sims[j - 1] >= left {
+            left = sims[j - 1];
+            j -= 1;
+        }
+
+        let mut right = sims[i];
+        let mut j = i;
+        while j + 1 < sims.len() && sims[j + 1] >= right {
+            right = sims[j + 1];
+            j += 1;
+        }
+
+        (left - sims[i]) + (right - sims[i])
+    }
+
+    /// Whether `i` is a local minimum. The two ends count when they are
+    /// lower than their single neighbour, so a topic shift at the very
+    /// start or end of a dictation is not missed.
+    fn is_local_min(sims: &[f32], i: usize) -> bool {
+        let left_ok = i == 0 || sims[i - 1] > sims[i];
+        let right_ok = i + 1 == sims.len() || sims[i + 1] > sims[i];
+        left_ok && right_ok
+    }
+
+    /// Break points from valleys in the similarity sequence.
+    ///
+    /// Returns empty — deferring entirely to the max-sentences
+    /// constraint — when there is nothing to judge against: fewer than
+    /// two boundaries, any failed embedding, or a similarity spread too
+    /// narrow to indicate structure.
+    fn semantic_breaks(&self, similarities: &[Option<f32>]) -> Vec<usize> {
+        if similarities.len() < 2 {
+            return Vec::new();
+        }
+        // A failed embedding leaves a hole; rather than invent a value
+        // for it and risk fabricating a valley, skip semantic splitting
+        // and let max_sentences handle the text.
+        let sims: Vec<f32> = match similarities.iter().copied().collect::<Option<Vec<f32>>>() {
+            Some(v) => v,
+            None => return Vec::new(),
+        };
+
+        let max = sims.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let min = sims.iter().copied().fold(f32::INFINITY, f32::min);
+        if max - min < self.min_similarity_range {
+            return Vec::new();
+        }
+
+        let candidates: Vec<(usize, f32)> = (0..sims.len())
+            .filter(|&i| Self::is_local_min(&sims, i))
+            .map(|i| (i, Self::valley_depth(&sims, i)))
+            .collect();
+
+        let deepest = candidates
+            .iter()
+            .map(|(_, d)| *d)
+            .fold(f32::NEG_INFINITY, f32::max);
+        if !deepest.is_finite() || deepest <= 0.0 {
+            return Vec::new();
+        }
+
+        candidates
+            .iter()
+            .filter(|(_, d)| *d >= self.depth_ratio * deepest)
+            .map(|(i, _)| i + 1) // break BEFORE sentence i+1
+            .collect()
     }
 
     /// If a segment exceeds max_sentences, split at the lowest-similarity point.
@@ -330,6 +520,133 @@ mod tests {
         assert!(s.is_empty());
     }
 
+    // The `calibrated_similarity` constants these replace asserted that
+    // a per-backend threshold table was internally consistent. The
+    // table is gone; what mattered about it — that the split decision
+    // survives a change of embedding backend — is now asserted
+    // directly against the mechanism.
+
+    fn depths(sims: &[f32]) -> Vec<f32> {
+        (0..sims.len())
+            .map(|i| ParagraphSplitter::valley_depth(sims, i))
+            .collect()
+    }
+
+    #[test]
+    fn valley_depth_is_invariant_under_a_uniform_shift() {
+        // The portability property, stated as a test. granite sits
+        // roughly 0.2 above bge-small for the same relationships; a
+        // rule built from differences must not notice.
+        let bge = [0.68, 0.66, 0.51, 0.67, 0.69];
+        let granite: Vec<f32> = bge.iter().map(|s| s + 0.20).collect();
+
+        for (a, b) in depths(&bge).iter().zip(depths(&granite).iter()) {
+            assert!((a - b).abs() < 1e-5, "depth moved under shift: {a} vs {b}");
+        }
+    }
+
+    #[test]
+    fn valley_depth_measures_the_drop_from_both_sides() {
+        // The walk climbs to the *peak* on each side, not merely to the
+        // immediate neighbour: right of the valley it passes 0.87 and
+        // carries on to 0.89.
+        //   (0.88 - 0.71) + (0.89 - 0.71) = 0.17 + 0.18 = 0.35
+        let sims = [0.88, 0.86, 0.71, 0.87, 0.89];
+        let d = ParagraphSplitter::valley_depth(&sims, 2);
+        assert!((d - 0.35).abs() < 1e-5, "got {d}");
+    }
+
+    #[test]
+    fn a_monotone_decline_has_no_interior_valley() {
+        // Falling similarity is a gradual topic drift, not a boundary.
+        // Only the final point is a minimum, and it has no drop on its
+        // right, so its depth comes from one side only.
+        let sims = [0.9, 0.8, 0.7, 0.6];
+        for i in 0..3 {
+            assert!(!ParagraphSplitter::is_local_min(&sims, i), "index {i}");
+        }
+        assert!(ParagraphSplitter::is_local_min(&sims, 3));
+    }
+
+    #[test]
+    fn ends_count_as_minima_so_edge_shifts_are_not_missed() {
+        assert!(ParagraphSplitter::is_local_min(&[0.2, 0.9, 0.9], 0));
+        assert!(ParagraphSplitter::is_local_min(&[0.9, 0.9, 0.2], 2));
+    }
+
+    #[test]
+    fn same_breaks_on_both_backends_for_the_same_text() {
+        let splitter = ParagraphSplitter::new();
+        let bge: Vec<Option<f32>> = [0.68, 0.66, 0.51, 0.67, 0.69]
+            .iter()
+            .map(|s| Some(*s))
+            .collect();
+        let granite: Vec<Option<f32>> = bge.iter().map(|s| Some(s.unwrap() + 0.20)).collect();
+
+        let a = splitter.semantic_breaks(&bge);
+        let b = splitter.semantic_breaks(&granite);
+        assert_eq!(a, b, "backend shift changed the break points");
+        assert_eq!(a, vec![3], "expected the single valley at index 2");
+    }
+
+    #[test]
+    fn the_old_absolute_rule_would_have_disagreed() {
+        // Documents the defect being fixed. A 0.5 cosine threshold
+        // fires on every bge-small boundary below it and on none of
+        // the granite ones, for the very same text.
+        const OLD_THRESHOLD: f32 = 0.5;
+        let bge = [0.68, 0.66, 0.51, 0.67, 0.69];
+        let granite: Vec<f32> = bge.iter().map(|s| s + 0.20).collect();
+
+        assert_eq!(bge.iter().filter(|s| **s < OLD_THRESHOLD).count(), 0);
+        assert_eq!(granite.iter().filter(|s| **s < OLD_THRESHOLD).count(), 0);
+
+        // ...and at a threshold tuned so bge fires once, granite still
+        // cannot fire at all, because its whole range sits above it.
+        const BGE_TUNED: f32 = 0.6;
+        assert_eq!(bge.iter().filter(|s| **s < BGE_TUNED).count(), 1);
+        assert_eq!(granite.iter().filter(|s| **s < BGE_TUNED).count(), 0);
+    }
+
+    #[test]
+    fn flat_similarity_does_not_split() {
+        // Without the range guard a relative rule always finds *some*
+        // lowest point, and uniform text would be split arbitrarily.
+        let splitter = ParagraphSplitter::new();
+        let flat: Vec<Option<f32>> = [0.90, 0.90, 0.89, 0.90].iter().map(|s| Some(*s)).collect();
+        assert!(splitter.semantic_breaks(&flat).is_empty());
+    }
+
+    #[test]
+    fn a_failed_embedding_disables_semantic_splitting() {
+        let splitter = ParagraphSplitter::new();
+        let holed = vec![Some(0.9), None, Some(0.2), Some(0.9)];
+        assert!(splitter.semantic_breaks(&holed).is_empty());
+    }
+
+    #[test]
+    fn a_single_boundary_is_not_enough_to_judge() {
+        let splitter = ParagraphSplitter::new();
+        assert!(splitter.semantic_breaks(&[Some(0.1)]).is_empty());
+        assert!(splitter.semantic_breaks(&[]).is_empty());
+    }
+
+    #[test]
+    fn shallow_valleys_are_dropped_relative_to_the_deepest() {
+        // Two minima, one a third as deep as the other: the default
+        // ratio of 0.5 keeps only the prominent one.
+        let splitter = ParagraphSplitter::new();
+        let sims: Vec<Option<f32>> = [0.90, 0.80, 0.90, 0.30, 0.90]
+            .iter()
+            .map(|s| Some(*s))
+            .collect();
+        assert_eq!(splitter.semantic_breaks(&sims), vec![4]);
+
+        // Lowering the ratio admits the shallower one too.
+        let permissive = ParagraphSplitter::new().with_depth_ratio(0.1);
+        assert_eq!(permissive.semantic_breaks(&sims), vec![2, 4]);
+    }
+
     #[tokio::test]
     async fn test_splitter_single_sentence() {
         let splitter = ParagraphSplitter::new();
@@ -399,7 +716,7 @@ mod tests {
 
         let splitter = ParagraphSplitter::new()
             .with_embedder(embedder)
-            .with_similarity_threshold(0.5);
+            .with_depth_ratio(0.5);
         let ctx = ContextSnapshot::default();
 
         let text = "Dogs are great pets. Cats are also wonderful. The stock market crashed today.";

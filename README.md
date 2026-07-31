@@ -159,7 +159,6 @@ euhadra dictate     Transcribe a WAV file through the full pipeline
   --whisper-cli       Path to whisper-cli binary
   --model             Path to GGML model
   --language          Language hint (en, ja, etc.)
-  --filler-script     Path to filler_filter.py (embedding mode)
   --no-filter         Skip filler removal
   --no-process        Skip text processing (punctuation, self-correction)
 
@@ -249,12 +248,12 @@ src/
   mock.rs              — mock implementations for testing
   prelude.rs           — convenience re-exports
   main.rs              — CLI entry point
-scripts/
-  filler_filter.py     — legacy Python embedding filter (replaced by onnx feature)
 models/
   euhadra.als          — Alloy formal model
 docs/
   spec.md              — full technical specification
+  model-upgrade-candidates.md — model survey + backend calibration log
+  model-licenses.md    — upstream license summary for bundled weights
 ```
 
 ## Development

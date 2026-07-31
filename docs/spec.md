@@ -277,7 +277,7 @@ struct FilterResult {
 
 **想定実装**:
 - `SimpleFillerFilter` — 辞書照合ベースのフィラー除去（階層化: pure / contextual / multi-word）
-- `EmbeddingFillerFilter` — 埋め込みコサイン類似度によるフィラー検出（fastembed, ONNX, bge-small-en 33MB）
+- ~~`EmbeddingFillerFilter` / `OnnxEmbeddingFilter`~~ — 埋め込みコサイン類似度によるフィラー検出。**撤去済み**。実測でルールベース実装が全言語で上回ったため（[`model-upgrade-candidates.md`](./model-upgrade-candidates.md) §3.2）、Tier 1 のフィラー除去はルールベースのみとする
 - `JapaneseFillerFilter` — 読点区切り3パス検出 + ASR アーティファクト対応
 - `ChineseFillerFilter` — 中文 `，` 区切り 3 パス (pure: 嗯 / 呃 / 哦, contextual: 那个 / 这个 / 就是 / 然后 / 怎么说)
 
@@ -334,7 +334,12 @@ enum CorrectionKind {
 - `PunctuationRestorer` — CNN-BiLSTM ベースの句読点・大文字化モデル（ONNX, ~5MB）
 - `DisfluencyDetector` — 自己訂正検出モデル（reparandum/repair パターン検出, ~50MB）
 - `PhonemeCorrector` — 音素距離 + テキスト埋め込みによるカスタム辞書補正（CMUdict + G2P ONNX + bge-small）
-- `ParagraphSplitter` — 隣接文の埋め込みコサイン類似度による段落分割
+- `ParagraphSplitter` — 隣接文の類似度列の**谷**（局所最小 + 深さ `depth(i) = (left_peak − sim(i)) + (right_peak − sim(i))`）で分割する。深さは差分のみで決まるためバックエンド間のオフセットに不変。旧実装は絶対コサイン閾値 0.5 で、granite は無関係な文字列でも 0.62–0.75 を返すため意味的分割が一度も発火しなかった（[`model-upgrade-candidates.md`](./model-upgrade-candidates.md) §5.3）
+
+  **実測済みの能力と限界**（同 §6、Wikipedia 由来コーパス・WindowDiff）:
+  - **話題転換の検出は 5 言語すべてで機能する**。合成連結タスクで WD 0.122 (en) / 0.154 (ja) / 0.178 (zh) / 0.194 (ko) / 0.244 (es)、対して「分割なし」0.43–0.47、等間隔分割 0.45–0.51。既定の深さ比 0.5 が全言語で最良
+  - **著者の段落構成は再現できない**。実記事タスクでは en が 0.499 で「分割なし」の 0.515 と誤差の範囲。記事内の段落分けは文体・長さの都合が支配的で話題がほとんど動かないため。**この層は「話者が話題を変えた位置」を切るものであって、書き手の段落感覚を再現するものではない**
+  - 測定は granite のみ。Wikipedia の散文は dictation より整っているため §6.1 は楽観側。`min_similarity_range` は未検証。CI には入れていない（third-party のネットワーク取得のため）
 - `EntityRecognizer` — NER トークン分類モデル（DistilBERT-NER ONNX, ~65MB INT8）による固有表現検出（PER / LOC / ORG / MISC）
 - `RuleBasedProcessor` — ルールベースの整形（リスト検出、数値フォーマット等、依存ゼロ）
 
@@ -614,7 +619,7 @@ ASR Output (raw text)
     │  - SimpleFillerFilter: ルールベース（英語）     ✅ 実装済み
     │  - JapaneseFillerFilter: ルールベース（日本語） ✅ 実装済み
     │  - ChineseFillerFilter: ルールベース（中国語）  ✅ 実装済み
-    │  - OnnxEmbeddingFilter: bge-small 埋め込み     ✅ 実装済み [onnx]
+    │  - OnnxEmbeddingFilter: bge-small 埋め込み     ❌ 非推奨・未配線
     │
     ▼
 [Tier 2: TextProcessor]  ← LLM 不要、数十ミリ秒、5〜250MB ONNX
@@ -629,7 +634,7 @@ ASR Output (raw text)
     │  - PER / LOC / ORG / MISC のトークン分類
     │  - PhonemeCorrector の候補範囲絞り込みに使用
     │  段落分割（意味的距離 + 最大文数制約）           ✅ 実装済み [onnx]
-    │  - 隣接文の bge-small 埋め込みコサイン類似度による分割
+    │  - 隣接文の埋め込みコサイン類似度による分割（gold 未整備）
     │  数詞正規化 ITN（text-processing-rs）           ✅ 実装済み
     │  - en: normalize_sentence / ja・zh: normalize_with_lang
     │  - es・ko は upstream 対応待ち（patches/ に同梱）
@@ -722,6 +727,26 @@ ContextSnapshot の `app_name` / `field_type` に基づいて、refinement プ�
 - 基本: IPA 音素列の Levenshtein 距離（正規化類似度）
 - 拡張（`onnx` feature）: `α × phoneme_similarity + (1-α) × text_embedding_similarity`
   テキスト埋め込み（bge-small）との複合スコアで、音素的に曖昧な候補を意味的に判別
+
+**text_sim はバックエンドの下限で正規化してから blend する。** 生のコサインは
+モデルごとに零点が違い（無関係な文字列が bge-small-en-v1.5 では ≈0.45、
+granite-embedding-97m-multilingual-r2 では ≈0.70）、正規化 Levenshtein である
+phoneme_sim と尺度が揃わない。そのままだと同じ α が各バックエンドで違う重み付けになり、
+上の α=0.7 は実測で bge-small では 19 件中 3 件の補正を取りこぼしていた
+（F1 0.882、granite は 1.000）。`similarity::rescale` で
+`(cos − floor)/(1 − floor)` に写すと α=0.7 は**両バックエンドで F1 1.000** になる。
+`floor` は `EmbeddingBackend` が load 後の初回利用時に自己測定する。
+
+ただし正規化はアフィン変換であり、零点は揃うが上側の分布形状までは揃わない。
+α ≤ 0.60（意味項が支配的な領域）では依然としてバックエンド間で差が出る。
+移植可能なのは「運用に値する領域」に限られる。
+
+**受理閾値は経路ごとに分かれる。** 正規化で下駄（floor 0.70 なら全スコアに
+0.3 × 0.70 = 0.21）が外れるため複合スコアは正当に下がる。実測での最適値は
+複合が 0.65、phoneme-only が 0.85（複合側の 0.65 を phoneme-only に適用すると
+false positive が 2 件出る）。これらは別の量に対する別の閾値だが、旧 α 表と違い
+**バックエンドごとの値は不要**。測定は
+[`model-upgrade-candidates.md`](./model-upgrade-candidates.md) §5.2 を参照。
 
 **OOV 語の音素生成**:
 - CMUdict に載っていない語（固有名詞、技術用語等）は G2P ONNX モデル（DeepPhonemizer、59MB）で音素列を自動生成
@@ -881,7 +906,7 @@ MIT / Apache ライセンスのため、コード自体による参入障壁は�
 - [x] SimpleFillerFilter（英語、ルールベース）
 - [x] JapaneseFillerFilter（日本語、ルールベース）
 - [x] ChineseFillerFilter（中国語、ルールベース）
-- [x] OnnxEmbeddingFilter（bge-small 埋め込み距離）[onnx]
+- [x] ~~OnnxEmbeddingFilter（bge-small 埋め込み距離）[onnx]~~ — 非推奨・未配線（§3.5 参照）
 
 **Tier 2: TextProcessor**:
 - [x] TextProcessor trait 定義
@@ -952,7 +977,7 @@ let pipeline = PipelineBuilder::new()
 // ONNX モデルを使った高品質構成（LLM なし）
 let pipeline_onnx = PipelineBuilder::new()
     .asr(ParakeetAdapter::load("parakeet-tdt-0.6b-v3-int8")?)
-    .filter(OnnxEmbeddingFilter::load("bge-small-en")?)
+    .filter(SimpleFillerFilter::english())
     .processor(SelfCorrectionDetector::new())
     .processor(OnnxPunctuationRestorer::load("punct/model.onnx", ...)?)
     .processor(PhonemeCorrector::new(ipa_dict, custom_entries)

@@ -24,3 +24,9 @@
 /models/parakeet-*/
 /models/paraformer-*/
 /vendor/
+
+# Downloaded paragraph-segmentation corpus — Wikipedia text
+# (CC-BY-SA 4.0) staged on demand by
+# `scripts/download_paragraph_corpus.py`. Reproducible, so the repo
+# never ships it.
+/data/paragraph_corpus/

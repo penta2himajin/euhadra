@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use std::path::PathBuf;
 
 // ---------------------------------------------------------------------------
 // TextFilter trait
@@ -35,109 +34,6 @@ impl std::fmt::Display for FilterError {
 }
 
 impl std::error::Error for FilterError {}
-
-// ---------------------------------------------------------------------------
-// EmbeddingFillerFilter — calls the Python filler_filter.py subprocess
-// ---------------------------------------------------------------------------
-
-/// Filler-word removal using sentence embeddings.
-///
-/// Measures cosine similarity between each word and a known filler lexicon.
-/// Words exceeding the threshold are removed.  Multi-word fillers ("you know",
-/// "I mean") are handled by exact substring match before embedding check.
-///
-/// This is dramatically faster and cheaper than an LLM call — no network
-/// round-trip, no token cost, runs entirely on-device.
-pub struct EmbeddingFillerFilter {
-    script_path: PathBuf,
-    python_path: PathBuf,
-}
-
-impl EmbeddingFillerFilter {
-    pub fn new(script_path: impl Into<PathBuf>) -> Self {
-        Self {
-            script_path: script_path.into(),
-            python_path: "python3".into(),
-        }
-    }
-
-    pub fn with_python(mut self, python_path: impl Into<PathBuf>) -> Self {
-        self.python_path = python_path.into();
-        self
-    }
-}
-
-#[async_trait]
-impl TextFilter for EmbeddingFillerFilter {
-    async fn filter(&self, text: &str) -> Result<FilterResult, FilterError> {
-        use tokio::io::AsyncWriteExt;
-        use tokio::process::Command;
-
-        let req = serde_json::json!({ "text": text });
-        let req_str = serde_json::to_string(&req).map_err(|e| FilterError {
-            message: format!("json serialize: {e}"),
-        })?;
-
-        let mut child = Command::new(&self.python_path)
-            .arg(&self.script_path)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| FilterError {
-                message: format!("spawn filler_filter.py: {e}"),
-            })?;
-
-        // Write request to stdin
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin
-                .write_all(format!("{req_str}\n").as_bytes())
-                .await
-                .map_err(|e| FilterError {
-                    message: format!("write stdin: {e}"),
-                })?;
-            // Close stdin to signal EOF
-        }
-
-        let output = child.wait_with_output().await.map_err(|e| FilterError {
-            message: format!("wait: {e}"),
-        })?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(FilterError {
-                message: format!("filler_filter.py failed: {stderr}"),
-            });
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let resp: serde_json::Value =
-            serde_json::from_str(stdout.trim()).map_err(|e| FilterError {
-                message: format!("json parse response: {e} (raw: {stdout})"),
-            })?;
-
-        if let Some(err) = resp.get("error") {
-            return Err(FilterError {
-                message: format!("filter script error: {err}"),
-            });
-        }
-
-        let filtered = resp["filtered"].as_str().unwrap_or(text).to_string();
-        let removed: Vec<String> = resp["removed"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        Ok(FilterResult {
-            text: filtered,
-            removed,
-        })
-    }
-}
 
 // ---------------------------------------------------------------------------
 // SimpleFillerFilter — tiered, position-aware, zero-dependency
@@ -180,6 +76,10 @@ impl SimpleFillerFilter {
                 vec!["you".into(), "see".into()],
                 vec!["sort".into(), "of".into()],
                 vec!["kind".into(), "of".into()],
+                // Carried over from the retired Python `filler_filter.py`
+                // lexicon, which had these two and the Rust filter did not.
+                vec!["or".into(), "something".into()],
+                vec!["or".into(), "whatever".into()],
             ],
         }
     }
@@ -1330,6 +1230,33 @@ impl TextFilter for SpanishFillerFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn simple_filler_removes_or_something_bigram() {
+        // Ported from the retired Python `filler_filter.py` lexicon,
+        // which carried two multi-word entries the Rust filter lacked.
+        let filter = SimpleFillerFilter::english();
+        let result = filter.filter("we should deploy or something").await.unwrap();
+        assert_eq!(result.text, "we should deploy");
+        assert!(result.removed.iter().any(|r| r.to_lowercase().contains("or")));
+    }
+
+    #[tokio::test]
+    async fn simple_filler_removes_or_whatever_bigram() {
+        let filter = SimpleFillerFilter::english();
+        let result = filter.filter("restart the service or whatever").await.unwrap();
+        assert_eq!(result.text, "restart the service");
+    }
+
+    #[tokio::test]
+    async fn simple_filler_keeps_or_when_not_part_of_a_filler_bigram() {
+        // Guard against the substring matching the Python path used,
+        // which would fire on word-internal matches.
+        let filter = SimpleFillerFilter::english();
+        let result = filter.filter("deploy or roll back").await.unwrap();
+        assert_eq!(result.text, "deploy or roll back");
+        assert!(result.removed.is_empty());
+    }
 
     #[tokio::test]
     async fn simple_filler_filter_removes_pure_fillers() {
