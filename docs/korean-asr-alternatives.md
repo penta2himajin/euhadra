@@ -345,6 +345,96 @@ were closed in favour of ORT q4:
 
 [#105]: https://github.com/penta2himajin/euhadra/pull/105
 
+### H. `Qwen3-ASR-0.6B` (measured 2026-07-31)
+
+| Field | Value |
+|---|---|
+| HF id | `Qwen/Qwen3-ASR-0.6B` (upstream), measured via the `cattle12/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25` INT8 export |
+| License | Upstream **Apache-2.0**. The sherpa-onnx mirror measured here **declares no license** — resolve before adopting |
+| Architecture | AuT encoder (180M) + Qwen3-0.6B autoregressive decoder, 0.9B total in bf16. Three graphs: `conv_frontend`, `encoder`, `decoder` (KV cache) |
+| Reported ko | FLEURS-ko CER 3.72% (technical report, Table A.2) |
+| Verdict | **Structurally right, currently unusable.** It removes Whisper's fixed-window problem outright, but the only published export degenerates on ~7% of utterances |
+
+Measured on 30 FLEURS-ko utterances against the incumbent, same
+container, same `eval::metrics::cer_lenient` via
+`examples/score_hypotheses.rs`:
+
+| | `whisper-large-v3-turbo` q4 | `Qwen3-ASR-0.6B` INT8 |
+|---|---|---|
+| RTF | 0.600 | **0.324** |
+| CER (lenient) | **0.0269** | 0.1911 |
+| Degenerate utterances | 0 / 30 | **2 / 30** |
+| CER excluding those | — | 0.0838 (n=28) |
+
+#### H.1 The structural claim holds
+
+§A.2 established that Whisper's cost is fixed per utterance because the
+mel front-end pads to 30 seconds. Qwen3-ASR has no such window, and the
+measurement shows it:
+
+| audio | Qwen3-ASR | whisper q4 |
+|---|---|---|
+| 4.80 s | **1723 ms** | 7048 ms |
+| 18.90 s | 6803 ms | 8363 ms |
+
+3.9× the audio, 3.9× the time — linear, where Whisper varied by 1.21×
+over the same span. **On a 4.8-second utterance it is 4.1× faster**,
+and dictation utterances are short. This is the property worth moving
+for; the aggregate RTF understates it.
+
+#### H.2 The INT8 export degenerates
+
+```
+1677: 嗯，嗯，嗯，嗯，嗯，嗯，嗯，…                      (CER 2.38)
+1992: "，""，""，""，""，""，…                          (CER 1.00)
+1705: 1940年8月15日，英纳布郡的弗朗斯南部被侵略…        (Chinese output for Korean audio)
+```
+
+Repetition loops, on roughly 7% of utterances. And this is the **third
+independent occurrence of the same failure mode in this codebase**:
+
+| Model | Component quantised to INT8 | Result |
+|---|---|---|
+| whisper-large-v3-turbo | decoder | CER 1.27 — collapses (§A.2) |
+| whisper-large-v3-turbo | encoder | 1 / 10 utterances loops (§A.2) |
+| Qwen3-ASR-0.6B | whole model | 2 / 30 utterances loop |
+
+The common factor is **INT8 quantisation of an autoregressive decoder**.
+It is worth treating as a standing expectation rather than a surprise:
+non-autoregressive backends have not shown it — `paraformer-large` runs
+INT8 on `zh` at RTF 0.035 without incident.
+
+Even setting the degenerate utterances aside, CER 0.0838 against the
+incumbent's 0.0269 is a threefold regression, so quantisation is
+costing accuracy well before it costs coherence.
+
+#### H.3 What is blocked
+
+- **No language pin.** sherpa-onnx's Qwen3-ASR factory exposes no
+  language parameter, though its Whisper factory does. The Chinese
+  output above cannot be prevented at this layer.
+- **No higher-precision export published** in that mirror — INT8 only.
+- **1.7B not exported** ([sherpa-onnx#3535](https://github.com/k2-fsa/sherpa-onnx/issues/3535)
+  is a feature request).
+- **Mirror declares no licence**, as noted above.
+
+#### H.4 Where to go next
+
+The direction is validated and the artefact is not. In rough order of
+expected value:
+
+1. **Non-autoregressive candidates first.** sherpa-onnx 1.13 ships
+   factories for `omnilingual_asr_ctc`, `dolphin_ctc`, `funasr_nano`,
+   `fire_red_asr`, `moonshine_v2` and `cohere_transcribe`. The CTC ones
+   cannot exhibit the failure mode in the table above, and
+   `examples/score_hypotheses.rs` makes each a few minutes' work.
+2. **A higher-precision Qwen3-ASR export**, if the CTC options do not
+   pan out. If the degeneration is quantisation-induced, fp16 or fp32
+   should resolve it and the structural advantage survives intact.
+3. **Keeping Whisper and containing its int8 encoder collapse** with a
+   repetition penalty. Even if that works it lands at RTF 0.37, so it
+   is a stopgap rather than a destination.
+
 ## Verdict and recommended sequencing
 
 License cleanliness (descending):
