@@ -13,6 +13,7 @@
 # are reproducible per the upstream license, so the repo never ships
 # them.
 /data/fleurs_subset/
+/data/fleurs_ko30/
 /data/l3/
 
 # Downloaded ASR model weights — populated by
