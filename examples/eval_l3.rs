@@ -5,7 +5,10 @@
 //! - **`filler`** (Phase C-1): runs the language-specific filler
 //!   filter's `detect_spans` against a token-span gold standard and
 //!   reports utterance- and span-level F1. Wired for `en` / `ja` /
-//!   `zh` / `es` / `ko`.
+//!   `zh` / `es` / `ko`. With `--embedder-dir` (and `--features onnx`)
+//!   it scores `OnnxEmbeddingFilter` on the same gold set instead, so
+//!   embedding backends can be compared against the rule-based
+//!   baseline — see `docs/model-upgrade-candidates.md` §3.2.
 //! - **`self-correction`** (Phase C-1): runs `SelfCorrectionDetector`
 //!   against an annotated JSONL file and reports utterance-level +
 //!   span-level F1. Used to measure how well the detector finds
@@ -83,6 +86,19 @@ struct Cli {
     /// `self-correction` task. Useful when debugging boundary mismatches.
     #[arg(long)]
     verbose: bool,
+
+    /// `--task filler` only: score `OnnxEmbeddingFilter` loaded from
+    /// this directory instead of the language's rule-based filter.
+    /// Requires `--features onnx`.
+    #[arg(long)]
+    embedder_dir: Option<PathBuf>,
+
+    /// Override the embedding filter's pure-filler cosine threshold.
+    /// Defaults to the lexicon value, which is calibrated for
+    /// `bge-small-en-v1.5` — see `docs/model-upgrade-candidates.md` §3.2
+    /// for the per-backend numbers.
+    #[arg(long)]
+    embedder_threshold: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -477,10 +493,53 @@ fn fmt_pct(x: f64) -> String {
 // them up case-by-case as filter span emitters land.
 // ---------------------------------------------------------------------------
 
+/// Either a rule-based filter (sync) or the ONNX embedding filter
+/// (async, needs a session lock). Both emit codepoint spans against
+/// the same gold annotations, so the F1 bookkeeping below is shared.
+type RuleDetector = Box<dyn Fn(&str) -> Vec<Span>>;
+
+enum SpanDetector {
+    Rule(RuleDetector),
+    #[cfg(feature = "onnx")]
+    Embedding(Box<euhadra::onnx_processing::OnnxEmbeddingFilter>),
+}
+
+impl SpanDetector {
+    async fn detect(&self, text: &str) -> Result<Vec<Span>, String> {
+        match self {
+            Self::Rule(f) => Ok(f(text)),
+            #[cfg(feature = "onnx")]
+            Self::Embedding(f) => f.detect_spans(text).await.map_err(|e| e.message),
+        }
+    }
+}
+
 async fn run_filler(cli: &Cli) -> Result<(), String> {
-    type SpanDetector = Box<dyn Fn(&str) -> Vec<Span>>;
     let lang = cli.lang.as_str();
-    let detect_spans: SpanDetector = match lang {
+
+    // `--embedder-dir` swaps the rule-based filter for the ONNX
+    // embedding filter, so the same gold set scores both. Threshold
+    // calibration for a given backend lives in
+    // `examples/bench_embedder.rs`.
+    #[cfg(feature = "onnx")]
+    if let Some(dir) = &cli.embedder_dir {
+        use euhadra::onnx_processing::{FillerLexicon, OnnxEmbeddingFilter};
+        let mut lexicon = FillerLexicon::for_language(lang)
+            .ok_or_else(|| format!("filler task: no lexicon for --lang {lang}"))?;
+        if let Some(t) = cli.embedder_threshold {
+            lexicon.pure_threshold = t;
+        }
+        let filter = OnnxEmbeddingFilter::load_with_lexicon(dir, lexicon)
+            .map_err(|e| format!("loading embedder {}: {}", dir.display(), e.message))?;
+        eprintln!(
+            "[filler] backend=onnx-embedding dir={} threshold={:.2}",
+            dir.display(),
+            filter.pure_threshold()
+        );
+        return score_filler(cli, SpanDetector::Embedding(Box::new(filter))).await;
+    }
+
+    let detect_spans: RuleDetector = match lang {
         "en" | "english" => {
             let filter = SimpleFillerFilter::english();
             Box::new(move |t| filter.detect_spans(t))
@@ -509,6 +568,10 @@ async fn run_filler(cli: &Cli) -> Result<(), String> {
         }
     };
 
+    score_filler(cli, SpanDetector::Rule(detect_spans)).await
+}
+
+async fn score_filler(cli: &Cli, detector: SpanDetector) -> Result<(), String> {
     let annotations = load_annotations(&cli.input)
         .map_err(|e| format!("loading {}: {e}", cli.input.display()))?;
     if annotations.is_empty() {
@@ -522,7 +585,7 @@ async fn run_filler(cli: &Cli) -> Result<(), String> {
     let mut span_stats: Vec<F1Stats> = Vec::new();
 
     for anno in &annotations {
-        let predicted = detect_spans(&anno.text);
+        let predicted = detector.detect(&anno.text).await?;
         let gold: Vec<Span> = anno.fillers.iter().map(|f| f.span()).collect();
 
         // Utterance-level fire / no-fire (ignores positions): a single

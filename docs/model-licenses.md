@@ -48,6 +48,29 @@ treats the declaration on the consumed distribution as authoritative,
 but the divergence is worth flagging if you rely on stricter compliance
 with the FunASR project's umbrella statement.
 
+## Text-embedding model weights
+
+Used by the Tier 1 `OnnxEmbeddingFilter` and the Tier 2
+`OnnxTextEmbedder` (`PhonemeCorrector` / `ParagraphSplitter`).
+`scripts/setup_embedders.sh` downloads these; the comparison behind
+the shortlist is in
+[`model-upgrade-candidates.md`](./model-upgrade-candidates.md) §3.
+
+| Model | SPDX / Label | License declaration | License text |
+|---|---|---|---|
+| `BAAI/bge-small-en-v1.5` (current default) | `MIT` | <https://huggingface.co/BAAI/bge-small-en-v1.5> (model-card YAML: `license: mit`) | <https://opensource.org/licenses/MIT> |
+| `ibm-granite/granite-embedding-97m-multilingual-r2` | `Apache-2.0` | <https://huggingface.co/ibm-granite/granite-embedding-97m-multilingual-r2> (model-card YAML: `license: apache-2.0`) | <https://www.apache.org/licenses/LICENSE-2.0.txt> |
+| `minishlab/potion-multilingual-128M` | `MIT` | <https://huggingface.co/minishlab/potion-multilingual-128M> (model-card YAML: `license: mit`) | <https://opensource.org/licenses/MIT> |
+
+**Evaluated and rejected on licence grounds**:
+`LiquidAI/LFM2.5-Embedding-350M` ships under the LFM Open Licence
+v1.0, which is Apache-2.0-derived but terminates the commercial-use
+grant for entities above $10M annual revenue, requiring a separate
+paid licence from Liquid AI. That is incompatible with keeping the
+OSS default commercially clean (`docs/spec.md` §8), so it is not a
+candidate for a bundled default. Declaration:
+<https://www.liquid.ai/lfm-license>.
+
 ## Runtime / framework licenses
 
 | Component | SPDX | License URL |
