@@ -31,3 +31,4 @@
 # `scripts/download_paragraph_corpus.py`. Reproducible, so the repo
 # never ships it.
 /data/paragraph_corpus/
+__pycache__/

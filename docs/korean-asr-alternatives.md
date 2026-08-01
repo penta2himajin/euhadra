@@ -435,6 +435,228 @@ expected value:
    repetition penalty. Even if that works it lands at RTF 0.37, so it
    is a stopgap rather than a destination.
 
+### I. CTC candidates: Dolphin and Omnilingual-ASR (measured 2026-07-31)
+
+§H.4 put non-autoregressive backends first. This section measures the
+two sherpa-onnx CTC factories that cover Korean, and settles the
+Korean routing question.
+
+#### I.1 These backends do not reproduce above one thread
+
+This has to come first, because it invalidates a number reported
+earlier in this investigation.
+
+Running Dolphin small INT8 over the same 30 FLEURS-ko utterances, from
+a byte-identical model file, with `num_threads=4` on a four-core
+container:
+
+| run | output md5 | CER |
+|---|---|---|
+| 1 | `ad55c8da…` | 0.0921 |
+| 2 | `35a8c813…` | 0.0895 |
+| 3 | `ae4b1e05…` | 0.0865 |
+| 4 | `462403ca…` | 0.0926 |
+| 5 | `84cd4638…` | 0.0818 |
+
+Five runs, five different transcripts. The variation is not a rounding
+artefact — individual utterances come back truncated in one run and
+complete in the next.
+
+At one intra-op thread the same model is exactly reproducible
+(Dolphin small throughout):
+
+| threads | runs | distinct outputs | CER |
+|---|---|---|---|
+| 1 | 3 | 1 | **0.0655** |
+| 2 | 3 | 1 | 0.0655 |
+| 4 | 5 | 5 | 0.0818 – 0.0926 |
+
+Dolphin **base** additionally disagreed with itself at two threads
+(0.1565 / 0.1597 over two runs), so "≤ 2 is safe" is not the rule —
+**one thread is the only setting that reproduces**, and it is also the
+most accurate one. Omnilingual at one thread was likewise identical
+across two runs.
+
+The incumbent is not affected: `whisper-large-v3-turbo` q4 through
+`src/whisper_onnx/adapter.rs`, which pins `intra = min(4, nproc) = 4`
+and `inter = 1`, returned CER 0.0269 on two consecutive runs. So this
+is specific to the sherpa-onnx CTC path rather than a general property
+of ONNX Runtime in this stack — but it is a property of the runtime we
+would be adopting, and §I.5 treats it as a porting requirement rather
+than a footnote.
+
+`scripts/run_sherpa_ctc.py` therefore defaults to `--threads 1` and
+prints a warning above that. Every accuracy figure below is from a
+single-threaded, reproduced run; the RTF figures are too, which
+understates the speed advantage rather than inflating it.
+
+**Correction.** Dolphin small was first reported at CER 0.0925, and an
+earlier version of the §I.4 decomposition was computed from that run. That figure was a single draw from the four-thread
+distribution above. The reproducible value is 0.0655, and §I.4 has been
+recomputed against it.
+
+#### I.2 Results
+
+| Field | Dolphin | Omnilingual-ASR |
+|---|---|---|
+| Upstream | [`DataoceanAI/Dolphin`](https://github.com/DataoceanAI/Dolphin) | Meta Omnilingual ASR (1600 languages) |
+| Export measured | `sherpa-onnx-dolphin-{small,base}-ctc-multi-lang-int8-2025-04-02` | `sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-int8-2025-11-12` |
+| License | **Apache-2.0** (model card YAML `license: apache-2.0`, upstream declaration on the repo above) | **Apache-2.0** (`LICENSE` shipped in the bundle, © Meta Platforms) |
+| Architecture | CTC branch only of a hybrid model; base 0.1B / small 0.4B params (`medium` 0.9B and `large` 1.7B are announced but not published) | encoder + CTC head, 300M params |
+| Korean | one of 40 supported Eastern languages (plus 22 Chinese dialects) | one of ~1600 |
+
+Measured on the same 30 FLEURS-ko utterances, same container, same
+`eval::metrics::cer_lenient` via `examples/score_hypotheses.rs`, all at
+one intra-op thread except the incumbent (see §I.1):
+
+| | model size | CER (lenient) | RTF | reproducible |
+|---|---|---|---|---|
+| `whisper-large-v3-turbo` q4 (incumbent, 4 threads) | ~900 MB | **0.0269** | 0.584 | yes |
+| **Dolphin small INT8** | 239 MB | 0.0655 | **0.094** | yes |
+| Dolphin base INT8 | 99 MB | 0.1565 | 0.044 | yes |
+| Omnilingual 300M-CTC INT8 | 349 MB | 0.1655 | 0.377 | yes |
+| `Qwen3-ASR-0.6B` INT8 (§H) | ~1 GB | 0.1911 | 0.324 | not tested |
+
+**Omnilingual is out.** At 0.1655 it is the least accurate candidate
+measured *and* costs 4× Dolphin small's RTF for it — 1600-language
+coverage buys nothing here. Its characteristic failure is dropping or
+mangling numeric content outright (`2011년 8월에` → `년 파월에`,
+`1만 년 전에` → `년전에`), which is the one error class §I.4 shows is
+otherwise recoverable, so it forecloses the only available remedy.
+
+**Dolphin base is out.** It buys 2.1× the speed of small for 2.4× the
+error, which is the wrong side of the trade given small is already 6×
+faster than the incumbent.
+
+**The §H.2 expectation held.** All three CTC backends ran INT8 with
+zero degenerate utterances, against 2/30 for the INT8 autoregressive
+Qwen3-ASR export and a full collapse for the INT8 Whisper decoder.
+Non-autoregressive decoding does not exhibit the repetition failure
+mode, as predicted.
+
+#### I.3 Dolphin small against the incumbent
+
+The comparison is deliberately unfair to Dolphin: it runs on **one**
+thread, the incumbent on **four**.
+
+| | whisper-turbo q4 (4 threads) | Dolphin small (1 thread) |
+|---|---|---|
+| CER (lenient) | 0.0269 | 0.0655 |
+| RTF | 0.584 | **0.094** |
+| 4.8 s utterance (`1907`) | 7297 ms | **405 ms** |
+| 18.9 s utterance (`1715`) | 7743 ms | 1824 ms |
+| cost model | fixed 30 s encoder pass (§A.2) | proportional to audio |
+
+**6.2× faster in aggregate, 2.4× less accurate.** But the per-utterance
+rows are the ones that matter for dictation: §A.2 established that
+Whisper charges the same ~7 s for five seconds of speech as for
+nineteen, because the mel front-end pads to 30 seconds. A CTC model has
+no window to pad — 3.9× the audio costs 4.5× the time. On the 4.8-second
+utterance the gap is not 6× but **18×**.
+
+The aggregate RTF understates the advantage twice over — once through
+the thread handicap, once through the utterance-length mix of a
+read-speech corpus, which is longer-winded than dictation.
+
+#### I.4 What euhadra's own layers can recover
+
+The obvious question is whether Tier 1/2 post-processing closes the
+accuracy gap. It does not, but it recovers one specific error class
+that the incumbent does not have to pay for at all — which is what
+makes the number interesting.
+
+Dolphin spells numbers out; the FLEURS reference uses Arabic digits:
+
+```
+ref: 다리 밑 수직 간격은 15미터이며 공사는 2011년 8월에 …
+hyp: 다리미   수직 간격은 십오 미터이며 공사는 이천십일년 팔월에 …
+```
+
+Splitting the 30 utterances on whether the reference contains a digit:
+
+| subset | n | Dolphin small | whisper-turbo q4 |
+|---|---|---|---|
+| reference contains digits | 8 | **0.1112** | 0.0332 |
+| reference has no digits | 22 | 0.0489 | 0.0246 |
+| all | 30 | 0.0655 | 0.0269 |
+
+Dolphin's error more than doubles on digit-bearing utterances;
+Whisper's barely moves, because Whisper already emits digits (6 of 8).
+So **the numeral-form penalty is worth about 0.017 CER — a quarter of
+Dolphin's total error — and it accrues to Dolphin alone.**
+
+That is exactly what `InverseTextNormalizer` exists for. Korean ITN is
+written and tested (`patches/text-processing-rs-ko-itn.patch`, 25 unit
+tests + 51 NeMo-format integration cases) but not upstream, so
+`InverseTextNormalizer::new("ko")` is currently a passthrough. Landing
+it takes Dolphin small from 0.0655 to **≈0.049**, and Whisper from
+0.0269 to ≈0.025 — **narrowing the gap from 2.4× to 2.0×**.
+
+This corrects an earlier reading. Working from the four-thread run,
+this section previously concluded that Korean ITN "helps Whisper
+equally, so does not change the trade". The subset split shows the
+opposite: on the digit-bearing subset Whisper's numeral penalty is
+0.009 CER against Dolphin's 0.062.
+**Korean ITN is worth roughly seven times more to the candidate than to
+the incumbent**, and it is the single highest-value item in this
+document that requires no model change.
+
+The rest of Dolphin's error is not recoverable here:
+
+| error class | recoverable | why |
+|---|---|---|
+| numeral surface form | **yes — ko ITN** | rule-based, already written |
+| deletions (`주기율표 상에 원소가` → `주기`) | **no** | no layer can restore audio the ASR never emitted |
+| general-vocabulary substitutions (`직후`→`찍고`, `봉쇄`→`봉세`) | no | needs a language model; that is Tier 3's job, not Tier 1/2's |
+| proper nouns | in principle | `PhonemeCorrector` needs a Korean IPA lexicon and a Korean G2P; CMUdict and DeepPhonemizer are English-only. And it only fixes terms the *user* registered — `직후`→`찍고` is ordinary vocabulary nobody puts in a dictionary |
+
+Word spacing costs nothing in this comparison: `cer_lenient` strips
+whitespace before aligning, so Korean 띄어쓰기 differences are already
+free. Punctuation likewise — FLEURS references carry none.
+
+**Conclusion: post-processing cannot buy back the accuracy gap.** It
+can buy back a quarter of it, once, via a patch that is already
+written.
+
+#### I.5 Decision
+
+**Adopt Dolphin small for the Korean path.** The trade is 2.4× the
+error for 6.2× the throughput — 18× on a short utterance — and euhadra
+is a dictation framework, where a fixed ~7-second wait per utterance is
+a product defect and a CER difference of 0.04 is a nuisance. §A.2
+established that Whisper's latency is structural, not a tuning problem;
+this is the first measured backend that removes it without the INT8
+degeneration of §H.2.
+
+Follow-up work, in order:
+
+1. **Land the Korean ITN patch upstream.** Highest value per unit of
+   effort in this document: it is written, tested, and recovers a
+   quarter of Dolphin's error. `patches/text-processing-rs-ko-itn.patch`
+   applies cleanly to `FluidInference/text-processing-rs@8a043f1` with
+   all 1101 upstream tests passing. euhadra's GitHub scope is
+   `penta2himajin/euhadra` only, so a human has to open the PR;
+   `patches/text-processing-rs-ko-itn.message.txt` is the handoff.
+2. **Implement `DolphinAdapter`** — a Rust ONNX adapter in the shape of
+   `src/sensevoice/adapter.rs`, reusing `paraformer::fbank` for the
+   front-end, behind the `onnx` feature gate. This is what "adopt"
+   actually costs; the measurements here were taken through
+   `sherpa-onnx`'s Python bindings, which euhadra does not depend on.
+3. **Pin one intra-op thread, or prove otherwise.** §I.1 is a
+   correctness requirement for the adapter, not a benchmarking
+   footnote: a dictation backend that returns a different transcript
+   each time it sees the same audio is not acceptable. The port should
+   default to a single thread and re-measure before raising it.
+4. **Re-measure when `medium` (0.9B) and `large` (1.7B) publish.**
+   Small already sits at 0.0655 with base at 0.1565, so the size curve
+   is steep here; medium is the most likely candidate to close the
+   remaining gap to Whisper while keeping the CTC cost model. Neither
+   checkpoint has a public export today, so this is standby work rather
+   than a blocker on the items above.
+
+Not adopted: Omnilingual-ASR (least accurate and 4× the cost),
+Dolphin base (2.4× the error of small), Qwen3-ASR INT8 (§H.2).
+
 ## Verdict and recommended sequencing
 
 License cleanliness (descending):
@@ -498,6 +720,24 @@ either clarified upstream or covered by a separate written permission.
 Track `spow12/whisper-medium-zeroth_korean` as a backup if turbo's
 production RTF turns out to be unacceptable. If a Korean Parakeet/Canary
 ever ships from NVIDIA, revisit via the existing factories.
+
+### Step 4 (decided — 2026-07-31)
+
+Steps 1/1.5 chose `whisper-large-v3-turbo` q4 on accuracy alone, before
+§A.2 decomposed its latency. With that decomposition in hand — ~90% of
+per-utterance cost is a fixed 30-second encoder pass — the choice does
+not survive: turbo is the right model for transcribing files and the
+wrong one for dictation.
+
+§H measured the autoregressive alternative (`Qwen3-ASR-0.6B`, structurally
+right, INT8 export degenerate) and §I the non-autoregressive ones.
+**The `ko` path moves to Dolphin small CTC** (§I.5): 6.2× the throughput
+for 2.4× the error, 18× on a short utterance, Apache-2.0 throughout.
+
+Whisper-ONNX stays in the tree and stays wired into CI; this is a
+routing change for `ko`, not a removal. The porting work is §I.5's
+list, headed by the Korean ITN patch — which is worth landing whichever
+backend wins.
 
 ## What this PR does and doesn't do
 
