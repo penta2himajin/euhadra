@@ -244,7 +244,24 @@ jobs:
         env:
           WHISPER_ONNX_DIR: vendor/whisper_onnx_turbo
 
-      - name: Build eval binary (with onnx for Parakeet/Paraformer/Canary/WhisperOnnx adapters)
+      # ko routes through Dolphin CTC as of docs/korean-asr-alternatives.md
+      # §I. The whisper-onnx bundle above is still fetched: it remains the
+      # runtime for anyone who wants the accuracy, and dropping it here
+      # would leave that path untested.
+      - name: Cache dolphin-ko bundle
+        id: dolphin-ko-cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/dolphin_ko
+          key: dolphin-small-ctc-int8-2025-04-02-v1
+
+      - name: Download dolphin-ko (cache miss only)
+        if: steps.dolphin-ko-cache.outputs.cache-hit != 'true'
+        run: bash scripts/setup_dolphin_ko.sh
+        env:
+          DOLPHIN_KO_DIR: vendor/dolphin_ko
+
+      - name: Build eval binary (with onnx for Parakeet/Paraformer/Canary/WhisperOnnx/Dolphin adapters)
         run: cargo build --release --example eval_l1_smoke --features onnx --locked
 
       - name: Prepare ORT profile output dir
@@ -278,7 +295,7 @@ jobs:
             --parakeet-ja-dir vendor/parakeet_ja \
             --paraformer-zh-dir vendor/paraformer_zh \
             --canary-es-dir vendor/canary_es \
-            --whisper-onnx-ko-dir vendor/whisper_onnx_turbo \
+            --dolphin-ko-dir vendor/dolphin_ko \
             --langs en,ja,zh,es,ko \
             --baseline docs/benchmarks/ci_baseline.json \
             --dump-utterances
