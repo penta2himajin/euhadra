@@ -790,6 +790,28 @@ suite's 192 s under Whisper, and the whole five-language suite at n=30
 costs ~180 s. The gate got three times the evidence for less wall-clock
 than it spent before.
 
+**And the thin basis was worse than thin — it was biased.** Raising N
+moved every language's accuracy in the same direction:
+
+| lang | n=10 | n=30 | |
+|---|---|---|---|
+| ja | CER 0.0331 | 0.0724 | +119% |
+| ko | CER 0.0330 | 0.0613 | +86% |
+| en | WER 0.0439 | 0.0762 | +74% |
+| es | WER 0.0528 | 0.0621 | +18% |
+| zh | CER 0.0553 | 0.0607 | +10% |
+
+Five out of five the same way is not sampling noise: FLEURS' first ten
+utterances are simply easier than the next twenty, and **the old gate
+was reporting numbers roughly 1.5–2× better than the corpus** for four
+of the five languages. RTF barely moved across the same change (en
+0.147 → 0.137, ko 0.144 → 0.142), so what was subset-dependent was the
+accuracy metric, not the timing.
+
+This does not change any decision in this document — §I.3's comparison
+was always measured on 30 — but it does mean the n=10 figures quoted
+in §I.7's tables above were flattering *both* backends, not just one.
+
 **Runner ratios do not transfer between models.** whisper-onnx q4 runs
 ~2.04× slower on the CI runner than in this container (RTF 1.339
 against 0.656), so the ko baseline was first written by applying that

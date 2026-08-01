@@ -174,6 +174,21 @@ jobs:
       #
       # The stream is deterministic, so n=30 extends the n=10 set rather
       # than resampling it: the first ten ids are unchanged.
+      #
+      # Raising it moved every language's accuracy the same way, which is
+      # the finding rather than a side effect -- the first ten utterances
+      # were systematically easier than the next twenty:
+      #
+      #   en WER 0.0439 -> 0.0762 (+74%)   ja CER 0.0331 -> 0.0724 (+119%)
+      #   ko CER 0.0330 -> 0.0613 (+86%)   es WER 0.0528 -> 0.0621 (+18%)
+      #   zh CER 0.0553 -> 0.0607 (+10%)
+      #
+      # Five out of five in the same direction is not sampling noise. The
+      # n=10 gate was reporting numbers roughly 1.5-2x better than the
+      # corpus for four of the five languages. RTF barely moved over the
+      # same change (en 0.147 -> 0.137, ko 0.144 -> 0.142), so it was the
+      # accuracy metric that was subset-dependent, not the timing.
+      # Do not lower this back to 10 to make a regression go away.
       - name: Download FLEURS subset (cache miss only)
         if: steps.fleurs-cache.outputs.cache-hit != 'true'
         run: python3 scripts/download_fleurs_subset.py --lang en --lang ja --lang zh --lang es --lang ko --n 30
