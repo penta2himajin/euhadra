@@ -22,8 +22,14 @@
 //!
 //! The model weights ship under the FunASR Model Open Source
 //! License Agreement v1.1
-//! (https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE),
-//! a permissive license allowing commercial use with attribution.
+//! (https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE).
+//! That is a custom Alibaba licence, not OSI-approved: it does not
+//! prohibit commercial use, but upstream has never confirmed it in the
+//! issues that asked directly, and §4.2's conduct clause terminates the
+//! grant on violation. `docs/model-licenses.md` is authoritative and
+//! says to consult counsel before relying on it commercially — do not
+//! read this module header as clearance.
+//!
 //! This Rust port re-implements the inference logic and ships none
 //! of the upstream weights — `setup_sensevoice.sh` self-exports
 //! from the official HuggingFace bundle.

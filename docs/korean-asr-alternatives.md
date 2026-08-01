@@ -784,6 +784,12 @@ change in the models, but it is the number CI will show. If the ko slot
 is going to carry a routing decision, ten utterances is a thin basis
 for it.
 
+*Resolved: CI now evaluates 30 utterances per language.* It became
+affordable because of this very change — ko alone cost 148 s of the
+suite's 192 s under Whisper, and the whole five-language suite at n=30
+costs ~180 s. The gate got three times the evidence for less wall-clock
+than it spent before.
+
 **Runner ratios do not transfer between models.** whisper-onnx q4 runs
 ~2.04× slower on the CI runner than in this container (RTF 1.339
 against 0.656), so the ko baseline was first written by applying that

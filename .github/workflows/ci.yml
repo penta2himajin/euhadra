@@ -158,11 +158,25 @@ jobs:
         uses: actions/cache@v4
         with:
           path: data/fleurs_subset
-          key: fleurs-subset-v3-en-ja-zh-es-ko-n10
+          key: fleurs-subset-v3-en-ja-zh-es-ko-n30
 
+      # 30 rather than 10. At n=10 a single utterance moves a language's
+      # CER by ~10% relative, which is too coarse for the gate to mean
+      # much and too coarse to carry a routing decision -- ko measured
+      # 3.7x the incumbent's error on the 10-utterance subset against
+      # 2.3x on 30 (docs/korean-asr-alternatives.md §I.7).
+      #
+      # It is affordable now specifically because ko moved off Whisper.
+      # Per-language ASR time x10 was en 13.7s / ja 12.5s / zh 4.3s /
+      # es 13.5s / ko 16.2s = 60s, where ko alone used to be 148s. At
+      # n=30 the whole suite costs ~180s -- still less than the 192s the
+      # n=10 suite cost before the switch.
+      #
+      # The stream is deterministic, so n=30 extends the n=10 set rather
+      # than resampling it: the first ten ids are unchanged.
       - name: Download FLEURS subset (cache miss only)
         if: steps.fleurs-cache.outputs.cache-hit != 'true'
-        run: python3 scripts/download_fleurs_subset.py --lang en --lang ja --lang zh --lang es --lang ko --n 10
+        run: python3 scripts/download_fleurs_subset.py --lang en --lang ja --lang zh --lang es --lang ko --n 30
 
       - name: Cache parakeet-ja ONNX bundle (~2.4 GB)
         id: parakeet-ja-cache
