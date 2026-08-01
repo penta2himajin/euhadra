@@ -14,7 +14,7 @@ src/                  # Rust ライブラリ + CLI 本体
   processor.rs          # TextProcessor 実装（自己訂正・句読点・ITN・口語縮約）
   mock.rs               # テスト用モック実装
   eval/                 # 評価ハーネス（L1/L2/L3 メトリクス）
-  canary/ paraformer/ sensevoice/ parakeet.rs   # ONNX ASR アダプタ（onnx feature 配下）
+  canary/ dolphin/ paraformer/ sensevoice/ parakeet.rs  # ONNX ASR アダプタ（onnx feature 配下）
 docs/                 # 仕様・評価・ベンチマーク（@docs/spec.md ほか）
 tests/                # 統合テスト
 examples/             # 評価ランナー（eval_l1_smoke 等）

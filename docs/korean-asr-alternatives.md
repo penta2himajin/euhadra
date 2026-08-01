@@ -637,16 +637,16 @@ Follow-up work, in order:
    all 1101 upstream tests passing. euhadra's GitHub scope is
    `penta2himajin/euhadra` only, so a human has to open the PR;
    `patches/text-processing-rs-ko-itn.message.txt` is the handoff.
-2. **Implement `DolphinAdapter`** — a Rust ONNX adapter in the shape of
+2. **Implement `DolphinAdapter`** — *done, §I.6.* A Rust ONNX adapter in the shape of
    `src/sensevoice/adapter.rs`, reusing `paraformer::fbank` for the
    front-end, behind the `onnx` feature gate. This is what "adopt"
    actually costs; the measurements here were taken through
    `sherpa-onnx`'s Python bindings, which euhadra does not depend on.
-3. **Pin one intra-op thread, or prove otherwise.** §I.1 is a
+3. **Pin one intra-op thread, or prove otherwise.** *Done, §I.6.* §I.1 is a
    correctness requirement for the adapter, not a benchmarking
    footnote: a dictation backend that returns a different transcript
-   each time it sees the same audio is not acceptable. The port should
-   default to a single thread and re-measure before raising it.
+   each time it sees the same audio is not acceptable. The port
+   defaults to a single thread and reproduces itself across runs.
 4. **Re-measure when `medium` (0.9B) and `large` (1.7B) publish.**
    Small already sits at 0.0655 with base at 0.1565, so the size curve
    is steep here; medium is the most likely candidate to close the
@@ -656,6 +656,62 @@ Follow-up work, in order:
 
 Not adopted: Omnilingual-ASR (least accurate and 4× the cost),
 Dolphin base (2.4× the error of small), Qwen3-ASR INT8 (§H.2).
+
+#### I.6 The Rust port (2026-08-01)
+
+`src/dolphin/` implements items 2 and 3 above. Measured on the same 30
+utterances, in the same container, through
+`examples/bench_dolphin_ko.rs`:
+
+| | sherpa-onnx (Python, 1 thread) | `DolphinAdapter` (Rust) |
+|---|---|---|
+| CER (lenient) | 0.0655 | **0.0618** |
+| RTF | **0.094** | 0.147 |
+| identical across 3 runs | yes | **yes** |
+
+**It reproduces itself**, which was the requirement: three runs, one
+output md5. `INTRA_THREADS` is pinned to 1 in the adapter with §I.1
+cited at the constant, so raising it means re-running that experiment
+rather than reading a benchmark.
+
+**It does not reproduce sherpa byte-for-byte** — 26 of 30 transcripts
+differ, almost entirely in word spacing (`북 발트해` against `붓발트해`,
+`다리미 수직` against `다리 이 수직`). The front-end is not the cause:
+`FbankOpts::dolphin_default` is pinned against kaldi-native-fbank by
+`tests/fixtures/dolphin_fbank_golden.json` and agrees to **< 2e-3 per
+bin** on both a two-tone and a wideband case, with matching frame counts
+on real audio. What remains is f32 accumulation differing between
+`rustfft` and Kaldi's real-FFT, landing on a graph whose argmax is
+demonstrably knife-edge — §I.1 measured this same model moving across
+CER 0.082–0.093 purely from thread scheduling. A 0.0618/0.0655
+difference sits well inside that band, and bit-equality across two FFT
+implementations was never available. The port is the more accurate of
+the two draws, but that is luck, not an improvement.
+
+Three things that bit, all silent when wrong, all now pinned by tests:
+
+- The front-end is **not** Paraformer's. Povey window against Hamming,
+  `snip_edges = false` against `true`, `high_freq = -400` (Kaldi's
+  "Nyquist minus 400 Hz") against full band, and Kaldi's
+  `log(max(e, FLT_EPSILON))` against FunASR's `log(e + 1e-10)`. Each
+  produces correctly-shaped features and a plausible transcript.
+- The CMVN lives in the graph's `metadata_props`, not a sidecar. Skipping
+  it is not an error, just a worse transcript, so
+  `dolphin::adapter` has a test asserting a shifted CMVN actually moves
+  the features.
+- `tokens.txt` is the two-column `symbol<space>id` form, not the
+  one-piece-per-line list `sensevoice::vocab` reads. Reading position as
+  id would silently shift the whole vocabulary.
+
+**RTF 0.147 against sherpa's 0.094** — the Rust path is ~1.6× slower
+than the C++ reference, and still 4× faster than the incumbent Whisper
+q4's 0.584. The gap is not diagnosed; the front-end recomputes a
+512-point FFT per frame with no reuse, which is the first place to look
+if it matters. It has not been optimised because the adopted backend is
+already comfortably ahead of what it replaces.
+
+Still open from §I.5: routing `ko` to this adapter (a Menura-side config
+change, separate repo), and the Korean ITN patch, which needs a human.
 
 ## Verdict and recommended sequencing
 

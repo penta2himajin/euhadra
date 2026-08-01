@@ -58,6 +58,13 @@ required-features = ["onnx"]
 name = "bench_whisper_onnx_ko"
 required-features = ["onnx"]
 
+# DolphinAdapter smoke bench. The port's acceptance test is that its
+# transcripts match sherpa-onnx's on the same manifest, so this can
+# dump the same two-column form scripts/run_sherpa_ctc.py writes.
+[[example]]
+name = "bench_dolphin_ko"
+required-features = ["onnx"]
+
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
 async-trait = "0.1"
