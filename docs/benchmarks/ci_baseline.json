@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated": "epoch:1778602562",
-  "asr_model": "canary-180m-flash-int8 (en) / parakeet-tdt_ctc-0.6b-ja (ja) / paraformer-large-zh (zh) / canary-180m-flash-int8 (es) / whisper-large-v3-turbo-q4 (ko)",
+  "asr_model": "canary-180m-flash-int8 (en) / parakeet-tdt_ctc-0.6b-ja (ja) / paraformer-large-zh (zh) / canary-180m-flash-int8 (es) / dolphin-small-ctc-int8 (ko)",
   "languages": {
     "en": {
       "samples": 10,
@@ -44,16 +44,16 @@
     },
     "ko": {
       "samples": 10,
-      "cer": 0.0095,
+      "cer": 0.033,
       "asr_latency_ms": {
-        "p50": 14791.0,
-        "p95": 15368.0
+        "p50": 1620.0,
+        "p95": 2482.0
       },
       "e2e_latency_ms": {
-        "p50": 14791.0,
-        "p95": 15368.0
+        "p50": 1620.0,
+        "p95": 2482.0
       },
-      "rtf": 1.339
+      "rtf": 0.144
     },
     "zh": {
       "samples": 10,

@@ -35,6 +35,8 @@ use euhadra::eval::metrics::{cer_lenient, wer_lenient};
 use euhadra::paraformer::ParaformerAdapter;
 #[cfg(feature = "onnx")]
 use euhadra::parakeet::ParakeetAdapter;
+#[cfg(feature = "onnx")]
+use euhadra::dolphin::DolphinAdapter;
 use euhadra::prelude::*;
 #[cfg(feature = "onnx")]
 use euhadra::sensevoice::{SenseVoiceAdapter, SenseVoiceConfig};
@@ -145,6 +147,20 @@ struct Cli {
     #[arg(long, env = "WHISPER_ONNX_KO_DIR")]
     whisper_onnx_ko_dir: Option<PathBuf>,
 
+    /// Optional path to a Dolphin CTC bundle (`model.int8.onnx` +
+    /// `tokens.txt`, the layout `scripts/setup_dolphin_ko.sh`
+    /// produces). When provided, `ko` runs through `DolphinAdapter`.
+    ///
+    /// **Takes precedence over `--whisper-onnx-ko-dir`.** This is the
+    /// routing change `docs/korean-asr-alternatives.md` §I decided, and
+    /// it is a deliberate accuracy regression bought for throughput:
+    /// on this 10-utterance subset, CER 0.0095 → 0.0349 against
+    /// RTF 0.656 → 0.189 measured in one container. §I.3 states the
+    /// trade; do not "fix" the CER movement by reverting the flag
+    /// order without reading it.
+    #[arg(long, env = "DOLPHIN_KO_DIR")]
+    dolphin_ko_dir: Option<PathBuf>,
+
     /// Print every utterance's reference / hypothesis / per-utterance
     /// WER + CER as the smoke runs. Useful when chasing residual
     /// errors (mismatched normalisation, OOV characters, traditional
@@ -206,6 +222,7 @@ async fn run() -> Result<(), String> {
     let mut used_paraformer_zh = false;
     let mut used_sensevoice_ko = false;
     let mut used_whisper_onnx_ko = false;
+    let mut used_dolphin_ko = false;
 
     for lang in &cli.langs {
         let manifest = load_manifest(&cli.data_dir, lang)
@@ -234,6 +251,7 @@ async fn run() -> Result<(), String> {
             cli.canary_en_dir.as_deref(),
             cli.sensevoice_dir.as_deref(),
             cli.whisper_onnx_ko_dir.as_deref(),
+            cli.dolphin_ko_dir.as_deref(),
         )?;
         if lang == "ja" && cli.parakeet_ja_dir.is_some() {
             used_parakeet_ja = true;
@@ -244,7 +262,9 @@ async fn run() -> Result<(), String> {
         if lang == "zh" && cli.paraformer_zh_dir.is_some() {
             used_paraformer_zh = true;
         }
-        if lang == "ko" && cli.whisper_onnx_ko_dir.is_some() {
+        if lang == "ko" && cli.dolphin_ko_dir.is_some() {
+            used_dolphin_ko = true;
+        } else if lang == "ko" && cli.whisper_onnx_ko_dir.is_some() {
             used_whisper_onnx_ko = true;
         } else if lang == "ko" && cli.sensevoice_dir.is_some() {
             used_sensevoice_ko = true;
@@ -282,7 +302,9 @@ async fn run() -> Result<(), String> {
         } else {
             "ggml-tiny"
         },
-        ko_model = if used_whisper_onnx_ko {
+        ko_model = if used_dolphin_ko {
+            "dolphin-small-ctc-int8"
+        } else if used_whisper_onnx_ko {
             "whisper-large-v3-turbo-q4"
         } else if used_sensevoice_ko {
             "sensevoice-small"
@@ -500,6 +522,7 @@ fn build_pipeline(
     canary_en_dir: Option<&Path>,
     sensevoice_dir: Option<&Path>,
     whisper_onnx_ko_dir: Option<&Path>,
+    dolphin_ko_dir: Option<&Path>,
 ) -> Result<Pipeline, String> {
     // Build the post-ASR stack first; ASR is bolted on per-language
     // because its concrete type depends on the model choice.
@@ -555,6 +578,18 @@ fn build_pipeline(
             #[cfg(not(feature = "onnx"))]
             {
                 return Err("--paraformer-zh-dir requires --features onnx at build time".into());
+            }
+        }
+        "ko" if dolphin_ko_dir.is_some() => {
+            #[cfg(feature = "onnx")]
+            {
+                let dir = dolphin_ko_dir.unwrap();
+                let asr = load_dolphin_ko_adapter(dir)?;
+                builder.asr(asr)
+            }
+            #[cfg(not(feature = "onnx"))]
+            {
+                return Err("--dolphin-ko-dir requires --features onnx at build time".into());
             }
         }
         "ko" if whisper_onnx_ko_dir.is_some() => {
@@ -676,6 +711,13 @@ fn load_whisper_onnx_ko_adapter(dir: &Path) -> Result<WhisperOnnxAdapter, String
     };
     WhisperOnnxAdapter::load_with_config(dir, cfg)
         .map_err(|e| format!("load whisper-onnx ko from {}: {e}", dir.display()))
+}
+
+#[cfg(feature = "onnx")]
+fn load_dolphin_ko_adapter(dir: &Path) -> Result<DolphinAdapter, String> {
+    // No language argument: the CTC graph takes (x, x_len) and nothing
+    // else. See `dolphin::factory` for why the tag has nowhere to go.
+    DolphinAdapter::load(dir).map_err(|e| format!("load dolphin ko from {}: {e}", dir.display()))
 }
 
 fn print_language_result(lang: &str, r: &LanguageBaseline) {

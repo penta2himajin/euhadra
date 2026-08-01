@@ -28,8 +28,10 @@
 //! fetches the k2-fsa CTC export.
 
 pub mod adapter;
+pub mod factory;
 pub mod metadata;
 pub mod vocab;
 
 pub use adapter::{DolphinAdapter, DolphinConfig};
+pub use factory::DolphinFactory;
 pub use metadata::Cmvn;
