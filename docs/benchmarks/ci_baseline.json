@@ -4,69 +4,69 @@
   "asr_model": "canary-180m-flash-int8 (en) / parakeet-tdt_ctc-0.6b-ja (ja) / paraformer-large-zh (zh) / canary-180m-flash-int8 (es) / dolphin-small-ctc-int8 (ko)",
   "languages": {
     "en": {
-      "samples": 10,
-      "wer": 0.0439,
+      "samples": 30,
+      "wer": 0.0762,
       "asr_latency_ms": {
-        "p50": 968.9,
-        "p95": 1472.27
+        "p50": 1226.0,
+        "p95": 2142.0
       },
       "e2e_latency_ms": {
-        "p50": 968.91,
-        "p95": 1472.28
+        "p50": 1226.0,
+        "p95": 2142.0
       },
-      "rtf": 0.1072
+      "rtf": 0.137
     },
     "es": {
-      "samples": 10,
-      "wer": 0.0528,
+      "samples": 30,
+      "wer": 0.0621,
       "asr_latency_ms": {
-        "p50": 1085.0,
-        "p95": 3006.0
+        "p50": 1417.0,
+        "p95": 2563.0
       },
       "e2e_latency_ms": {
-        "p50": 1085.0,
-        "p95": 3006.0
+        "p50": 1417.0,
+        "p95": 2563.0
       },
-      "rtf": 0.123
+      "rtf": 0.134
     },
     "ja": {
-      "samples": 10,
-      "cer": 0.0331,
+      "samples": 30,
+      "cer": 0.0724,
       "asr_latency_ms": {
-        "p50": 1194.3,
-        "p95": 1454.0
+        "p50": 1267.0,
+        "p95": 1937.0
       },
       "e2e_latency_ms": {
-        "p50": 1194.3,
-        "p95": 1454.0
+        "p50": 1267.0,
+        "p95": 1937.0
       },
-      "rtf": 0.106
+      "rtf": 0.107
     },
     "ko": {
-      "samples": 10,
-      "cer": 0.033,
+      "samples": 30,
+      "cer": 0.0613,
       "asr_latency_ms": {
-        "p50": 1620.0,
-        "p95": 2482.0
+        "p50": 1742.0,
+        "p95": 3221.0
       },
       "e2e_latency_ms": {
-        "p50": 1620.0,
-        "p95": 2482.0
+        "p50": 1742.0,
+        "p95": 3221.0
       },
-      "rtf": 0.144
+      "rtf": 0.142
     },
     "zh": {
-      "samples": 10,
-      "cer": 0.0553,
+      "samples": 30,
+      "cer": 0.0607,
       "asr_latency_ms": {
-        "p50": 464.0,
-        "p95": 555.0
+        "p50": 307.0,
+        "p95": 489.0
       },
       "e2e_latency_ms": {
-        "p50": 464.0,
-        "p95": 555.0
+        "p50": 307.0,
+        "p95": 489.0
       },
-      "rtf": 0.035
+      "rtf": 0.032
     }
   },
   "tolerances": {

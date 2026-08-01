@@ -158,11 +158,40 @@ jobs:
         uses: actions/cache@v4
         with:
           path: data/fleurs_subset
-          key: fleurs-subset-v3-en-ja-zh-es-ko-n10
+          key: fleurs-subset-v3-en-ja-zh-es-ko-n30
 
+      # 30 rather than 10. At n=10 a single utterance moves a language's
+      # CER by ~10% relative, which is too coarse for the gate to mean
+      # much and too coarse to carry a routing decision -- ko measured
+      # 3.7x the incumbent's error on the 10-utterance subset against
+      # 2.3x on 30 (docs/korean-asr-alternatives.md §I.7).
+      #
+      # It is affordable now specifically because ko moved off Whisper.
+      # Per-language ASR time x10 was en 13.7s / ja 12.5s / zh 4.3s /
+      # es 13.5s / ko 16.2s = 60s, where ko alone used to be 148s. At
+      # n=30 the whole suite costs ~180s -- still less than the 192s the
+      # n=10 suite cost before the switch.
+      #
+      # The stream is deterministic, so n=30 extends the n=10 set rather
+      # than resampling it: the first ten ids are unchanged.
+      #
+      # Raising it moved every language's accuracy the same way, which is
+      # the finding rather than a side effect -- the first ten utterances
+      # were systematically easier than the next twenty:
+      #
+      #   en WER 0.0439 -> 0.0762 (+74%)   ja CER 0.0331 -> 0.0724 (+119%)
+      #   ko CER 0.0330 -> 0.0613 (+86%)   es WER 0.0528 -> 0.0621 (+18%)
+      #   zh CER 0.0553 -> 0.0607 (+10%)
+      #
+      # Five out of five in the same direction is not sampling noise. The
+      # n=10 gate was reporting numbers roughly 1.5-2x better than the
+      # corpus for four of the five languages. RTF barely moved over the
+      # same change (en 0.147 -> 0.137, ko 0.144 -> 0.142), so it was the
+      # accuracy metric that was subset-dependent, not the timing.
+      # Do not lower this back to 10 to make a regression go away.
       - name: Download FLEURS subset (cache miss only)
         if: steps.fleurs-cache.outputs.cache-hit != 'true'
-        run: python3 scripts/download_fleurs_subset.py --lang en --lang ja --lang zh --lang es --lang ko --n 10
+        run: python3 scripts/download_fleurs_subset.py --lang en --lang ja --lang zh --lang es --lang ko --n 30
 
       - name: Cache parakeet-ja ONNX bundle (~2.4 GB)
         id: parakeet-ja-cache

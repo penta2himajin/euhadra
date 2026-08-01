@@ -28,10 +28,31 @@ WHISPER_REF="${WHISPER_REF:-v1.7.4}"
 
 mkdir -p "$(dirname "$WHISPER_DIR")"
 
+# Every other setup_*.sh passes `curl --retry 3 --retry-delay 2`; this
+# one had no retry on either of its two network operations. A single
+# TCP timeout reaching github.com therefore turned the whole ASR eval
+# job red — observed on run 30685477340, where the connect failed after
+# 136 s on a cache miss. `git clone` has no --retry of its own, so it
+# gets a loop; a failed attempt can leave a partial directory behind,
+# which has to go before retrying or the next clone refuses the target.
+retry_clone() {
+    local attempt
+    for attempt in 1 2 3; do
+        if git clone --depth 1 --branch "$WHISPER_REF" \
+            https://github.com/ggerganov/whisper.cpp "$WHISPER_DIR"; then
+            return 0
+        fi
+        echo "[setup_whisper] clone attempt $attempt failed" >&2
+        rm -rf "$WHISPER_DIR"
+        sleep $((attempt * 2))
+    done
+    echo "[error] could not clone whisper.cpp after 3 attempts" >&2
+    return 1
+}
+
 if [[ ! -d "$WHISPER_DIR/.git" ]]; then
     echo "[setup_whisper] cloning whisper.cpp@$WHISPER_REF into $WHISPER_DIR" >&2
-    git clone --depth 1 --branch "$WHISPER_REF" \
-        https://github.com/ggerganov/whisper.cpp "$WHISPER_DIR"
+    retry_clone
 else
     echo "[setup_whisper] reusing existing $WHISPER_DIR" >&2
 fi
@@ -57,7 +78,7 @@ for model in ggml-tiny.en.bin ggml-tiny.bin; do
     fi
     url="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$model"
     echo "[setup_whisper] downloading $model from $url" >&2
-    curl -sSL --fail "$url" -o "$target"
+    curl -sSL --fail --retry 3 --retry-delay 2 --max-time 600 "$url" -o "$target"
 done
 
 echo "[setup_whisper] done." >&2
