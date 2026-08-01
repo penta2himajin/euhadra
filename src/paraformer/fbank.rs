@@ -17,6 +17,16 @@
 use rustfft::{num_complex::Complex32, FftPlanner};
 use std::f32::consts::PI;
 
+/// Analysis window shape.
+///
+/// Kaldi's own default is `Povey`; FunASR overrides it to `Hamming`,
+/// which is why the two front-ends here disagree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowType {
+    Hamming,
+    Povey,
+}
+
 #[derive(Debug, Clone)]
 pub struct FbankOpts {
     pub sample_rate: u32,
@@ -25,8 +35,44 @@ pub struct FbankOpts {
     pub n_mels: usize,
     pub fft_size: usize,
     pub low_freq: f32,
+    /// Upper band edge, in Kaldi's convention: `> 0` is a literal
+    /// frequency, `0` means Nyquist, and **negative means an offset
+    /// below Nyquist** (`-400` on a 16 kHz model is 7600 Hz).
     pub high_freq: f32,
     pub preemph_coeff: f32,
+    pub window: WindowType,
+    /// `true` keeps only whole frames inside the signal; `false` centres
+    /// the frames and reflects the signal at both edges, which yields
+    /// `round(num_samples / shift)` frames instead of
+    /// `floor((num_samples - len) / shift) + 1`.
+    pub snip_edges: bool,
+    /// How a mel energy is kept away from `log(0)`.
+    ///
+    /// The two front-ends here disagree, and only in the silent bands —
+    /// which is exactly where it is easy not to notice. Kaldi clamps to
+    /// `FLT_EPSILON`, flooring quiet bins at a shared `ln(ε) ≈ -15.94`;
+    /// FunASR adds `1e-10` instead, so its quiet bins keep sliding down
+    /// past -20. Feeding one model the other's floor changes every
+    /// high-frequency bin of near-silence.
+    pub log_floor: LogFloor,
+}
+
+/// See [`FbankOpts::log_floor`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LogFloor {
+    /// `log(max(energy, floor))` — Kaldi / kaldi-native-fbank.
+    Clamp(f32),
+    /// `log(energy + offset)` — FunASR.
+    Offset(f32),
+}
+
+impl LogFloor {
+    fn apply(self, energy: f32) -> f32 {
+        match self {
+            LogFloor::Clamp(floor) => energy.max(floor).ln(),
+            LogFloor::Offset(offset) => (energy + offset).ln(),
+        }
+    }
 }
 
 impl FbankOpts {
@@ -40,6 +86,27 @@ impl FbankOpts {
             low_freq: 20.0,
             high_freq: 0.0, // 0 → derive from sample_rate / 2
             preemph_coeff: 0.97,
+            window: WindowType::Hamming,
+            snip_edges: true,
+            log_floor: LogFloor::Offset(1e-10),
+        }
+    }
+
+    /// What sherpa-onnx feeds the Dolphin CTC graph.
+    ///
+    /// `FeatureExtractorConfig` overrides only `low_freq`, `high_freq`,
+    /// `dither` and `snip_edges`; everything else is a
+    /// kaldi-native-fbank default, which is where the Povey window
+    /// comes from. Pinned against the reference implementation by
+    /// `tests/fixtures/dolphin_fbank_golden.json` — see
+    /// `scripts/gen_dolphin_fbank_golden.py`.
+    pub fn dolphin_default() -> Self {
+        Self {
+            high_freq: -400.0,
+            window: WindowType::Povey,
+            snip_edges: false,
+            log_floor: LogFloor::Clamp(f32::EPSILON),
+            ..Self::paraformer_default()
         }
     }
 
@@ -50,10 +117,33 @@ impl FbankOpts {
         ((self.sample_rate as f32) * self.frame_shift_ms / 1000.0).round() as usize
     }
     pub fn effective_high_freq(&self) -> f32 {
+        let nyquist = (self.sample_rate as f32) / 2.0;
         if self.high_freq > 0.0 {
             self.high_freq
         } else {
-            (self.sample_rate as f32) / 2.0
+            // Kaldi treats a negative high_freq as an offset below
+            // Nyquist, so `-400` at 16 kHz is 7600 Hz. Zero stays
+            // "the whole band".
+            nyquist + self.high_freq
+        }
+    }
+
+    /// Frame count for `num_samples`, in Kaldi's two conventions.
+    pub fn num_frames(&self, num_samples: usize) -> usize {
+        let shift = self.frame_shift_samples();
+        if self.snip_edges {
+            let len = self.frame_len_samples();
+            if num_samples < len {
+                0
+            } else {
+                (num_samples - len) / shift + 1
+            }
+        } else if num_samples == 0 {
+            0
+        } else {
+            // Round-half-up division: Kaldi's
+            // `(num_samples + shift / 2) / shift`.
+            (num_samples + shift / 2) / shift
         }
     }
 }
@@ -77,7 +167,10 @@ struct MelFilter {
 impl Fbank {
     pub fn new(opts: FbankOpts) -> Self {
         let frame_len = opts.frame_len_samples();
-        let window = hamming_window(frame_len);
+        let window = match opts.window {
+            WindowType::Hamming => hamming_window(frame_len),
+            WindowType::Povey => povey_window(frame_len),
+        };
         let mel_filters = build_mel_filters(
             opts.sample_rate as f32,
             opts.fft_size,
@@ -105,12 +198,11 @@ impl Fbank {
         let frame_len = self.opts.frame_len_samples();
         let frame_shift = self.opts.frame_shift_samples();
 
-        if samples.len() < frame_len {
+        let num_frames = self.opts.num_frames(samples.len());
+        if num_frames == 0 {
             return (Vec::new(), 0);
         }
 
-        // snip_edges = true: number of frames is floor((N - frame_len) / shift) + 1
-        let num_frames = (samples.len() - frame_len) / frame_shift + 1;
         let n_mels = self.opts.n_mels;
         let mut out = Vec::with_capacity(num_frames * n_mels);
 
@@ -118,8 +210,20 @@ impl Fbank {
         let mut frame = vec![0.0_f32; frame_len];
 
         for f in 0..num_frames {
-            let start = f * frame_shift;
-            frame.copy_from_slice(&samples[start..start + frame_len]);
+            if self.opts.snip_edges {
+                let start = f * frame_shift;
+                frame.copy_from_slice(&samples[start..start + frame_len]);
+            } else {
+                // Frames are centred on `f * shift` rather than starting
+                // there, so the first and last ones reach outside the
+                // signal; Kaldi fills that by reflecting about the
+                // boundary (`feature-window.cc`, `ExtractWindow`).
+                let start = f as isize * frame_shift as isize
+                    - (frame_len as isize - frame_shift as isize) / 2;
+                for (i, slot) in frame.iter_mut().enumerate() {
+                    *slot = samples[reflect(start + i as isize, samples.len())];
+                }
+            }
 
             // Remove DC offset — Kaldi / kaldi_native_fbank's
             // FrameExtractionOptions::remove_dc_offset defaults to true
@@ -171,12 +275,40 @@ impl Fbank {
                         energy += power[bin] * *w;
                     }
                 }
-                out.push((energy + 1e-10).ln());
+                out.push(self.opts.log_floor.apply(energy));
             }
         }
 
         (out, num_frames)
     }
+}
+
+/// Fold an out-of-range index back inside `[0, len)` by mirroring about
+/// each boundary, repeatedly — a window can be wider than the signal.
+fn reflect(mut i: isize, len: usize) -> usize {
+    debug_assert!(len > 0);
+    let n = len as isize;
+    loop {
+        if i < 0 {
+            i = -i - 1;
+        } else if i >= n {
+            i = 2 * n - 1 - i;
+        } else {
+            return i as usize;
+        }
+    }
+}
+
+fn povey_window(n: usize) -> Vec<f32> {
+    if n <= 1 {
+        return vec![1.0; n];
+    }
+    // Kaldi: pow(0.5 - 0.5 * cos(2*pi*i / (N-1)), 0.85) — a Hann window
+    // raised to 0.85, so it reaches exactly zero at both endpoints.
+    let denom = (n - 1) as f32;
+    (0..n)
+        .map(|i| (0.5 - 0.5 * ((2.0 * PI * i as f32) / denom).cos()).powf(0.85))
+        .collect()
 }
 
 fn hamming_window(n: usize) -> Vec<f32> {
@@ -360,6 +492,151 @@ mod tests {
         // Peak at the centre is ~1.0.
         let peak = w.iter().cloned().fold(f32::MIN, f32::max);
         assert!((peak - 1.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn dolphin_defaults_differ_from_paraformer_where_they_should() {
+        let d = FbankOpts::dolphin_default();
+        assert_eq!(d.window, WindowType::Povey);
+        assert!(!d.snip_edges);
+        // -400 is "Nyquist minus 400 Hz", not "minus 400 Hz literally".
+        assert!((d.effective_high_freq() - 7600.0).abs() < 1e-3);
+        // Everything else must still track the Paraformer front-end.
+        let p = FbankOpts::paraformer_default();
+        assert_eq!(d.n_mels, p.n_mels);
+        assert_eq!(d.fft_size, p.fft_size);
+        assert_eq!(d.frame_len_samples(), p.frame_len_samples());
+        assert_eq!(d.frame_shift_samples(), p.frame_shift_samples());
+    }
+
+    #[test]
+    fn snip_edges_false_rounds_the_frame_count() {
+        // 4000 samples at shift 160: (4000 + 80) / 160 = 25, against
+        // snip_edges' floor((4000 - 400) / 160) + 1 = 23.
+        assert_eq!(FbankOpts::dolphin_default().num_frames(4_000), 25);
+        assert_eq!(FbankOpts::paraformer_default().num_frames(4_000), 23);
+        // Shorter than one frame still yields frames when edges are
+        // reflected rather than snipped.
+        assert_eq!(FbankOpts::dolphin_default().num_frames(200), 1);
+        assert_eq!(FbankOpts::paraformer_default().num_frames(200), 0);
+        assert_eq!(FbankOpts::dolphin_default().num_frames(0), 0);
+    }
+
+    #[test]
+    fn reflect_mirrors_about_both_boundaries() {
+        assert_eq!(reflect(-1, 10), 0);
+        assert_eq!(reflect(-3, 10), 2);
+        assert_eq!(reflect(0, 10), 0);
+        assert_eq!(reflect(9, 10), 9);
+        assert_eq!(reflect(10, 10), 9);
+        assert_eq!(reflect(12, 10), 7);
+        // A window wider than the signal needs more than one fold.
+        assert_eq!(reflect(-15, 10), 5);
+        for i in -40..40 {
+            assert!(reflect(i, 7) < 7, "escaped range at {i}");
+        }
+    }
+
+    #[test]
+    fn povey_window_reaches_zero_at_the_endpoints() {
+        let w = povey_window(400);
+        assert!(w[0].abs() < 1e-6, "{}", w[0]);
+        assert!(w[399].abs() < 1e-6, "{}", w[399]);
+        let peak = w.iter().cloned().fold(f32::MIN, f32::max);
+        assert!((peak - 1.0).abs() < 1e-3);
+        // Hann raised to 0.85 sits above plain Hann away from the peak.
+        let hann = 0.5 - 0.5 * ((2.0 * PI * 100.0) / 399.0).cos();
+        assert!(w[100] > hann, "{} vs {hann}", w[100]);
+    }
+
+    /// Rebuild the fixture's two-tone waveform.
+    ///
+    /// In f64, like the generator: by sample 4000 the 1750 Hz phase is
+    /// ~2750 rad, and an f32 `sin()` there has lost enough precision to
+    /// move quiet mel bins by whole nats. That would be a defect in the
+    /// fixture, not in the front-end.
+    fn golden_tones(golden: &serde_json::Value) -> Vec<f32> {
+        let fs = golden["sample_rate"].as_f64().unwrap();
+        let n = golden["num_samples"].as_u64().unwrap() as usize;
+        let tones: Vec<(f64, f64)> = golden["tones"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| {
+                let t = t.as_array().unwrap();
+                (t[0].as_f64().unwrap(), t[1].as_f64().unwrap())
+            })
+            .collect();
+        (0..n)
+            .map(|i| {
+                tones
+                    .iter()
+                    .map(|(hz, amp)| amp * (2.0 * std::f64::consts::PI * hz * i as f64 / fs).sin())
+                    .sum::<f64>() as f32
+            })
+            .collect()
+    }
+
+    /// Rebuild the fixture's wideband waveform.
+    ///
+    /// Integer LCG, so these samples are bit-identical to the
+    /// generator's rather than merely close — otherwise a mismatch here
+    /// would be ambiguous between "the front-end is wrong" and "the
+    /// waveform is".
+    fn golden_noise(golden: &serde_json::Value) -> Vec<f32> {
+        let n = golden["num_samples"].as_u64().unwrap() as usize;
+        let lcg = &golden["lcg"];
+        let (mul, add, modulus) = (
+            lcg["mul"].as_u64().unwrap(),
+            lcg["add"].as_u64().unwrap(),
+            lcg["mod"].as_u64().unwrap(),
+        );
+        let mut state = lcg["seed"].as_u64().unwrap();
+        (0..n)
+            .map(|_| {
+                state = (mul * state + add) % modulus;
+                (state as f64 / modulus as f64 - 0.5) as f32
+            })
+            .collect()
+    }
+
+    #[test]
+    fn dolphin_front_end_matches_the_kaldi_reference() {
+        // The whole point of the Dolphin config: a front-end that is
+        // subtly wrong still produces correctly-shaped features and a
+        // plausible transcript, so it is pinned against
+        // kaldi-native-fbank rather than against a reading of the docs.
+        // Regenerate with scripts/gen_dolphin_fbank_golden.py.
+        let raw = include_str!("../../tests/fixtures/dolphin_fbank_golden.json");
+        let golden: serde_json::Value = serde_json::from_str(raw).expect("fixture parses");
+
+        let fbank = Fbank::new(FbankOpts::dolphin_default());
+        let n_mels = 80usize;
+
+        for (case, samples) in [
+            ("tones", golden_tones(&golden)),
+            ("noise", golden_noise(&golden)),
+        ] {
+            let expected = golden["cases"][case]["frames"].as_array().unwrap();
+            let (out, n) = fbank.compute(&samples);
+            assert_eq!(n, expected.len(), "{case}: frame count");
+
+            let mut worst = 0.0_f32;
+            for (f, (row, want)) in out.chunks_exact(n_mels).zip(expected).enumerate() {
+                let want = want.as_array().unwrap();
+                for (b, (got, w)) in row.iter().zip(want).enumerate() {
+                    let w = w.as_f64().unwrap() as f32;
+                    let diff = (got - w).abs();
+                    worst = worst.max(diff);
+                    assert!(diff < 2e-3, "{case} frame {f} bin {b}: got {got}, want {w}");
+                }
+            }
+            // rustfft and Kaldi's real-FFT accumulate differently, so
+            // exact equality is not available; this bound is ~4 orders
+            // below the per-bin dynamic range, far tighter than any
+            // window, framing or filterbank mistake could survive.
+            assert!(worst < 2e-3, "{case}: worst deviation {worst}");
+        }
     }
 
     #[test]

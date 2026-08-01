@@ -6,8 +6,41 @@ normalization to the upstream `text-processing-rs` crate. euhadra's
 GitHub tooling is scoped to penta2himajin/euhadra only, so the patch is
 staged here for a human to apply to a fork and open the PR.
 
-Why this is worth landing
--------------------------
+STATUS: WITHDRAWN — do not send this as-is
+------------------------------------------
+Submitted as FluidInference/text-processing-rs#86 on 2026-08-01 and
+closed the same day. Two independent problems, both recorded in
+docs/korean-asr-alternatives.md §I.4.1:
+
+1. It corrupts ordinary Korean prose. Korean's Sino-numeral scale units
+   are also the opening syllables of common words, so the "run must
+   contain a scale unit" guard selects for the failure it is meant to
+   prevent: 만났다 ("met") -> 10,000났다, 조용히 ("quietly") ->
+   1,000,000,000,000용히, 천사 ("angel") -> 1,004. Fifteen of fifteen
+   words tried were corrupted. Three further classes survive a fix to
+   that guard: word-internal cardinals (돌연변이만이 -> 돌연변20,000이),
+   the date tagger (십일 위 -> 10일 위) and the ordinal tagger
+   (제공되나 -> 제0되나).
+
+2. The measured justification below was wrong. `cer_lenient` already
+   normalises Sino-Korean numerals on both sides, so it was blind to the
+   numeral surface form the table claims to measure. Run end-to-end on
+   30 FLEURS-ko utterances, this module moved CER 0.0618 -> 0.0646 --
+   worse, with zero utterances improved.
+
+Korean ITN still has product value: a user reading dictated text wants
+"2011년 8월", not "이천십일년 팔월". That is a real reason to want it,
+and it is not the reason given below. Reviving this needs a
+unit/counter lexicon on the right-hand side of a numeral run, or a
+morphological analyser -- a larger piece of work than this patch
+assumed.
+
+The original (incorrect) motivation is kept below so the withdrawn
+claim is legible rather than quietly deleted.
+
+Why this is worth landing (WITHDRAWN -- see above)
+
+
 Measured, not assumed. On 30 FLEURS-ko utterances
 (`docs/korean-asr-alternatives.md` §I.4), splitting on whether the
 reference contains a digit:
