@@ -766,16 +766,16 @@ runtime id, so nothing Menura could name. Now wired:
 ##### The baseline moves, deliberately
 
 This is the accuracy regression §I.3 described, arriving where it is
-visible. On the CI's own 10-utterance subset, measured in this
-container:
+visible. On the CI's own 10-utterance subset, both measured on the CI
+runner:
 
 | | whisper-onnx q4 | Dolphin small |
 |---|---|---|
-| CER | 0.0095 | **0.0349** (+267%) |
-| ASR p50 | 14791 ms (CI runner) | **1518 ms** (this container) |
-| RTF | 1.339 (CI runner) | 0.134 (this container) |
+| CER | 0.0095 | **0.0330** (+247%) |
+| ASR p50 | 14791 ms | **1620 ms** (−89%) |
+| RTF | 1.339 | **0.144** |
 
-Two things worth stating plainly rather than leaving in the diff:
+Several things worth stating plainly rather than leaving in the diff:
 
 **The trade looks worse on 10 utterances than on 30.** §I.3 measured
 2.3× the error for 4.0× the speed across 30; the CI subset gives 3.7×
@@ -784,33 +784,57 @@ change in the models, but it is the number CI will show. If the ko slot
 is going to carry a routing decision, ten utterances is a thin basis
 for it.
 
-**Only the CER transfers between environments.** whisper-onnx q4 scores
-0.0095 on the CI runner and 0.0095 here — exact. Latency and RTF do
-not: this container is ~2.04× faster on the same model. The baseline's
-ko latency entries are therefore *scaled estimates*, not measurements,
-and the first CI run is what settles them.
+**Runner ratios do not transfer between models.** whisper-onnx q4 runs
+~2.04× slower on the CI runner than in this container (RTF 1.339
+against 0.656), so the ko baseline was first written by applying that
+ratio to a local Dolphin measurement. **The first CI run showed the
+ratio does not hold for this model**: Dolphin measured `RTF 0.144,
+p50 1620 ms` on the runner against `0.144 / 1655 ms` here — the same
+speed, within 2%. Whatever makes whisper q4 twice as slow there does
+not appear in a CTC INT8 graph. The committed entries are the CI
+measurements; the estimates are mentioned only because assuming a
+machine ratio is model-independent is the mistake.
+
+**The adapter reproduces itself on one machine, not across two.**
+§I.1's determinism holds within a host — three runs, one output md5.
+Across hosts the same bundle scored 0.0349 here and 0.0330 on the
+runner. That is §I.1's knife-edge argmax meeting a different CPU's SIMD
+path through `rustfft`, and it bounds what "deterministic" means for
+this backend: reproducible where it runs, not portable to the digit.
+
+**CER does transfer.** whisper-onnx q4 scores 0.0095 on the CI runner
+and 0.0095 here, exactly — the lenient metric is hardware-independent
+even where the decode is not.
 
 ##### What ko still costs, after the change
 
 Against the other languages in `ci_baseline.json`, all on the same
 runner:
 
+Measured in one CI run (`30683932847`), so these are directly
+comparable:
+
 | lang | backend | RTF | ASR p50 |
 |---|---|---|---|
-| zh | paraformer-large | 0.035 | 464 ms |
-| ja | parakeet-tdt_ctc-0.6b | 0.106 | 1194 ms |
-| en | canary-180m-flash | 0.107 | 969 ms |
-| es | canary-180m-flash | 0.123 | 1085 ms |
+| zh | paraformer-large | 0.032 | 425 ms |
+| ja | parakeet-tdt_ctc-0.6b | 0.111 | 1245 ms |
+| es | canary-180m-flash | 0.146 | 1348 ms |
+| en | canary-180m-flash | 0.147 | 1374 ms |
+| **ko** *(now)* | **dolphin-small-ctc-int8** | **0.144** | **1620 ms** |
 | ko *(was)* | whisper-large-v3-turbo-q4 | 1.339 | 14791 ms |
-| ko *(now, estimated)* | dolphin-small-ctc-int8 | ~0.27 | ~3100 ms |
 
-ko was **11–38× slower than every other language**, and the only one in
+ko was **11–38× slower than every other language** and the only one in
 the matrix that was not interactive at all: about a second everywhere
 else, fifteen seconds for Korean — while carrying the *best* CER in the
-table. Dolphin closes most of that and not all of it: ko stays roughly
-3× the others on this corpus. Note the corpus flatters Whisper here,
-being 11-second read speech where its fixed 30-second window is most
-amortised; on the 4.8-second utterance in §I.3 the gap was 18×.
+table. **It is now inside the same band as `en` and `es`**, at RTF
+0.144 against their 0.147 and 0.146. p50 went 14791 ms → 1620 ms, a
+9.1× improvement, and what separates ko from the fastest language is
+now `zh`'s paraformer rather than anything Korean-specific.
+
+That is better than the ~3100 ms this section first estimated, for the
+reason above. And the corpus still flatters Whisper: 11-second read
+speech is where its fixed 30-second window is most amortised. On the
+4.8-second utterance in §I.3 the gap was 18×.
 
 Still open: the Menura-side `asr_models.toml` entry (`ko.runtime =
 "dolphin"`, separate repo), and Korean ITN, which §I.4.1 withdrew.
