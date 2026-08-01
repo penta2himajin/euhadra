@@ -560,63 +560,97 @@ read-speech corpus, which is longer-winded than dictation.
 
 #### I.4 What euhadra's own layers can recover
 
-The obvious question is whether Tier 1/2 post-processing closes the
-accuracy gap. It does not, but it recovers one specific error class
-that the incumbent does not have to pay for at all — which is what
-makes the number interesting.
+**Corrected 2026-08-01.** This section previously claimed that Korean
+ITN recovers about a quarter of Dolphin's error. That was wrong, and
+the error was in the measurement rather than the arithmetic. It is
+rewritten below; §I.4.1 records what happened, because the mistake is
+the reusable part.
 
-Dolphin spells numbers out; the FLEURS reference uses Arabic digits:
+The honest answer: **Tier 1/2 post-processing recovers essentially
+nothing of the measured gap.**
+
+| error class | recoverable | why |
+|---|---|---|
+| numeral surface form | **not on this metric** | `cer_lenient` already normalises Sino-Korean numerals on both sides (§I.4.1). Real product value, zero measurable CER value |
+| deletions (`주기율표 상에 원소가` → `주기`) | **no** | no layer can restore audio the ASR never emitted |
+| general-vocabulary substitutions (`직후`→`찍고`, `봉쇄`→`봉세`) | no | needs a language model; that is Tier 3's job, not Tier 1/2's |
+| proper nouns | in principle | `PhonemeCorrector` needs a Korean IPA lexicon and a Korean G2P; CMUdict and DeepPhonemizer are English-only. And it only fixes terms the *user* registered — `직후`→`찍고` is ordinary vocabulary nobody puts in a dictionary |
+
+Word spacing costs nothing either: `cer_lenient` strips whitespace
+before aligning, so Korean 띄어쓰기 differences are already free.
+Punctuation likewise — FLEURS references carry none.
+
+**So the trade in §I.3 stands as measured, with nothing to add.** 2.4×
+the error for 6.2× the throughput, and no post-processing discount.
+
+##### I.4.1 How the numeral claim went wrong
+
+Dolphin spells numbers out where the FLEURS reference uses digits:
 
 ```
 ref: 다리 밑 수직 간격은 15미터이며 공사는 2011년 8월에 …
 hyp: 다리미   수직 간격은 십오 미터이며 공사는 이천십일년 팔월에 …
 ```
 
-Splitting the 30 utterances on whether the reference contains a digit:
+That looks like an obvious cost, and splitting the 30 utterances on
+whether the reference contains a digit appears to confirm it:
 
 | subset | n | Dolphin small | whisper-turbo q4 |
 |---|---|---|---|
-| reference contains digits | 8 | **0.1112** | 0.0332 |
+| reference contains digits | 8 | 0.1112 | 0.0332 |
 | reference has no digits | 22 | 0.0489 | 0.0246 |
 | all | 30 | 0.0655 | 0.0269 |
 
-Dolphin's error more than doubles on digit-bearing utterances;
-Whisper's barely moves, because Whisper already emits digits (6 of 8).
-So **the numeral-form penalty is worth about 0.017 CER — a quarter of
-Dolphin's total error — and it accrues to Dolphin alone.**
+Dolphin's error doubles on the digit-bearing subset; Whisper's barely
+moves. I read that as a numeral-form penalty worth ~0.017 CER and
+concluded Korean ITN would recover it.
 
-That is exactly what `InverseTextNormalizer` exists for. Korean ITN is
-written and tested (`patches/text-processing-rs-ko-itn.patch`, 25 unit
-tests + 51 NeMo-format integration cases) but not upstream, so
-`InverseTextNormalizer::new("ko")` is currently a passthrough. Landing
-it takes Dolphin small from 0.0655 to **≈0.049**, and Whisper from
-0.0269 to ≈0.025 — **narrowing the gap from 2.4× to 2.0×**.
+**It is not a numeral-form penalty.** `eval::metrics::cer_lenient`
+normalises Sino-Korean numerals to Arabic digits *as part of its
+lenient pass*, on the reference and the hypothesis alike — it is in the
+function's own doc comment. So the metric was already blind to the
+thing I claimed to be measuring:
 
-This corrects an earlier reading. Working from the four-thread run,
-this section previously concluded that Korean ITN "helps Whisper
-equally, so does not change the trade". The subset split shows the
-opposite: on the digit-bearing subset Whisper's numeral penalty is
-0.009 CER against Dolphin's 0.062.
-**Korean ITN is worth roughly seven times more to the candidate than to
-the incumbent**, and it is the single highest-value item in this
-document that requires no model change.
+```
+reference: 공사는 2011년 8월에 마무리되었다
+hypothesis 공사는 2011년 8월에 마무리되었다      → CER 0.0000
+hypothesis 공사는 이천십일년 팔월에 마무리되었다  → CER 0.0000
+```
 
-The rest of Dolphin's error is not recoverable here:
+Those 8 utterances are simply harder for unrelated reasons. The
+correlation was real; the causal reading was invented.
 
-| error class | recoverable | why |
-|---|---|---|
-| numeral surface form | **yes — ko ITN** | rule-based, already written |
-| deletions (`주기율표 상에 원소가` → `주기`) | **no** | no layer can restore audio the ASR never emitted |
-| general-vocabulary substitutions (`직후`→`찍고`, `봉쇄`→`봉세`) | no | needs a language model; that is Tier 3's job, not Tier 1/2's |
-| proper nouns | in principle | `PhonemeCorrector` needs a Korean IPA lexicon and a Korean G2P; CMUdict and DeepPhonemizer are English-only. And it only fixes terms the *user* registered — `직후`→`찍고` is ordinary vocabulary nobody puts in a dictionary |
+Measured directly rather than inferred — running the Korean ITN module
+over the adapter's own output on the same 30 utterances:
 
-Word spacing costs nothing in this comparison: `cer_lenient` strips
-whitespace before aligning, so Korean 띄어쓰기 differences are already
-free. Punctuation likewise — FLEURS references carry none.
+| | CER |
+|---|---|
+| Dolphin (Rust adapter) | **0.0618** |
+| + Korean ITN | 0.0646 |
 
-**Conclusion: post-processing cannot buy back the accuracy gap.** It
-can buy back a quarter of it, once, via a patch that is already
-written.
+**Worse, with zero utterances improved.** The regression came from
+homograph misfires the module had not been evaluated against
+(`돌연변이만이` → `돌연변20,000이`, `제공되나` → `제0되나`,
+`십일 위` → `10일 위`), on top of a guard that corrupted 15 of 15
+common words tried (`만났다` → `10,000났다`, `조용히` →
+`1,000,000,000,000용히`) because Korean's Sino-numeral scale units are
+also the opening syllables of ordinary vocabulary.
+
+Three things worth keeping from this:
+
+1. **Check what the metric already does before attributing an error to
+   a cause the metric normalises away.** A subset split shows
+   correlation; it does not identify a mechanism.
+2. **Korean ITN still has product value and no CER value.** A user
+   reading dictated text wants `2011년 8월`, not `이천십일년 팔월`.
+   That is a real reason to want it — it is just not this document's
+   reason, and it cannot be justified with these numbers.
+3. **The upstream patch is not ready.** `patches/text-processing-rs-ko-itn.patch`
+   remains staged, but with the defects above; it was submitted as
+   [FluidInference/text-processing-rs#86](https://github.com/FluidInference/text-processing-rs/pull/86)
+   and withdrawn the same day. A Korean span scanner needs a
+   unit/counter lexicon or a morphological analyser to reach acceptable
+   precision, which is a larger piece of work than the patch assumed.
 
 #### I.5 Decision
 
@@ -630,13 +664,15 @@ degeneration of §H.2.
 
 Follow-up work, in order:
 
-1. **Land the Korean ITN patch upstream.** Highest value per unit of
-   effort in this document: it is written, tested, and recovers a
-   quarter of Dolphin's error. `patches/text-processing-rs-ko-itn.patch`
-   applies cleanly to `FluidInference/text-processing-rs@8a043f1` with
-   all 1101 upstream tests passing. euhadra's GitHub scope is
-   `penta2himajin/euhadra` only, so a human has to open the PR;
-   `patches/text-processing-rs-ko-itn.message.txt` is the handoff.
+1. ~~**Land the Korean ITN patch upstream.**~~ *Attempted and withdrawn
+   — see §I.4.1.* Submitted as
+   [FluidInference/text-processing-rs#86](https://github.com/FluidInference/text-processing-rs/pull/86)
+   and closed the same day. The patch applies cleanly to
+   `FluidInference/text-processing-rs@8a043f1` and passes the suite
+   (1183 tests, adding no clippy warnings), but it corrupts ordinary
+   Korean prose, and the CER gain that justified it was an artefact of
+   a metric that already normalises numerals. Reviving it means adding
+   a unit/counter lexicon, not re-sending the patch.
 2. **Implement `DolphinAdapter`** — *done, §I.6.* A Rust ONNX adapter in the shape of
    `src/sensevoice/adapter.rs`, reusing `paraformer::fbank` for the
    front-end, behind the `onnx` feature gate. This is what "adopt"
