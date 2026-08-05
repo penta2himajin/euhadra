@@ -546,7 +546,9 @@ fn build_pipeline(
             #[cfg(feature = "onnx")]
             {
                 let dir = parakeet_ja_dir.unwrap();
-                let asr = ParakeetAdapter::load_with_feature_size(dir, 80)
+                // No mel size to pass: the loader reads the ja bundle's
+                // 80 off the encoder graph.
+                let asr = ParakeetAdapter::load(dir)
                     .map_err(|e| format!("load parakeet ja from {}: {e}", dir.display()))?;
                 builder.asr(asr)
             }
