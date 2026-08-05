@@ -1,7 +1,7 @@
-pub mod emitters;
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+
 pub mod eval;
 pub mod filter;
-pub mod mic;
 pub mod mock;
 pub mod paragraph;
 pub mod phoneme;
@@ -14,6 +14,14 @@ pub mod state;
 pub mod traits;
 pub mod types;
 pub mod whisper_local;
+
+/// Microphone capture. Pulls in `cpal`, which links ALSA on Linux.
+#[cfg(feature = "mic")]
+pub mod mic;
+
+/// Clipboard-backed [`OutputEmitter`](traits::OutputEmitter) implementations.
+#[cfg(feature = "clipboard")]
+pub mod emitters;
 
 #[cfg(feature = "onnx")]
 pub mod embedding;

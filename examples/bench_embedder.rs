@@ -280,7 +280,9 @@ async fn run() -> Result<(), String> {
         // Strictly-greater keeps the *lowest* threshold among ties,
         // which is the conservative choice: it maximises recall
         // headroom for filler variants outside the gold set.
-        if best.is_none_or(|(_, bf1)| f1 > bf1) {
+        // `Option::is_none_or` would read better but is only stable
+        // since 1.82, above the crate's declared MSRV of 1.78.
+        if best.map(|(_, bf1)| f1 > bf1).unwrap_or(true) {
             best = Some((t, f1));
         }
         t += cli.sweep_step;
