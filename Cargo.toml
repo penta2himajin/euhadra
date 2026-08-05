@@ -69,7 +69,11 @@ arboard = { version = "3", default-features = false, optional = true }
 cpal = { version = "0.15", optional = true }
 
 # ONNX inference (opt-in)
-ort = { version = "2.0.0-rc.12", optional = true }
+# rc.13 is stated rather than inherited. parakeet-rs-featsize requires
+# it, and a caret range on a pre-release resolves upward, so declaring
+# rc.12 here would have silently built against rc.13 anyway — with the
+# manifest claiming otherwise.
+ort = { version = "2.0.0-rc.13", optional = true }
 ndarray = { version = "0.17", optional = true }
 tokenizers = { version = "0.21", optional = true }
 # A published fork of parakeet-rs, not the upstream crate. Upstream
@@ -83,7 +87,7 @@ tokenizers = { version = "0.21", optional = true }
 # This was a git dependency until crates.io refused to accept the crate
 # — git deps are not publishable, `optional` included. Revert to
 # upstream and drop this once altunenes/parakeet-rs exposes the knob.
-parakeet-rs-featsize = { version = "0.3.5", optional = true }
+parakeet-rs-featsize = { version = "0.3.7", optional = true }
 # FFT for the Kaldi-style FBANK front-end used by Paraformer-large.
 # Optional + onnx-gated so the default build stays lean.
 rustfft = { version = "6", optional = true }
