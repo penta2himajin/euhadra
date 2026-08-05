@@ -36,38 +36,17 @@ pub struct ParakeetAdapter {
 }
 
 impl ParakeetAdapter {
-    /// Load with the default 128-mel preprocessor — matches
-    /// `parakeet-tdt-0.6b-v2` and the multilingual European
-    /// `parakeet-tdt-0.6b-v3`.
+    /// Load a Parakeet TDT bundle.
+    ///
+    /// The mel-filterbank size comes from the encoder graph, so this
+    /// works for both the 128-mel `parakeet-tdt-0.6b-v2` / `v3` and the
+    /// 80-mel `nvidia/parakeet-tdt_ctc-0.6b-ja` without being told
+    /// which is which.
     pub fn load(model_dir: impl AsRef<Path>) -> Result<Self, AsrError> {
         let model =
             ParakeetTDT::from_pretrained(model_dir.as_ref(), None).map_err(|e| AsrError {
                 message: format!("failed to load ParakeetTDT model: {e}"),
             })?;
-        Ok(Self {
-            model: Mutex::new(model),
-        })
-    }
-
-    /// Load with an explicit mel-feature size. Use this for variants
-    /// trained with a non-default preprocessor:
-    ///
-    /// - `nvidia/parakeet-tdt_ctc-0.6b-ja` (Japanese, Hybrid TDT-CTC) → **80**
-    /// - `parakeet-tdt-0.6b-v2` / `parakeet-tdt-0.6b-v3` → **128** (same as `load`)
-    ///
-    /// Underlying support requires the fork at
-    /// `penta2himajin/parakeet-rs@feature-size-injection`; see Cargo.toml.
-    pub fn load_with_feature_size(
-        model_dir: impl AsRef<Path>,
-        feature_size: usize,
-    ) -> Result<Self, AsrError> {
-        let model =
-            ParakeetTDT::from_pretrained_with_feature_size(model_dir.as_ref(), None, feature_size)
-                .map_err(|e| AsrError {
-                    message: format!(
-                        "failed to load ParakeetTDT model (feature_size={feature_size}): {e}"
-                    ),
-                })?;
         Ok(Self {
             model: Mutex::new(model),
         })
@@ -131,9 +110,12 @@ impl AsrAdapter for ParakeetAdapter {
 
 /// Options accepted by `ParakeetFactory` via `AdapterRequest.options`.
 ///
-/// `feature_size` selects between the 128-mel (default — v2/v3) and
-/// 80-mel (ja Hybrid TDT-CTC) preprocessors. Leave unset to fall back
-/// to `ParakeetAdapter::load`'s default 128-mel path.
+/// `feature_size` used to select between the 128-mel (v2/v3) and 80-mel
+/// (ja Hybrid TDT-CTC) preprocessors. The loader now reads that from the
+/// encoder graph, so the option no longer does anything. It is still
+/// parsed — and still type-checked — so that an existing
+/// `asr_models.toml` carrying it keeps working instead of failing to
+/// deserialise.
 #[derive(Debug, Default, Deserialize)]
 struct ParakeetOptions {
     #[serde(default)]
@@ -171,14 +153,18 @@ impl AsrRuntimeFactory for ParakeetFactory {
             })?
         };
 
-        let adapter = match opts.feature_size {
-            None => ParakeetAdapter::load(model_dir),
-            Some(fs) => ParakeetAdapter::load_with_feature_size(model_dir, fs),
+        if let Some(fs) = opts.feature_size {
+            tracing::warn!(
+                feature_size = fs,
+                "parakeet: `feature_size` is ignored — the mel size is read from the encoder graph"
+            );
         }
-        .map_err(|e| RouterError::InstantiationFailed {
-            runtime: Self::ID.to_string(),
-            message: e.message,
-        })?;
+
+        let adapter =
+            ParakeetAdapter::load(model_dir).map_err(|e| RouterError::InstantiationFailed {
+                runtime: Self::ID.to_string(),
+                message: e.message,
+            })?;
         Ok(Arc::new(adapter))
     }
 }
@@ -216,22 +202,36 @@ mod factory_tests {
         }
     }
 
+    /// `feature_size` is a leftover from when the caller had to supply
+    /// the mel count. It must still deserialise — an existing
+    /// `asr_models.toml` may carry it — but it must no longer steer
+    /// loading, so the request has to behave exactly like one without it.
     #[tokio::test]
-    async fn feature_size_80_reaches_load_with_feature_size_path() {
+    async fn stale_feature_size_option_is_accepted_and_ignored() {
         let router = AsrRouter::new().register(ParakeetFactory);
-        match router.dispatch(req(json!({ "feature_size": 80 }))).await {
-            Err(RouterError::InstantiationFailed { runtime, message }) => {
-                assert_eq!(runtime, "parakeet");
-                // load_with_feature_size embeds the feature size in its
-                // failure message; this confirms we went through that path
-                // rather than the default `load`.
-                assert!(
-                    message.contains("feature_size=80"),
-                    "expected feature_size=80 in error, got: {message}"
-                );
+        let with = router.dispatch(req(json!({ "feature_size": 80 }))).await;
+        let without = router.dispatch(req(serde_json::Value::Null)).await;
+
+        match (with, without) {
+            (
+                Err(RouterError::InstantiationFailed {
+                    runtime: r1,
+                    message: m1,
+                }),
+                Err(RouterError::InstantiationFailed {
+                    runtime: r2,
+                    message: m2,
+                }),
+            ) => {
+                assert_eq!(r1, "parakeet");
+                assert_eq!(r1, r2);
+                assert_eq!(m1, m2, "feature_size must not change the load path");
             }
-            Err(other) => panic!("expected InstantiationFailed, got {other:?}"),
-            Ok(_) => panic!("expected error when bundle dir does not exist"),
+            (with, without) => panic!(
+                "expected InstantiationFailed from both, got {:?} / {:?}",
+                with.err(),
+                without.err()
+            ),
         }
     }
 

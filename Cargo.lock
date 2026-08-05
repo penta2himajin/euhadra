@@ -1355,9 +1355,9 @@ dependencies = [
 
 [[package]]
 name = "parakeet-rs-featsize"
-version = "0.3.7"
+version = "0.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d03610c4b4456e3121f144921c0a7aa4e558ab8ce10da0a61cb9d6816dc22fd5"
+checksum = "d9eb4fe286fb3c32de3aeb67ec10ae29682aa97b659f802f50248f8b5567523a"
 dependencies = [
  "eyre",
  "hound",

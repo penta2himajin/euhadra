@@ -79,15 +79,16 @@ tokenizers = { version = "0.21", optional = true }
 # A published fork of parakeet-rs, not the upstream crate. Upstream
 # hardcodes the mel filterbank to 128, which is right for the v2/v3
 # models but wrong for Hybrid TDT-CTC models trained on 80 mels such as
-# nvidia/parakeet-tdt_ctc-0.6b-ja; the fork adds
-# `from_pretrained_with_feature_size` and leaves `from_pretrained` at
-# the 128-mel default. It keeps the library name `parakeet_rs`, so the
-# `use parakeet_rs::…` in src/parakeet.rs is unaffected.
+# nvidia/parakeet-tdt_ctc-0.6b-ja — ONNX Runtime rejects those outright.
+# The fork reads the size off the encoder graph, which declares it, so
+# `from_pretrained` covers both. It keeps the library name
+# `parakeet_rs`, so the `use parakeet_rs::…` in src/parakeet.rs is
+# unaffected.
 #
 # This was a git dependency until crates.io refused to accept the crate
-# — git deps are not publishable, `optional` included. Revert to
-# upstream and drop this once altunenes/parakeet-rs exposes the knob.
-parakeet-rs-featsize = { version = "0.3.7", optional = true }
+# — git deps are not publishable, `optional` included. Drop this and go
+# back to upstream once the fix lands there.
+parakeet-rs-featsize = { version = "0.3.8", optional = true }
 # FFT for the Kaldi-style FBANK front-end used by Paraformer-large.
 # Optional + onnx-gated so the default build stays lean.
 rustfft = { version = "6", optional = true }
