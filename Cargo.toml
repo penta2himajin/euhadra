@@ -72,13 +72,18 @@ cpal = { version = "0.15", optional = true }
 ort = { version = "2.0.0-rc.12", optional = true }
 ndarray = { version = "0.17", optional = true }
 tokenizers = { version = "0.21", optional = true }
-# parakeet-rs is pinned to penta2himajin's fork @ feature-size-injection
-# until upstream exposes a configurable mel feature_size for Hybrid
-# TDT-CTC models such as nvidia/parakeet-tdt_ctc-0.6b-ja (which is
-# trained with 80 mels, not the v2/v3 default of 128). The fork's
-# patch is non-breaking — `from_pretrained` keeps the 128-mel default;
-# we only call the new `from_pretrained_with_feature_size` for ja.
-parakeet-rs = { git = "https://github.com/penta2himajin/parakeet-rs", branch = "feature-size-injection", optional = true }
+# A published fork of parakeet-rs, not the upstream crate. Upstream
+# hardcodes the mel filterbank to 128, which is right for the v2/v3
+# models but wrong for Hybrid TDT-CTC models trained on 80 mels such as
+# nvidia/parakeet-tdt_ctc-0.6b-ja; the fork adds
+# `from_pretrained_with_feature_size` and leaves `from_pretrained` at
+# the 128-mel default. It keeps the library name `parakeet_rs`, so the
+# `use parakeet_rs::…` in src/parakeet.rs is unaffected.
+#
+# This was a git dependency until crates.io refused to accept the crate
+# — git deps are not publishable, `optional` included. Revert to
+# upstream and drop this once altunenes/parakeet-rs exposes the knob.
+parakeet-rs-featsize = { version = "0.3.5", optional = true }
 # FFT for the Kaldi-style FBANK front-end used by Paraformer-large.
 # Optional + onnx-gated so the default build stays lean.
 rustfft = { version = "6", optional = true }
@@ -99,7 +104,13 @@ clipboard = ["dep:arboard"]
 # `cargo install euhadra`; a library consumer normally does not.
 cli = ["dep:clap", "dep:tracing-subscriber", "mic", "clipboard"]
 
-onnx = ["dep:ort", "dep:ndarray", "dep:tokenizers", "dep:parakeet-rs", "dep:rustfft"]
+onnx = [
+    "dep:ort",
+    "dep:ndarray",
+    "dep:tokenizers",
+    "dep:parakeet-rs-featsize",
+    "dep:rustfft",
+]
 
 [[bin]]
 name = "euhadra"
