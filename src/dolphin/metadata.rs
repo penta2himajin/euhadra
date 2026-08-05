@@ -46,7 +46,10 @@ impl Cmvn {
     /// `[frames, dim]` buffer.
     pub fn apply(&self, feats: &mut [f32]) -> Result<(), AsrError> {
         let dim = self.dim();
-        if !feats.len().is_multiple_of(dim) {
+        // Spelled as a remainder rather than `usize::is_multiple_of`,
+        // which is only stable since 1.87 — the crate's declared MSRV is
+        // 1.78 and nothing else here needs a newer toolchain.
+        if feats.len() % dim != 0 {
             return Err(AsrError {
                 message: format!(
                     "dolphin CMVN: {} features is not a whole number of {dim}-wide frames",
