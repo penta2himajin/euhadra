@@ -4,6 +4,42 @@ version = "0.1.0"
 edition = "2021"
 description = "A programmable voice input framework — ASR, LLM refinement, and OS integration as composable adapters"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/penta2himajin/euhadra"
+documentation = "https://docs.rs/euhadra"
+readme = "README.md"
+keywords = ["speech-recognition", "asr", "dictation", "voice", "pipeline"]
+categories = ["multimedia::audio", "text-processing", "api-bindings"]
+# Verified by building the library on this toolchain, not inferred. It
+# covers the default feature set only; the optional features raise the
+# floor through their own dependencies (`cli` needs 1.85 for clap, `onnx`
+# needs 1.88 for ort), and those crates report that themselves.
+rust-version = "1.78"
+# The evaluation corpora, model-fetch scripts and design docs are how the
+# crate is developed, not how it is consumed; none of them are reachable
+# from the library. Keeping them out holds the published tarball to the
+# code a dependent actually compiles.
+exclude = [
+    "/.github/",
+    "/docs/",
+    "/scripts/",
+    "/models/",
+    "/patches/",
+    "/git-hooks/",
+    # Annotated evaluation corpora, replayed only by the eval runners.
+    # `/tests/fixtures/` is NOT excluded: fbank.rs pulls the Dolphin
+    # golden vectors in with include_str!, so dropping it would break
+    # `cargo test --features onnx` on the published crate.
+    "/tests/evaluation/",
+    "CLAUDE.md",
+]
+
+# docs.rs builds with default features, which would hide every ONNX
+# adapter and both OS-integration modules. Build the full surface there
+# instead, and turn on the `docsrs` cfg so feature requirements are
+# labelled on each gated item.
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
@@ -12,14 +48,25 @@ async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-clap = { version = "4", features = ["derive", "env"] }
-arboard = "3"
-cpal = "0.15"
 # Inverse text normalization (spoken-form numerals → written form) for
 # the non-LLM TextProcessor tier. Pure Rust, no native deps, so it
 # stays in the default build.
 text-processing-rs = "0.2.2"
+
+# CLI and OS-integration dependencies (opt-in).
+#
+# These carry system requirements that a library consumer should not
+# inherit: `cpal` links ALSA on Linux, so a plain `cargo add euhadra`
+# used to fail to build unless libasound2-dev was installed — even for
+# someone who only wanted the text-processing tiers. `clap` and
+# `tracing-subscriber` are used solely by the binary.
+clap = { version = "4", features = ["derive", "env"], optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+# default-features = false drops arboard's `image-data` support, which
+# pulls in the `image` crate and its colour-management stack. The
+# ClipboardEmitter only ever moves text.
+arboard = { version = "3", default-features = false, optional = true }
+cpal = { version = "0.15", optional = true }
 
 # ONNX inference (opt-in)
 ort = { version = "2.0.0-rc.12", optional = true }
@@ -37,12 +84,27 @@ parakeet-rs = { git = "https://github.com/penta2himajin/parakeet-rs", branch = "
 rustfft = { version = "6", optional = true }
 
 [features]
+# Lean by default: the pipeline runtime plus the rule-based Tier 1/2
+# text processing, with no ML runtime and no system libraries.
 default = []
+
+# Microphone capture via cpal. Requires ALSA headers on Linux
+# (libasound2-dev); no extra system packages on macOS or Windows.
+mic = ["dep:cpal"]
+
+# ClipboardEmitter via arboard.
+clipboard = ["dep:arboard"]
+
+# Everything the `euhadra` binary needs. Enable this for
+# `cargo install euhadra`; a library consumer normally does not.
+cli = ["dep:clap", "dep:tracing-subscriber", "mic", "clipboard"]
+
 onnx = ["dep:ort", "dep:ndarray", "dep:tokenizers", "dep:parakeet-rs", "dep:rustfft"]
 
 [[bin]]
 name = "euhadra"
 path = "src/main.rs"
+required-features = ["cli"]
 
 # Canary tensor dump tool — only buildable with the onnx feature
 # because it pulls in `euhadra::canary::*` directly and instantiates
@@ -71,6 +133,10 @@ async-trait = "0.1"
 # Used by examples/eval_l2.rs for FFT-based RIR convolution. Dev-only
 # so default cargo build stays lean.
 rustfft = "6"
+# The eval runners parse their arguments with clap. It is an optional
+# dependency of the library now (see the `cli` feature), so the examples
+# need their own dev-only copy to keep building without `--features cli`.
+clap = { version = "4", features = ["derive", "env"] }
 
 
 # Tier 1 embedding-backend calibration bench. Needs the onnx feature

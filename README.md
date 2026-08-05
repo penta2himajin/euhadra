@@ -20,11 +20,42 @@ Microphone / WAV
 
 Each stage is a Rust trait. Swap any component without touching the rest.
 
+## Install
+
+### As a library
+
+```toml
+[dependencies]
+euhadra = "0.1"
+```
+
+The default build is deliberately lean — the pipeline runtime plus the rule-based
+Tier 1/2 text processing, seven direct dependencies, no ML runtime and no system
+libraries. Opt into the rest:
+
+| Feature | Adds | Cost |
+|---------|------|------|
+| *(default)* | Pipeline runtime, filler filters, self-correction, punctuation, ITN | pure Rust |
+| `onnx` | ONNX ASR adapters, BERT punctuation, embeddings, G2P | ONNX Runtime; needs Rust 1.88 |
+| `mic` | Microphone capture (`cpal`) | ALSA headers on Linux (`libasound2-dev`) |
+| `clipboard` | `ClipboardEmitter` (`arboard`) | — |
+| `cli` | The `euhadra` binary; implies `mic` + `clipboard` | needs Rust 1.85 |
+
+Microphone capture is behind a feature because `cpal` links ALSA on Linux, and a
+consumer who only wants the text-processing tiers should not have to install
+system packages to compile.
+
+### As a CLI
+
+```bash
+cargo install euhadra --features cli
+```
+
 ## Getting Started
 
 ### Prerequisites
 
-1. **Rust** (1.75+): https://rustup.rs
+1. **Rust** (1.78+): https://rustup.rs
 2. **whisper.cpp**: local ASR engine
 
 Build whisper.cpp:
@@ -36,19 +67,19 @@ cmake -B build && cmake --build build --config Release
 bash models/download-ggml-model.sh base
 ```
 
-### Install euhadra
+### Build from source
 
 ```bash
-git clone https://github.com/example/euhadra  # replace with actual URL
+git clone https://github.com/penta2himajin/euhadra
 cd euhadra
-cargo build
+cargo build --features cli
 ```
 
 ### Transcribe a WAV file
 
 ```bash
 # Raw whisper transcription
-cargo run -- transcribe \
+cargo run --features cli -- transcribe \
   --file speech.wav \
   --whisper-cli /path/to/whisper.cpp/build/bin/whisper-cli \
   --model /path/to/whisper.cpp/models/ggml-base.bin \
@@ -59,14 +90,14 @@ cargo run -- transcribe \
 
 ```bash
 # English: filler removal + self-correction + punctuation
-cargo run -- dictate \
+cargo run --features cli -- dictate \
   --file speech.wav \
   --whisper-cli /path/to/whisper-cli \
   --model /path/to/ggml-base.bin \
   --language en
 
 # Japanese: filler removal (えーと, あの, etc.) + ASR artifact cleanup
-cargo run -- dictate \
+cargo run --features cli -- dictate \
   --file speech.wav \
   --whisper-cli /path/to/whisper-cli \
   --model /path/to/ggml-base.bin \
@@ -77,13 +108,13 @@ cargo run -- dictate \
 
 ```bash
 # Record → transcribe → print to stdout
-cargo run -- record \
+cargo run --features cli -- record \
   --whisper-cli /path/to/whisper-cli \
   --model /path/to/ggml-base.bin \
   --language en
 
 # Record → transcribe → copy to clipboard
-cargo run -- record \
+cargo run --features cli -- record \
   --whisper-cli /path/to/whisper-cli \
   --model /path/to/ggml-base.bin \
   --language en \
@@ -134,7 +165,7 @@ let pipeline = Pipeline::builder()
     .processor(BasicPunctuationRestorer)
     .refiner(MockRefiner::passthrough())
     .context(MockContextProvider::new())
-    .emitter(ClipboardEmitter::new())
+    .emitter(ClipboardEmitter::new())   // requires the `clipboard` feature
     .build()
     .unwrap();
 ```
@@ -260,7 +291,7 @@ docs/
 
 ```bash
 cargo test                  # run unit + integration tests
-cargo run -- --help         # CLI usage
+cargo run --features cli -- --help         # CLI usage
 cargo build --features onnx # with ONNX inference (requires ort)
 ```
 
@@ -293,3 +324,18 @@ scripts/download_l2_data.py reazonspeech-test
 scripts/download_l3_data.sh <dataset>      # CS2W / TED-LIUM 3
 scripts/build_l3_natural_fixtures.py manifest --manifest <path>
 ```
+
+## License
+
+Licensed under either of
+
+- Apache License, Version 2.0 ([`LICENSE-APACHE`](LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0>)
+- MIT license ([`LICENSE-MIT`](LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
+
+at your option.
+
+### Contribution
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in the work by you, as defined in the Apache-2.0 license, shall be
+dual licensed as above, without any additional terms or conditions.
