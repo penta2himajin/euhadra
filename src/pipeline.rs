@@ -13,6 +13,30 @@ use crate::types::*;
 // ---------------------------------------------------------------------------
 
 /// Builds a configured pipeline from adapter implementations.
+///
+/// Only [`asr`](PipelineBuilder::asr) is required. Filters and processors
+/// run in the order they are added; a refiner, context provider and emitter
+/// are optional.
+///
+/// ```
+/// use euhadra::prelude::*;
+/// use euhadra::whisper_local::WhisperLocal;
+///
+/// # fn f() -> Result<(), PipelineError> {
+/// let pipeline = PipelineBuilder::new()
+///     .asr(WhisperLocal::new("whisper-cli", "ggml-base.bin"))
+///     .filter(FillerFilter::for_language(Language::English))
+///     .processor(SelfCorrectionDetector::new())
+///     .processor(BasicPunctuationRestorer)
+///     .emitter(StdoutEmitter)
+///     .build()?;
+/// # let _ = pipeline;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// This example is compiled as a doctest, so it cannot drift from the API
+/// the way a snippet in a design document can.
 pub struct PipelineBuilder {
     asr: Option<Arc<dyn AsrAdapter>>,
     filters: Vec<Arc<dyn TextFilter>>,

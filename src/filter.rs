@@ -1,3 +1,4 @@
+use crate::types::{Language, Span};
 use async_trait::async_trait;
 
 // ---------------------------------------------------------------------------
@@ -48,6 +49,81 @@ pub enum FilterError {
 // SimpleFillerFilter — tiered, position-aware, zero-dependency
 // ---------------------------------------------------------------------------
 
+/// The filler filter for a given language.
+///
+/// This is the entry point to use unless you need a specific filter's
+/// language-specific configuration. Constructing a concrete filter directly
+/// means pairing it with a language yourself, and the two are not
+/// interchangeable: [`SimpleFillerFilter`] splits on whitespace, which
+/// Japanese and Chinese text does not have. A whole utterance then arrives
+/// as a single token, and if it opens with a filler the entire utterance is
+/// removed — an empty transcript, with no error. `for_language` makes that
+/// pairing unavailable to get wrong.
+///
+/// ```
+/// use euhadra::prelude::*;
+///
+/// # async fn f() -> Result<(), FilterError> {
+/// let filter = FillerFilter::for_language(Language::Japanese);
+/// let result = filter.filter("えーと、今日は会議があります。").await?;
+/// assert_eq!(result.text, "今日は会議があります。");
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum FillerFilter {
+    /// Whitespace-tokenised filtering — English, Spanish, Korean.
+    Word(SimpleFillerFilter),
+    /// Comma-segmented filtering for Japanese (、).
+    Japanese(JapaneseFillerFilter),
+    /// Comma-segmented filtering for Chinese (，).
+    Chinese(ChineseFillerFilter),
+    /// Spanish-specific filtering, including multi-word discourse markers.
+    Spanish(SpanishFillerFilter),
+}
+
+impl FillerFilter {
+    /// The filler filter matching `language`'s script and segmentation.
+    ///
+    /// Total over [`Language`] — every supported language has a filter, so
+    /// there is no failure case and no silent fallback to a wrong one.
+    pub fn for_language(language: Language) -> Self {
+        match language {
+            Language::English => Self::Word(SimpleFillerFilter::english()),
+            Language::Korean => Self::Word(SimpleFillerFilter::korean()),
+            Language::Japanese => Self::Japanese(JapaneseFillerFilter::new()),
+            Language::Chinese => Self::Chinese(ChineseFillerFilter::new()),
+            Language::Spanish => Self::Spanish(SpanishFillerFilter::new()),
+        }
+    }
+
+    /// The codepoint span of every segment this filter would remove.
+    ///
+    /// Spans are what the L3 direct-F1 evaluator scores against the gold
+    /// annotations, and what a caller needs to highlight or undo a removal.
+    pub fn detect_spans(&self, text: &str) -> Vec<Span> {
+        match self {
+            Self::Word(f) => f.detect_spans(text),
+            Self::Japanese(f) => f.detect_spans(text),
+            Self::Chinese(f) => f.detect_spans(text),
+            Self::Spanish(f) => f.detect_spans(text),
+        }
+    }
+}
+
+#[async_trait]
+impl TextFilter for FillerFilter {
+    async fn filter(&self, text: &str) -> Result<FilterResult, FilterError> {
+        match self {
+            Self::Word(f) => f.filter(text).await,
+            Self::Japanese(f) => f.filter(text).await,
+            Self::Chinese(f) => f.filter(text).await,
+            Self::Spanish(f) => f.filter(text).await,
+        }
+    }
+}
+
 /// Filler removal using tiered word matching and position heuristics.
 ///
 /// Fillers are split into two tiers:
@@ -57,6 +133,7 @@ pub enum FilterError {
 ///   but act as real content words mid-sentence ("it went well", "do so").
 ///
 /// Multi-word fillers ("you know", "I mean") are matched as bigrams.
+#[derive(Debug, Clone)]
 pub struct SimpleFillerFilter {
     /// Always removed regardless of position.
     pure_fillers: Vec<String>,
@@ -101,56 +178,6 @@ impl SimpleFillerFilter {
     pub fn with_contextual_fillers(mut self, fillers: Vec<String>) -> Self {
         self.contextual_fillers = fillers;
         self
-    }
-
-    /// Japanese filler filter.
-    ///
-    /// Japanese fillers appear as comma-delimited segments in whisper output
-    /// (e.g. "あの、" or "えーと、"), so matching is done per-segment rather
-    /// than per-word.
-    ///
-    /// Also handles common ASR artifacts where whisper converts fillers to
-    /// kanji (えーと → 映像, えー → 映映).
-    pub fn japanese() -> Self {
-        Self {
-            pure_fillers: vec![
-                // Hesitation markers
-                "えーと",
-                "えっと",
-                "えー",
-                "あー",
-                "うーん",
-                "うん",
-                "ああ",
-                "ええ",
-                // Common ASR misrecognitions of fillers
-                "映像",
-                "映映",
-            ]
-            .into_iter()
-            .map(String::from)
-            .collect(),
-
-            contextual_fillers: vec![
-                // Discourse markers — filler at sentence start, content word otherwise
-                "あの",
-                "まあ",
-                "その",
-                "なんか",
-                "ほら",
-                "やっぱり",
-                "まあまあ",
-                "ちょっと",
-            ]
-            .into_iter()
-            .map(String::from)
-            .collect(),
-
-            multi_fillers: vec![
-                vec!["なんて".into(), "いうか".into()],
-                vec!["何て".into(), "いうか".into()],
-            ],
-        }
     }
 
     /// Korean filler filter.
@@ -243,7 +270,7 @@ impl SimpleFillerFilter {
     /// `detect_spans` so the L3 direct-F1 evaluator can compare
     /// emitted spans against the gold annotations in
     /// `tests/evaluation/annotations/{en,ko}_filler.jsonl`.
-    pub fn detect_spans(&self, text: &str) -> Vec<crate::types::Span> {
+    pub fn detect_spans(&self, text: &str) -> Vec<Span> {
         let chars: Vec<char> = text.chars().collect();
         let n_chars = chars.len();
 
@@ -345,7 +372,7 @@ impl SimpleFillerFilter {
             }
         }
 
-        let mut spans: Vec<crate::types::Span> = detections
+        let mut spans: Vec<Span> = detections
             .iter()
             .map(|(s, e)| crate::types::Span {
                 start: tokens[*s].cp_start,
@@ -445,6 +472,7 @@ impl TextFilter for SimpleFillerFilter {
 ///
 /// Also handles ASR artifacts where whisper converts Japanese fillers into
 /// kanji (e.g. えーと → 映像, えー → 映映).
+#[derive(Debug, Clone)]
 pub struct JapaneseFillerFilter {
     /// Always removed regardless of position.
     pure_fillers: Vec<String>,
@@ -585,7 +613,7 @@ impl JapaneseFillerFilter {
     /// filter's `detect_spans` so the L3 direct-F1 evaluator can
     /// compare emitted spans against the gold annotations in
     /// `tests/evaluation/annotations/ja_filler.jsonl`.
-    pub fn detect_spans(&self, text: &str) -> Vec<crate::types::Span> {
+    pub fn detect_spans(&self, text: &str) -> Vec<Span> {
         // Tokenise on 、, tracking each segment's codepoint span in
         // the original text. The trimmed inner range is what the F1
         // evaluator scores against, so we record both the outer
@@ -681,7 +709,7 @@ impl JapaneseFillerFilter {
             }
         }
 
-        let mut spans: Vec<crate::types::Span> = detections
+        let mut spans: Vec<Span> = detections
             .into_iter()
             .map(|i| crate::types::Span {
                 start: segs[i].cp_inner_start,
@@ -720,6 +748,7 @@ impl JapaneseFillerFilter {
 /// frequently appears as a sentence-final particle that's part of the
 /// content; downgrading that judgement to false-positive territory
 /// is worse than leaving it in.
+#[derive(Debug, Clone)]
 pub struct ChineseFillerFilter {
     /// Always removed regardless of position.
     pure_fillers: Vec<String>,
@@ -838,7 +867,7 @@ impl ChineseFillerFilter {
     /// Japanese filter's `detect_spans` with `，` as the segment
     /// terminator instead of `、`. Used by the L3 direct-F1
     /// evaluator in `eval_l3 --task filler --lang zh`.
-    pub fn detect_spans(&self, text: &str) -> Vec<crate::types::Span> {
+    pub fn detect_spans(&self, text: &str) -> Vec<Span> {
         let chars: Vec<char> = text.chars().collect();
         let n_chars = chars.len();
 
@@ -930,7 +959,7 @@ impl ChineseFillerFilter {
             }
         }
 
-        let mut spans: Vec<crate::types::Span> = detections
+        let mut spans: Vec<Span> = detections
             .into_iter()
             .map(|i| crate::types::Span {
                 start: segs[i].cp_inner_start,
@@ -968,6 +997,7 @@ impl ChineseFillerFilter {
 /// Closed-class lexicons mirror `scripts/build_es_filler_annotations.py`
 /// so that the filter's deletions align span-for-span with the F1
 /// gold standard built from CIEMPIESS Test transcripts.
+#[derive(Debug, Clone)]
 pub struct SpanishFillerFilter {
     /// Always removed regardless of position.
     pure_fillers: Vec<String>,
@@ -1184,10 +1214,10 @@ impl SpanishFillerFilter {
     /// **codepoint-offset** half-open `[start, end)` ranges, sorted by
     /// `start`, suitable for direct comparison against
     /// `tests/evaluation/annotations/*.jsonl` filler entries.
-    pub fn detect_spans(&self, text: &str) -> Vec<crate::types::Span> {
+    pub fn detect_spans(&self, text: &str) -> Vec<Span> {
         let tokens = tokenize_es(text);
         let (_removed, detections) = self.run_passes(&tokens);
-        let mut spans: Vec<crate::types::Span> = detections
+        let mut spans: Vec<Span> = detections
             .iter()
             .map(|d| crate::types::Span {
                 start: tokens[d.start_token].char_start,
@@ -1893,5 +1923,122 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.text, "내일 오후 세 시에 만나기로 했습니다");
+    }
+
+    // -----------------------------------------------------------------
+    // FillerFilter::for_language
+    // -----------------------------------------------------------------
+
+    /// The bug this type exists to prevent. `SimpleFillerFilter` splits on
+    /// whitespace, so Japanese text arrives as one token; when that token
+    /// begins with a filler the whole utterance was deleted. Routing by
+    /// `Language` must keep the content.
+    #[tokio::test]
+    async fn japanese_filler_removal_keeps_the_utterance() {
+        let filter = FillerFilter::for_language(Language::Japanese);
+        let result = filter
+            .filter("えーと、今日は会議が三時からあります。")
+            .await
+            .unwrap();
+        assert_eq!(result.text, "今日は会議が三時からあります。");
+    }
+
+    /// Same shape in Chinese, which is comma-segmented on ，rather than 、.
+    #[tokio::test]
+    async fn chinese_filler_removal_keeps_the_utterance() {
+        let filter = FillerFilter::for_language(Language::Chinese);
+        let result = filter.filter("嗯，我们明天开会。").await.unwrap();
+        assert_eq!(result.text, "我们明天开会。");
+    }
+
+    /// No language may return empty for an utterance that is entirely
+    /// content once its leading filler is gone. This is the invariant the
+    /// old constructor broke, asserted across every language at once so a
+    /// future filter cannot reintroduce it quietly.
+    #[tokio::test]
+    async fn no_language_deletes_the_whole_utterance() {
+        let cases = [
+            (Language::English, "um, the meeting is at three."),
+            (Language::Japanese, "えーと、会議は三時からです。"),
+            (Language::Chinese, "嗯，会议在三点开始。"),
+            (Language::Korean, "음 회의는 세 시에 시작합니다"),
+            (Language::Spanish, "eh, la reunión es a las tres."),
+        ];
+        for (language, input) in cases {
+            let result = FillerFilter::for_language(language)
+                .filter(input)
+                .await
+                .unwrap();
+            assert!(
+                !result.text.trim().is_empty(),
+                "{language:?} emptied {input:?}"
+            );
+        }
+    }
+
+    /// Text with no filler must survive byte-for-byte in every language —
+    /// the filter is only allowed to remove what it identifies.
+    #[tokio::test]
+    async fn filler_free_text_is_untouched() {
+        let cases = [
+            (Language::English, "the meeting is at three."),
+            (Language::Japanese, "今日は良い天気ですね。"),
+            (Language::Chinese, "今天天气很好。"),
+            (Language::Korean, "오늘 날씨가 좋습니다"),
+            (Language::Spanish, "la reunión es a las tres."),
+        ];
+        for (language, input) in cases {
+            let result = FillerFilter::for_language(language)
+                .filter(input)
+                .await
+                .unwrap();
+            assert_eq!(result.text, input, "{language:?} altered filler-free text");
+        }
+    }
+
+    /// `for_language` must dispatch to the segmentation strategy that
+    /// matches the script, not merely to some filter.
+    #[test]
+    fn for_language_picks_the_matching_segmentation() {
+        assert!(matches!(
+            FillerFilter::for_language(Language::Japanese),
+            FillerFilter::Japanese(_)
+        ));
+        assert!(matches!(
+            FillerFilter::for_language(Language::Chinese),
+            FillerFilter::Chinese(_)
+        ));
+        assert!(matches!(
+            FillerFilter::for_language(Language::Spanish),
+            FillerFilter::Spanish(_)
+        ));
+        assert!(matches!(
+            FillerFilter::for_language(Language::English),
+            FillerFilter::Word(_)
+        ));
+        assert!(matches!(
+            FillerFilter::for_language(Language::Korean),
+            FillerFilter::Word(_)
+        ));
+    }
+
+    #[test]
+    fn bcp47_round_trips_and_rejects_unsupported() {
+        for language in [
+            Language::English,
+            Language::Japanese,
+            Language::Chinese,
+            Language::Korean,
+            Language::Spanish,
+        ] {
+            assert_eq!(Language::from_bcp47(language.as_bcp47()), Some(language));
+        }
+        // Region and script subtags are ignored, case is not significant.
+        assert_eq!(Language::from_bcp47("en-US"), Some(Language::English));
+        assert_eq!(Language::from_bcp47("zh-Hans"), Some(Language::Chinese));
+        assert_eq!(Language::from_bcp47("JA"), Some(Language::Japanese));
+        // Unsupported languages get no filter rather than a wrong one.
+        assert_eq!(Language::from_bcp47("de"), None);
+        assert_eq!(Language::from_bcp47(""), None);
     }
 }

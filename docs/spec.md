@@ -276,7 +276,8 @@ struct FilterResult {
 ```
 
 **想定実装**:
-- `SimpleFillerFilter` — 辞書照合ベースのフィラー除去（階層化: pure / contextual / multi-word）
+- `FillerFilter::for_language(Language)` — **推奨エントリポイント**。言語から分かち書き方式（空白 / `、` / `，`）を型で選び、以下の具象フィルタへ委譲する。空白区切りの `SimpleFillerFilter` を日本語・中国語に手で組み合わせると、フィラーで始まる発話が丸ごと 1 トークンとして削除され、出力が空になる（エラーは出ない）。この組み合わせ事故を型で防ぐのが目的
+- `SimpleFillerFilter` — 辞書照合ベースのフィラー除去（階層化: pure / contextual / multi-word）。空白区切り言語（en / es / ko）専用
 - ~~`EmbeddingFillerFilter` / `OnnxEmbeddingFilter`~~ — 埋め込みコサイン類似度によるフィラー検出。**撤去済み**。実測でルールベース実装が全言語で上回ったため（[`model-upgrade-candidates.md`](./model-upgrade-candidates.md) §3.2）、Tier 1 のフィラー除去はルールベースのみとする
 - `JapaneseFillerFilter` — 読点区切り3パス検出 + ASR アーティファクト対応
 - `ChineseFillerFilter` — 中文 `，` 区切り 3 パス (pure: 嗯 / 呃 / 哦, contextual: 那个 / 这个 / 就是 / 然后 / 怎么说)
@@ -616,7 +617,8 @@ ASR Output (raw text)
     ▼
 [Tier 1: TextFilter]  ← LLM 不要、ミリ秒、0〜127MB
     │  フィラー除去（um, uh, えーと, 嗯, 呃...）
-    │  - SimpleFillerFilter: ルールベース（英語）     ✅ 実装済み
+    │  - FillerFilter::for_language: 言語→実装の型付き選択 ✅ 実装済み
+    │  - SimpleFillerFilter: ルールベース（en/es/ko） ✅ 実装済み
     │  - JapaneseFillerFilter: ルールベース（日本語） ✅ 実装済み
     │  - ChineseFillerFilter: ルールベース（中国語）  ✅ 実装済み
     │  - OnnxEmbeddingFilter: bge-small 埋め込み     ❌ 非推奨・未配線
@@ -903,6 +905,7 @@ MIT / Apache ライセンスのため、コード自体による参入障壁は�
 
 **Tier 1: TextFilter**:
 - [x] TextFilter trait 定義
+- [x] FillerFilter::for_language（Language → 実装の型付きディスパッチ）
 - [x] SimpleFillerFilter（英語、ルールベース）
 - [x] JapaneseFillerFilter（日本語、ルールベース）
 - [x] ChineseFillerFilter（中国語、ルールベース）
@@ -960,48 +963,52 @@ MIT / Apache ライセンスのため、コード自体による参入障壁は�
 
 ### 9.4 Target User Experience
 
+最小構成は `PipelineBuilder` の doctest として compile 検証されている（`src/pipeline.rs`）。ここに転記したものが実際に動くコードであり、ドキュメント側だけが古くなることはない。
+
 ```rust
 use euhadra::prelude::*;
+use euhadra::whisper_local::WhisperLocal;
 
-// LLM なしでも実用的な dictation が動く最小構成
+// LLM なしでも実用的な dictation が動く最小構成。
+// 必須は .asr() のみ。context / emitter / refiner は省略可。
 let pipeline = PipelineBuilder::new()
     .asr(WhisperLocal::new("whisper-cli", "ggml-base.bin"))
-    .filter(SimpleFillerFilter::english())
+    .filter(FillerFilter::for_language(Language::English))
     .processor(SelfCorrectionDetector::new())
     .processor(BasicPunctuationRestorer)
-    .context(MockContextProvider::new())
     .emitter(StdoutEmitter)
-    .build()
-    .unwrap();
-
-// ONNX モデルを使った高品質構成（LLM なし）
-let pipeline_onnx = PipelineBuilder::new()
-    .asr(ParakeetAdapter::load("parakeet-tdt-0.6b-v3-int8")?)
-    .filter(SimpleFillerFilter::english())
-    .processor(SelfCorrectionDetector::new())
-    .processor(OnnxPunctuationRestorer::load("punct/model.onnx", ...)?)
-    .processor(PhonemeCorrector::new(ipa_dict, custom_entries)
-        .with_g2p(OnnxG2p::load("g2p")?)
-        .with_embedder(OnnxTextEmbedder::load("bge-small-en")?, 0.7))
-    .processor(ParagraphSplitter::new()
-        .with_embedder(OnnxTextEmbedder::load("bge-small-en")?))
-    .context(MockContextProvider::new())
-    .emitter(ClipboardEmitter::new())
-    .build()
-    .unwrap();
-
-// オプション: LLM を追加してトーン調整を有効化
-let pipeline_with_llm = PipelineBuilder::new()
-    .asr(WhisperLocal::new("whisper-cli", "ggml-base.bin"))
-    .filter(SimpleFillerFilter::english())
-    .processor(SelfCorrectionDetector::new())
-    .processor(BasicPunctuationRestorer)
-    .refiner(LlamaCppRefiner::new("phi-3.5-mini-q4.gguf")?)
-    .context(MacAccessibilityProvider::new())
-    .emitter(ClipboardEmitter::new())
-    .build()
-    .unwrap();
+    .build()?;
 ```
+
+ONNX モデルを使った高品質構成（LLM なし）。`onnx` feature が必要で、こちらも `src/onnx_processing.rs` の doctest として compile 検証されている。埋め込みモデルが `phoneme` モジュール側にある点に注意:
+
+```rust
+use euhadra::prelude::*;
+use euhadra::onnx_processing::OnnxPunctuationRestorer;
+use euhadra::parakeet::ParakeetAdapter;
+use euhadra::paragraph::ParagraphSplitter;
+use euhadra::phoneme::OnnxTextEmbedder;
+
+let pipeline = PipelineBuilder::new()
+    .asr(ParakeetAdapter::load("models/parakeet-tdt-0.6b-v3")?)
+    .filter(FillerFilter::for_language(Language::English))
+    .processor(SelfCorrectionDetector::new())
+    .processor(OnnxPunctuationRestorer::load(
+        "models/punct/model.onnx",
+        "models/punct/tokenizer.json",
+        OnnxPunctuationRestorer::default_labels(),
+    )?)
+    .processor(
+        ParagraphSplitter::new()
+            .with_embedder(OnnxTextEmbedder::load("models/bge-small-en")?),
+    )
+    .emitter(StdoutEmitter)
+    .build()?;
+```
+
+`FillerFilter::for_language` は言語ごとの分かち書き方式（英・西・韓は空白区切り、日は `、`、中は `，`）を型で選ぶ。**この対応付けを手で行うと、フィラーで始まる発話で出力が空になる**（`SimpleFillerFilter` は空白区切りのため、日本語の発話全体が 1 トークンとして削除される）。この事故を防ぐのが `for_language` の役割で、`FillerFilter` 以外を直接構築する場合は言語との対応を自分で保証する必要がある。
+
+Tier 3（LlmRefiner）と `MacAccessibilityProvider` は未実装のため、上記に含めていない。実装されたら `.refiner(...)` / `.context(...)` を追加する形になる（§5.2 / §9.2 参照）。
 
 ### 9.5 Target Platforms (Phase 1)
 

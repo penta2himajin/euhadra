@@ -1,6 +1,40 @@
 //! ONNX-based text processing (feature-gated behind `onnx`).
 //!
 //! `cargo build --features onnx`
+//!
+//! A full non-LLM pipeline — ONNX ASR, punctuation and paragraph splitting.
+//! Note that the embedder lives in [`crate::phoneme`], not here:
+//!
+//! ```no_run
+//! use euhadra::prelude::*;
+//! use euhadra::onnx_processing::OnnxPunctuationRestorer;
+//! use euhadra::parakeet::ParakeetAdapter;
+//! use euhadra::paragraph::ParagraphSplitter;
+//! use euhadra::phoneme::OnnxTextEmbedder;
+//!
+//! # fn f() -> Result<(), Box<dyn std::error::Error>> {
+//! let pipeline = PipelineBuilder::new()
+//!     .asr(ParakeetAdapter::load("models/parakeet-tdt-0.6b-v3")?)
+//!     .filter(FillerFilter::for_language(Language::English))
+//!     .processor(SelfCorrectionDetector::new())
+//!     .processor(OnnxPunctuationRestorer::load(
+//!         "models/punct/model.onnx",
+//!         "models/punct/tokenizer.json",
+//!         OnnxPunctuationRestorer::default_labels(),
+//!     )?)
+//!     .processor(
+//!         ParagraphSplitter::new()
+//!             .with_embedder(OnnxTextEmbedder::load("models/bge-small-en")?),
+//!     )
+//!     .emitter(StdoutEmitter)
+//!     .build()?;
+//! # let _ = pipeline;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! `no_run` because it loads model files; it is still compiled, so the
+//! signatures above cannot drift.
 
 use async_trait::async_trait;
 use ndarray::Array2;
