@@ -2,13 +2,21 @@
 
 mod common;
 
-use common::{send_one_and_close, SilentAsr};
+use common::{send_one, SilentAsr};
 use euhadra::prelude::*;
 
-/// When the LLM refiner errors out, the pipeline must still emit something —
-/// specifically the raw ASR text — instead of failing the whole session.
+/// When the LLM refiner errors out, the pipeline must still emit
+/// something rather than failing the whole session — and what it emits is
+/// the Tier 1+2 text, not the raw ASR string.
+///
+/// This changed deliberately. The pipeline used to fall back to the raw
+/// transcript, discarding filler removal and punctuation that had already
+/// succeeded. That contradicted the premise the crate is built on: Tier
+/// 1+2 output stands on its own, and the refiner is the optional polish.
+/// Throwing away working stages because an optional one failed made the
+/// degraded path worse than not configuring a refiner at all.
 #[tokio::test]
-async fn llm_failure_falls_back_to_raw_asr_text() {
+async fn llm_failure_falls_back_to_processed_text() {
     let emitter = MockEmitter::new();
     let outputs = emitter.outputs();
 
@@ -22,26 +30,39 @@ async fn llm_failure_falls_back_to_raw_asr_text() {
         .build()
         .unwrap();
 
-    let (audio_tx, _cancel, handle) = pipeline.session();
-    send_one_and_close(audio_tx).await;
+    let session = pipeline.session();
+    send_one(&session.audio).await;
 
-    let result = handle
+    let result = session
+        .finish()
         .await
-        .expect("task must not panic")
         .expect("pipeline must succeed despite LLM failure");
-    assert!(result.emit_result.success, "fallback emission must succeed");
+    assert!(result.emit_result.as_ref().unwrap().success, "fallback emission must succeed");
 
     let buf = outputs.lock().await;
     assert_eq!(buf.len(), 1);
     let RefinementOutput::TextInsertion { text, .. } = &buf[0] else {
         panic!("expected TextInsertion fallback");
     };
-    // Pipeline contract: on refiner failure the *raw* ASR text is emitted,
-    // bypassing filters and processors — we should see "um"-free input
-    // would still be the literal raw ASR string here.
     assert_eq!(
-        text, "raw dictation text",
-        "LLM-failure fallback must emit the raw ASR text verbatim"
+        text, "Raw dictation text.",
+        "the fallback must keep the Tier 1+2 work, not revert to raw ASR"
+    );
+    assert_ne!(
+        text, &result.raw_text,
+        "falling back to the raw transcript would discard successful stages"
+    );
+
+    // The refiner's failure is not silent: it is on the record even
+    // though the session succeeded.
+    assert!(
+        result
+            .diagnostics
+            .failures
+            .iter()
+            .any(|f| f.stage == Stage::Refiner),
+        "the refiner failure should be reported, got {:?}",
+        result.diagnostics.failures
     );
 }
 
@@ -57,15 +78,15 @@ async fn silent_asr_produces_no_speech_error() {
         .build()
         .unwrap();
 
-    let (audio_tx, _cancel, handle) = pipeline.session();
-    send_one_and_close(audio_tx).await;
+    let session = pipeline.session();
+    send_one(&session.audio).await;
 
-    let err = handle
+    let err = session
+        .finish()
         .await
-        .expect("task must not panic")
         .expect_err("empty ASR output must surface an error");
     assert!(
-        err.message.contains("no speech detected"),
-        "expected no-speech error, got: {err}"
+        matches!(err, PipelineError::NoSpeech),
+        "expected NoSpeech, got: {err}"
     );
 }

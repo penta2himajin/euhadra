@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use tokio::sync::mpsc;
 
 use crate::types::*;
 
@@ -7,35 +6,60 @@ use crate::types::*;
 // ASR Adapter
 // ---------------------------------------------------------------------------
 
-/// Converts a stream of audio chunks into a stream of recognition results.
+/// Turns audio into text.
 ///
-/// Implementors may be local (Whisper.cpp, Apple Speech) or cloud-based
-/// (OpenAI Whisper API, Deepgram, ElevenLabs Scribe).  The pipeline treats
-/// them identically.
+/// Implementors may be local (Whisper.cpp, Parakeet via ONNX) or
+/// cloud-based (OpenAI Whisper API, Deepgram). The pipeline treats them
+/// identically.
+///
+/// The whole utterance is passed at once and one transcript comes back.
+/// An adapter that can also emit partial hypotheses as audio arrives
+/// will implement an additional streaming trait alongside this one —
+/// that capability is not part of 0.1.0, and the shape here is
+/// deliberately the one every backend can satisfy.
 #[async_trait]
 pub trait AsrAdapter: Send + Sync {
-    /// Begin transcribing.  Audio chunks arrive on `audio_rx`; recognition
-    /// results should be sent to `result_tx`.  The method returns when the
-    /// audio stream is closed or the adapter encounters a fatal error.
-    async fn transcribe(
-        &self,
-        audio_rx: mpsc::Receiver<AudioChunk>,
-        result_tx: mpsc::Sender<AsrResult>,
-    ) -> Result<(), AsrError>;
+    /// Transcribe a complete utterance.
+    ///
+    /// `audio` holds the chunks in capture order. Adapters that need a
+    /// contiguous buffer should concatenate; the split between chunks
+    /// carries no meaning beyond how the audio happened to arrive.
+    async fn transcribe(&self, audio: &[AudioChunk]) -> Result<Transcript, AsrError>;
 }
 
-#[derive(Debug, Clone)]
-pub struct AsrError {
-    pub message: String,
-}
+/// Why an [`AsrAdapter`] could not produce a transcript.
+///
+/// The variants are the distinctions a caller can act on: a missing
+/// model needs a different response than a runtime failure, and neither
+/// is the same as the user simply not having spoken. Marked
+/// `#[non_exhaustive]` so that finer distinctions can be added later
+/// without breaking a `match`.
+#[derive(Debug, Clone, thiserror::Error)]
+#[non_exhaustive]
+pub enum AsrError {
+    /// The model bundle could not be loaded — a missing file, a
+    /// malformed vocabulary, unreadable normalisation statistics.
+    #[error("failed to load model: {0}")]
+    ModelLoad(String),
 
-impl std::fmt::Display for AsrError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ASR error: {}", self.message)
-    }
-}
+    /// The adapter was asked for something it cannot do, e.g. a beam
+    /// width below the minimum it supports.
+    #[error("invalid ASR configuration: {0}")]
+    Config(String),
 
-impl std::error::Error for AsrError {}
+    /// No audio reached the adapter.
+    #[error("no audio received")]
+    NoAudio,
+
+    /// The model loaded but inference failed.
+    #[error("inference failed: {0}")]
+    Inference(String),
+
+    /// Aborted before completion, usually via the session's
+    /// `CancellationToken`.
+    #[error("cancelled")]
+    Cancelled,
+}
 
 // ---------------------------------------------------------------------------
 // Context Provider
@@ -64,18 +88,26 @@ pub trait LlmRefiner: Send + Sync {
     async fn refine(&self, input: RefinementInput) -> Result<RefinementOutput, RefineError>;
 }
 
-#[derive(Debug, Clone)]
-pub struct RefineError {
-    pub message: String,
-}
+/// Why an [`LlmRefiner`] could not refine its input.
+///
+/// The pipeline degrades gracefully on any of these — it emits the
+/// unrefined text rather than failing the session — so the distinction
+/// exists for logging and for callers driving a refiner directly.
+#[derive(Debug, Clone, thiserror::Error)]
+#[non_exhaustive]
+pub enum RefineError {
+    /// The model or endpoint could not be reached or initialised.
+    #[error("refiner unavailable: {0}")]
+    Unavailable(String),
 
-impl std::fmt::Display for RefineError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Refinement error: {}", self.message)
-    }
-}
+    /// The refiner ran but its output could not be used.
+    #[error("refinement failed: {0}")]
+    Failed(String),
 
-impl std::error::Error for RefineError {}
+    /// Aborted before completion.
+    #[error("cancelled")]
+    Cancelled,
+}
 
 // ---------------------------------------------------------------------------
 // Output Emitter

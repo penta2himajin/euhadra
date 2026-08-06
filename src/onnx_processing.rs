@@ -288,11 +288,11 @@ impl OnnxEmbeddingFilter {
         lexicon: FillerLexicon,
     ) -> Result<Self, FilterError> {
         let mut backend =
-            EmbeddingBackend::load(model_dir).map_err(|e| FilterError { message: e })?;
+            EmbeddingBackend::load(model_dir).map_err(FilterError::Failed)?;
 
         let mut filler_embeddings = Vec::with_capacity(lexicon.pure.len());
         for f in &lexicon.pure {
-            filler_embeddings.push(backend.embed(f).map_err(|e| FilterError { message: e })?);
+            filler_embeddings.push(backend.embed(f).map_err(FilterError::Failed)?);
         }
 
         Ok(Self {
@@ -329,7 +329,7 @@ impl OnnxEmbeddingFilter {
     /// Embed a single string through the shared backend.
     pub async fn embed(&self, text: &str) -> Result<Vec<f32>, FilterError> {
         let mut backend = self.backend.lock().await;
-        backend.embed(text).map_err(|e| FilterError { message: e })
+        backend.embed(text).map_err(FilterError::Failed)
     }
 
     fn is_sentence_initial(segments: &[Segment], idx: usize, removed: &[bool]) -> bool {
@@ -450,7 +450,7 @@ impl OnnxEmbeddingFilter {
             embeddings.push(
                 backend
                     .embed(&s.surface)
-                    .map_err(|e| FilterError { message: e })?,
+                    .map_err(FilterError::Failed)?,
             );
         }
         Ok(embeddings)
@@ -511,13 +511,9 @@ impl OnnxPunctuationRestorer {
     ) -> Result<Self, ProcessError> {
         let session = Session::builder()
             .and_then(|mut b| b.commit_from_file(model_path.as_ref()))
-            .map_err(|e| ProcessError {
-                message: format!("load model: {e}"),
-            })?;
+            .map_err(|e| ProcessError::Unavailable(format!("load model: {e}")))?;
         let tokenizer =
-            Tokenizer::from_file(tokenizer_path.as_ref()).map_err(|e| ProcessError {
-                message: format!("load tokenizer: {e}"),
-            })?;
+            Tokenizer::from_file(tokenizer_path.as_ref()).map_err(|e| ProcessError::Unavailable(format!("load tokenizer: {e}")))?;
         Ok(Self {
             session: Arc::new(Mutex::new(session)),
             tokenizer: Arc::new(tokenizer),
@@ -573,9 +569,7 @@ impl TextProcessor for OnnxPunctuationRestorer {
         let enc = self
             .tokenizer
             .encode(text, true)
-            .map_err(|e| ProcessError {
-                message: format!("tokenize: {e}"),
-            })?;
+            .map_err(|e| ProcessError::Failed(format!("tokenize: {e}")))?;
 
         let len = enc.get_ids().len();
         let ids =
@@ -587,28 +581,20 @@ impl TextProcessor for OnnxPunctuationRestorer {
         )
         .unwrap();
 
-        let ids_val = Value::from_array(ids).map_err(|e| ProcessError {
-            message: format!("{e}"),
-        })?;
-        let mask_val = Value::from_array(mask).map_err(|e| ProcessError {
-            message: format!("{e}"),
-        })?;
+        let ids_val = Value::from_array(ids).map_err(|e| ProcessError::Failed(format!("{e}")))?;
+        let mask_val = Value::from_array(mask).map_err(|e| ProcessError::Failed(format!("{e}")))?;
 
         let outputs = session
             .run(vec![
                 ("input_ids", ids_val.into_dyn()),
                 ("attention_mask", mask_val.into_dyn()),
             ])
-            .map_err(|e| ProcessError {
-                message: format!("inference: {e}"),
-            })?;
+            .map_err(|e| ProcessError::Inference(format!("inference: {e}")))?;
 
         // Extract logits and copy to owned data before dropping session
         let logits = outputs[0]
             .try_extract_array::<f32>()
-            .map_err(|e| ProcessError {
-                message: format!("extract: {e}"),
-            })?;
+            .map_err(|e| ProcessError::Failed(format!("extract: {e}")))?;
         let view = logits.view();
         let seq_len = view.shape()[1];
         let num_labels = view.shape()[2];

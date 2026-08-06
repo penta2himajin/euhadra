@@ -22,18 +22,14 @@ impl Cmvn {
         let mean = parse_list(mean, "mean")?;
         let inv_std = parse_list(inv_std, "invstd")?;
         if mean.len() != inv_std.len() {
-            return Err(AsrError {
-                message: format!(
+            return Err(AsrError::ModelLoad(format!(
                     "dolphin CMVN length mismatch: mean has {}, invstd has {}",
                     mean.len(),
                     inv_std.len()
-                ),
-            });
+                )));
         }
         if mean.is_empty() {
-            return Err(AsrError {
-                message: "dolphin CMVN is empty".into(),
-            });
+            return Err(AsrError::ModelLoad("dolphin CMVN is empty".into()));
         }
         Ok(Self { mean, inv_std })
     }
@@ -50,12 +46,10 @@ impl Cmvn {
         // which is only stable since 1.87 — the crate's declared MSRV is
         // 1.78 and nothing else here needs a newer toolchain.
         if feats.len() % dim != 0 {
-            return Err(AsrError {
-                message: format!(
+            return Err(AsrError::ModelLoad(format!(
                     "dolphin CMVN: {} features is not a whole number of {dim}-wide frames",
                     feats.len()
-                ),
-            });
+                )));
         }
         for frame in feats.chunks_exact_mut(dim) {
             for ((v, m), s) in frame.iter_mut().zip(&self.mean).zip(&self.inv_std) {
@@ -71,9 +65,7 @@ fn parse_list(raw: &str, what: &str) -> Result<Vec<f32>, AsrError> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(|s| {
-            s.parse::<f32>().map_err(|e| AsrError {
-                message: format!("dolphin {what}: {s:?} is not a float: {e}"),
-            })
+            s.parse::<f32>().map_err(|e| AsrError::Inference(format!("dolphin {what}: {s:?} is not a float: {e}")))
         })
         .collect()
 }

@@ -80,13 +80,9 @@ pub struct IpaDictionary {
 impl IpaDictionary {
     /// Load from a JSON file: `{"word": "IPA string", ...}`
     pub fn load(path: impl AsRef<Path>) -> Result<Self, ProcessError> {
-        let data = std::fs::read_to_string(path.as_ref()).map_err(|e| ProcessError {
-            message: format!("load IPA dict: {e}"),
-        })?;
+        let data = std::fs::read_to_string(path.as_ref()).map_err(|e| ProcessError::Unavailable(format!("load IPA dict: {e}")))?;
         let entries: HashMap<String, String> =
-            serde_json::from_str(&data).map_err(|e| ProcessError {
-                message: format!("parse IPA dict: {e}"),
-            })?;
+            serde_json::from_str(&data).map_err(|e| ProcessError::Unavailable(format!("parse IPA dict: {e}")))?;
         tracing::info!(entries = entries.len(), "IPA dictionary loaded");
         Ok(Self { entries })
     }
@@ -492,32 +488,22 @@ impl OnnxG2p {
 
         let session = ort::session::Session::builder()
             .and_then(|mut b| b.commit_from_file(dir.join("g2p.onnx")))
-            .map_err(|e| ProcessError {
-                message: format!("load G2P model: {e}"),
-            })?;
+            .map_err(|e| ProcessError::Unavailable(format!("load G2P model: {e}")))?;
 
         let tok_data =
-            std::fs::read_to_string(dir.join("tokenizer.json")).map_err(|e| ProcessError {
-                message: format!("load tokenizer: {e}"),
-            })?;
-        let tok: serde_json::Value = serde_json::from_str(&tok_data).map_err(|e| ProcessError {
-            message: format!("parse tokenizer: {e}"),
-        })?;
+            std::fs::read_to_string(dir.join("tokenizer.json")).map_err(|e| ProcessError::Unavailable(format!("load tokenizer: {e}")))?;
+        let tok: serde_json::Value = serde_json::from_str(&tok_data).map_err(|e| ProcessError::Failed(format!("parse tokenizer: {e}")))?;
 
         let text_to_idx: HashMap<String, i64> = tok["text_to_idx"]
             .as_object()
-            .ok_or_else(|| ProcessError {
-                message: "missing text_to_idx".into(),
-            })?
+            .ok_or_else(|| ProcessError::Unavailable("missing text_to_idx".into()))?
             .iter()
             .map(|(k, v)| (k.clone(), v.as_i64().unwrap_or(0)))
             .collect();
 
         let idx_to_phoneme: HashMap<i64, String> = tok["idx_to_phoneme"]
             .as_object()
-            .ok_or_else(|| ProcessError {
-                message: "missing idx_to_phoneme".into(),
-            })?
+            .ok_or_else(|| ProcessError::Unavailable("missing idx_to_phoneme".into()))?
             .iter()
             .map(|(k, v)| {
                 (
@@ -603,13 +589,9 @@ impl G2pBackend for OnnxG2p {
         let tokens = self.tokenize(word);
         let seq_len = tokens.len();
 
-        let text = Array2::from_shape_vec((1, seq_len), tokens).map_err(|e| ProcessError {
-            message: format!("shape: {e}"),
-        })?;
+        let text = Array2::from_shape_vec((1, seq_len), tokens).map_err(|e| ProcessError::Failed(format!("shape: {e}")))?;
         let start_index =
-            Array2::from_shape_vec((1, 1), vec![0_i64]).map_err(|e| ProcessError {
-                message: format!("shape: {e}"),
-            })?;
+            Array2::from_shape_vec((1, 1), vec![0_i64]).map_err(|e| ProcessError::Failed(format!("shape: {e}")))?;
         let text_len = Array1::from_vec(vec![seq_len as i64]);
 
         let mut session = self.session.lock().unwrap();
@@ -618,37 +600,27 @@ impl G2pBackend for OnnxG2p {
                 (
                     "text",
                     Value::from_array(text)
-                        .map_err(|e| ProcessError {
-                            message: format!("{e}"),
-                        })?
+                        .map_err(|e| ProcessError::Failed(format!("{e}")))?
                         .into_dyn(),
                 ),
                 (
                     "start_index",
                     Value::from_array(start_index)
-                        .map_err(|e| ProcessError {
-                            message: format!("{e}"),
-                        })?
+                        .map_err(|e| ProcessError::Failed(format!("{e}")))?
                         .into_dyn(),
                 ),
                 (
                     "text_len",
                     Value::from_array(text_len)
-                        .map_err(|e| ProcessError {
-                            message: format!("{e}"),
-                        })?
+                        .map_err(|e| ProcessError::Failed(format!("{e}")))?
                         .into_dyn(),
                 ),
             ])
-            .map_err(|e| ProcessError {
-                message: format!("G2P inference: {e}"),
-            })?;
+            .map_err(|e| ProcessError::Inference(format!("G2P inference: {e}")))?;
 
         let logits = outputs[0]
             .try_extract_array::<f32>()
-            .map_err(|e| ProcessError {
-                message: format!("extract: {e}"),
-            })?;
+            .map_err(|e| ProcessError::Failed(format!("extract: {e}")))?;
         let view = logits.view();
         let out_seq = view.shape()[1];
         let n_classes = view.shape()[2];
@@ -683,7 +655,7 @@ impl OnnxTextEmbedder {
     /// Load from a directory containing `model.onnx` and `tokenizer.json`.
     pub fn load(model_dir: impl AsRef<Path>) -> Result<Self, ProcessError> {
         let backend = crate::embedding::EmbeddingBackend::load(model_dir)
-            .map_err(|e| ProcessError { message: e })?;
+            .map_err(ProcessError::Failed)?;
         tracing::info!("ONNX text embedder loaded");
         Ok(Self {
             backend: std::sync::Mutex::new(backend),
@@ -697,10 +669,8 @@ impl TextEmbedder for OnnxTextEmbedder {
         let mut backend = self
             .backend
             .lock()
-            .map_err(|e| ProcessError {
-                message: format!("embedder mutex poisoned: {e}"),
-            })?;
-        backend.embed(text).map_err(|e| ProcessError { message: e })
+            .map_err(|e| ProcessError::Failed(format!("embedder mutex poisoned: {e}")))?;
+        backend.embed(text).map_err(ProcessError::Failed)
     }
 
     /// Delegates to the backend's lazily measured floor, so the first

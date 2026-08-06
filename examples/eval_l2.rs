@@ -607,16 +607,14 @@ async fn evaluate(
 
         let pipeline = build_pipeline(&cli.whisper_cli, model, lang)?;
         let e2e_start = Instant::now();
-        let (audio_tx, _cancel, handle) = pipeline.session();
+        let session = pipeline.session();
         let asr_start = Instant::now();
-        audio_tx
+        session
+            .audio
             .send(audio)
             .await
             .map_err(|e| format!("send: {e}"))?;
-        drop(audio_tx);
-        let result = handle
-            .await
-            .map_err(|e| format!("join: {e}"))?
+        let result = session.finish().await
             .map_err(|e| format!("pipeline: {e}"))?;
         let asr_elapsed = asr_start.elapsed();
         let e2e_elapsed = e2e_start.elapsed();

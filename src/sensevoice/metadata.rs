@@ -38,12 +38,8 @@ pub struct SenseVoiceMetadata {
 
 impl SenseVoiceMetadata {
     pub fn load(path: &Path) -> Result<Self, AsrError> {
-        let bytes = std::fs::read(path).map_err(|e| AsrError {
-            message: format!("read metadata.json {}: {e}", path.display()),
-        })?;
-        let meta: SenseVoiceMetadata = serde_json::from_slice(&bytes).map_err(|e| AsrError {
-            message: format!("parse metadata.json {}: {e}", path.display()),
-        })?;
+        let bytes = std::fs::read(path).map_err(|e| AsrError::ModelLoad(format!("read metadata.json {}: {e}", path.display())))?;
+        let meta: SenseVoiceMetadata = serde_json::from_slice(&bytes).map_err(|e| AsrError::Inference(format!("parse metadata.json {}: {e}", path.display())))?;
         meta.validate(path)?;
         Ok(meta)
     }
@@ -65,27 +61,23 @@ impl SenseVoiceMetadata {
 
     fn validate(&self, path: &Path) -> Result<(), AsrError> {
         if self.lfr_m == 0 || self.lfr_n == 0 {
-            return Err(AsrError {
-                message: format!(
+            return Err(AsrError::Inference(format!(
                     "metadata.json {}: lfr_m and lfr_n must be positive (got {} / {})",
                     path.display(),
                     self.lfr_m,
                     self.lfr_n
-                ),
-            });
+                )));
         }
         // The upstream model ships with these four keys at minimum.
         // Catch a malformed sidecar early instead of failing at
         // transcribe time.
         for key in ["auto", "zh", "en", "ko"] {
             if !self.lang2id.contains_key(key) {
-                return Err(AsrError {
-                    message: format!(
+                return Err(AsrError::Inference(format!(
                         "metadata.json {}: lang2id missing required key {:?}",
                         path.display(),
                         key
-                    ),
-                });
+                    )));
             }
         }
         Ok(())

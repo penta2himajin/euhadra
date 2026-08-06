@@ -209,23 +209,14 @@ async fn mean_error_rate(
 
     for fix in fixtures {
         let pipeline = build_pipeline(lang, cfg, &fix.asr_hypothesis)?;
-        let (audio_tx, _cancel, handle) = pipeline.session();
-
-        // MockAsr ignores audio content; we just need to deliver one
-        // chunk and close the channel for the session to advance.
-        audio_tx
-            .send(AudioChunk {
-                samples: vec![0.0; 160],
-                sample_rate: 16000,
-                channels: 1,
-            })
-            .await
-            .map_err(|e| format!("send: {e}"))?;
-        drop(audio_tx);
-
-        let result = handle
-            .await
-            .map_err(|e| format!("join: {e}"))?
+        // MockAsr ignores audio content; one silent chunk is enough
+        // to drive the pipeline.
+        let audio = vec![AudioChunk {
+            samples: vec![0.0; 160],
+            sample_rate: 16000,
+            channels: 1,
+        }];
+        let result = pipeline.transcribe(&audio).await
             .map_err(|e| format!("pipeline: {e}"))?;
 
         let RefinementOutput::TextInsertion { text, .. } = &result.output else {

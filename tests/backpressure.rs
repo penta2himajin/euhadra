@@ -25,14 +25,12 @@ async fn small_audio_channel_does_not_deadlock() {
         .build()
         .unwrap();
 
-    let (audio_tx, _cancel, handle) = pipeline.session();
+    let session = pipeline.session();
 
     for _ in 0..32 {
-        audio_tx.send(silence_chunk()).await.unwrap();
+        session.audio.send(silence_chunk()).await.unwrap();
     }
-    drop(audio_tx);
-
-    let result = handle.await.unwrap().unwrap();
+    let result = session.finish().await.unwrap();
     assert_eq!(result.raw_text, "ok");
 
     let buf = outputs.lock().await;
@@ -53,10 +51,8 @@ async fn small_asr_channel_completes_session() {
         .build()
         .unwrap();
 
-    let (audio_tx, _cancel, handle) = pipeline.session();
-    audio_tx.send(silence_chunk()).await.unwrap();
-    drop(audio_tx);
-
-    let result = handle.await.unwrap().unwrap();
+    let session = pipeline.session();
+    session.audio.send(silence_chunk()).await.unwrap();
+    let result = session.finish().await.unwrap();
     assert_eq!(result.raw_text, "hello");
 }

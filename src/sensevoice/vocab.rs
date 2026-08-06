@@ -35,18 +35,14 @@ pub const SP_WORD_BOUNDARY: char = '\u{2581}'; // ▁
 /// ignored; embedded whitespace inside a piece (rare but possible for
 /// a SentencePiece export of an audio-tag piece) is preserved verbatim.
 pub fn load_tokens_txt(path: &Path) -> Result<Vec<String>, AsrError> {
-    let text = std::fs::read_to_string(path).map_err(|e| AsrError {
-        message: format!("read tokens.txt {}: {e}", path.display()),
-    })?;
+    let text = std::fs::read_to_string(path).map_err(|e| AsrError::ModelLoad(format!("read tokens.txt {}: {e}", path.display())))?;
     let mut tokens: Vec<String> = text.lines().map(|l| l.to_string()).collect();
     // Drop trailing empty lines so the vocab length is predictable.
     while tokens.last().map(String::is_empty).unwrap_or(false) {
         tokens.pop();
     }
     if tokens.is_empty() {
-        return Err(AsrError {
-            message: format!("tokens.txt {} is empty", path.display()),
-        });
+        return Err(AsrError::Inference(format!("tokens.txt {} is empty", path.display())));
     }
     Ok(tokens)
 }

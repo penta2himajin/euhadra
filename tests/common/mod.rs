@@ -21,11 +21,11 @@ pub fn silence_chunk() -> AudioChunk {
     }
 }
 
-/// Send a single silence chunk and close the audio channel, signalling that
-/// recording has ended.
-pub async fn send_one_and_close(audio_tx: mpsc::Sender<AudioChunk>) {
-    audio_tx.send(silence_chunk()).await.unwrap();
-    drop(audio_tx);
+/// Send a single silence chunk into a session.
+///
+/// Closing the stream is `Session::finish`'s job, so this only sends.
+pub async fn send_one(audio: &mpsc::Sender<AudioChunk>) {
+    audio.send(silence_chunk()).await.unwrap();
 }
 
 // ---------------------------------------------------------------------------
@@ -38,13 +38,10 @@ pub struct SilentAsr;
 
 #[async_trait]
 impl AsrAdapter for SilentAsr {
-    async fn transcribe(
-        &self,
-        mut audio_rx: mpsc::Receiver<AudioChunk>,
-        _result_tx: mpsc::Sender<AsrResult>,
-    ) -> Result<(), AsrError> {
-        while audio_rx.recv().await.is_some() {}
-        Ok(())
+    async fn transcribe(&self, _audio: &[AudioChunk]) -> Result<Transcript, AsrError> {
+        // Silence: a transcript with no text, which the pipeline turns
+        // into PipelineError::NoSpeech.
+        Ok(Transcript::default())
     }
 }
 

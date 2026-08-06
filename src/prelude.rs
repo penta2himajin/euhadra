@@ -2,7 +2,10 @@ pub use crate::filter::{
     ChineseFillerFilter, FilterResult, JapaneseFillerFilter, SimpleFillerFilter,
     SpanishFillerFilter, TextFilter,
 };
-pub use crate::pipeline::{Pipeline, PipelineBuilder, PipelineError, SessionResult};
+pub use crate::pipeline::{
+    Diagnostics, Pipeline, PipelineBuilder, PipelineError, Session, SessionResult, Stage,
+    StageFailure,
+};
 pub use crate::processor::{
     BasicPunctuationRestorer, ProcessResult, SelfCorrectionDetector, TextProcessor,
 };

@@ -12,16 +12,10 @@ use crate::traits::AsrError;
 /// indexed by token id. This is the format used by every published
 /// FunASR Paraformer ONNX export.
 pub fn load_tokens_json(path: &Path) -> Result<Vec<String>, AsrError> {
-    let bytes = std::fs::read(path).map_err(|e| AsrError {
-        message: format!("read tokens.json {}: {e}", path.display()),
-    })?;
-    let tokens: Vec<String> = serde_json::from_slice(&bytes).map_err(|e| AsrError {
-        message: format!("parse tokens.json {}: {e}", path.display()),
-    })?;
+    let bytes = std::fs::read(path).map_err(|e| AsrError::ModelLoad(format!("read tokens.json {}: {e}", path.display())))?;
+    let tokens: Vec<String> = serde_json::from_slice(&bytes).map_err(|e| AsrError::Inference(format!("parse tokens.json {}: {e}", path.display())))?;
     if tokens.is_empty() {
-        return Err(AsrError {
-            message: format!("tokens.json {} is empty", path.display()),
-        });
+        return Err(AsrError::Inference(format!("tokens.json {} is empty", path.display())));
     }
     Ok(tokens)
 }

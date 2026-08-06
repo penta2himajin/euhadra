@@ -25,9 +25,7 @@ pub const BLANK_ID: u32 = 0;
 /// from the *last* whitespace-separated field and everything before it
 /// is the symbol.
 pub fn load_tokens(path: &Path) -> Result<Vec<String>, AsrError> {
-    let raw = std::fs::read_to_string(path).map_err(|e| AsrError {
-        message: format!("read tokens.txt {}: {e}", path.display()),
-    })?;
+    let raw = std::fs::read_to_string(path).map_err(|e| AsrError::ModelLoad(format!("read tokens.txt {}: {e}", path.display())))?;
 
     let mut by_id: BTreeMap<u32, String> = BTreeMap::new();
     for (lineno, line) in raw.lines().enumerate() {
@@ -35,47 +33,37 @@ pub fn load_tokens(path: &Path) -> Result<Vec<String>, AsrError> {
             continue;
         }
         let Some(split) = line.rfind(char::is_whitespace) else {
-            return Err(AsrError {
-                message: format!(
+            return Err(AsrError::Inference(format!(
                     "{}:{}: expected `symbol<space>id`, got {line:?}",
                     path.display(),
                     lineno + 1
-                ),
-            });
+                )));
         };
         let (symbol, id) = line.split_at(split);
-        let id: u32 = id.trim().parse().map_err(|e| AsrError {
-            message: format!(
+        let id: u32 = id.trim().parse().map_err(|e| AsrError::Inference(format!(
                 "{}:{}: token id {:?} is not a number: {e}",
                 path.display(),
                 lineno + 1,
                 id.trim()
-            ),
-        })?;
+            )))?;
         if by_id.insert(id, symbol.to_string()).is_some() {
-            return Err(AsrError {
-                message: format!("{}:{}: duplicate token id {id}", path.display(), lineno + 1),
-            });
+            return Err(AsrError::Inference(format!("{}:{}: duplicate token id {id}", path.display(), lineno + 1)));
         }
     }
 
     if by_id.is_empty() {
-        return Err(AsrError {
-            message: format!("{} contains no tokens", path.display()),
-        });
+        return Err(AsrError::Inference(format!("{} contains no tokens", path.display())));
     }
     // A gap would shift every id above it, so refuse rather than pad.
     let expected = by_id.len() as u32;
     if *by_id.keys().next_back().unwrap() != expected - 1 || *by_id.keys().next().unwrap() != 0 {
-        return Err(AsrError {
-            message: format!(
+        return Err(AsrError::Inference(format!(
                 "{}: token ids are not contiguous from 0 (got {}..={} across {} entries)",
                 path.display(),
                 by_id.keys().next().unwrap(),
                 by_id.keys().next_back().unwrap(),
                 by_id.len()
-            ),
-        });
+            )));
     }
 
     Ok(by_id.into_values().collect())

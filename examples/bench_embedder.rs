@@ -120,7 +120,7 @@ async fn run() -> Result<(), String> {
 
     let load_start = Instant::now();
     let filter = OnnxEmbeddingFilter::load_with_lexicon(&cli.model_dir, lexicon)
-        .map_err(|e| format!("loading {}: {}", cli.model_dir.display(), e.message))?;
+        .map_err(|e| format!("loading {}: {}", cli.model_dir.display(), e))?;
     let load_ms = load_start.elapsed().as_secs_f64() * 1000.0;
 
     let annotations = load_annotations(&cli.annotations)
@@ -146,7 +146,7 @@ async fn run() -> Result<(), String> {
             let e = filter
                 .embed(&s.surface)
                 .await
-                .map_err(|e| format!("embedding {:?}: {}", s.surface, e.message))?;
+                .map_err(|e| format!("embedding {:?}: {}", s.surface, e))?;
             embed_micros.push(t0.elapsed().as_micros());
             embeddings.push(e);
         }

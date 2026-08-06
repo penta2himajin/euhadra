@@ -57,7 +57,7 @@ impl AsrRuntimeFactory for CanaryFactory {
         let mut adapter = CanaryAdapter::load_with_config(model_dir, cfg).map_err(|e| {
             RouterError::InstantiationFailed {
                 runtime: Self::ID.to_string(),
-                message: e.message,
+                message: e.to_string(),
             }
         })?;
         if !req.language.is_empty() {

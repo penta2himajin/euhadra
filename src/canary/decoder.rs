@@ -302,47 +302,33 @@ pub struct DecodeOutput {
 /// Build the 10-token decoder prefix (i64-typed for direct ort
 /// hand-off). Pure function — returns a fresh Vec each call.
 pub fn build_decoder_prefix(vocab: &Vocab, opts: &DecodeOptions) -> Result<Vec<i64>, AsrError> {
-    let space = vocab.last_id("\u{2581}").ok_or_else(|| AsrError {
-        message: "vocab missing ▁ (used for the literal-space slot in the \
+    let space = vocab.last_id("\u{2581}").ok_or_else(|| AsrError::ModelLoad("vocab missing ▁ (used for the literal-space slot in the \
                   decoder prefix; onnx-asr maps `_tokens[\" \"]` to the \
                   last-occurring ▁ token id)"
-            .into(),
-    })?;
+            .into()))?;
     let soc = vocab.soc()?;
     let sot = vocab.sot()?;
-    let emo = vocab.id("<|emo:undefined|>").ok_or_else(|| AsrError {
-        message: "vocab missing <|emo:undefined|>".into(),
-    })?;
+    let emo = vocab.id("<|emo:undefined|>").ok_or_else(|| AsrError::ModelLoad("vocab missing <|emo:undefined|>".into()))?;
     let src_lang = vocab
         .language_token(&opts.source_language)
-        .ok_or_else(|| AsrError {
-            message: format!(
+        .ok_or_else(|| AsrError::ModelLoad(format!(
                 "vocab has no language token for source_language={:?}",
                 opts.source_language
-            ),
-        })?;
+            )))?;
     let tgt_lang = vocab
         .language_token(&opts.target_language)
-        .ok_or_else(|| AsrError {
-            message: format!(
+        .ok_or_else(|| AsrError::ModelLoad(format!(
                 "vocab has no language token for target_language={:?}",
                 opts.target_language
-            ),
-        })?;
+            )))?;
     let pnc = if opts.pnc {
         vocab.pnc()?
     } else {
         vocab.nopnc()?
     };
-    let noitn = vocab.id("<|noitn|>").ok_or_else(|| AsrError {
-        message: "vocab missing <|noitn|>".into(),
-    })?;
-    let notimestamp = vocab.id("<|notimestamp|>").ok_or_else(|| AsrError {
-        message: "vocab missing <|notimestamp|>".into(),
-    })?;
-    let nodiarize = vocab.id("<|nodiarize|>").ok_or_else(|| AsrError {
-        message: "vocab missing <|nodiarize|>".into(),
-    })?;
+    let noitn = vocab.id("<|noitn|>").ok_or_else(|| AsrError::ModelLoad("vocab missing <|noitn|>".into()))?;
+    let notimestamp = vocab.id("<|notimestamp|>").ok_or_else(|| AsrError::ModelLoad("vocab missing <|notimestamp|>".into()))?;
+    let nodiarize = vocab.id("<|nodiarize|>").ok_or_else(|| AsrError::ModelLoad("vocab missing <|nodiarize|>".into()))?;
 
     let prefix: Vec<u32> = match opts.prefix_format {
         PrefixFormat::OnnxAsr => vec![
@@ -589,16 +575,10 @@ pub struct CanaryDecoder {
 impl CanaryDecoder {
     pub fn load(path: impl AsRef<Path>) -> Result<Self, AsrError> {
         let path = path.as_ref();
-        let builder = Session::builder().map_err(|e| AsrError {
-            message: format!("Canary decoder builder {}: {e}", path.display()),
-        })?;
+        let builder = Session::builder().map_err(|e| AsrError::ModelLoad(format!("Canary decoder builder {}: {e}", path.display())))?;
         let (mut builder, profiling) = crate::canary::profiling::apply(builder, "decoder")
-            .map_err(|e| AsrError {
-                message: format!("Canary decoder profiling {}: {e}", path.display()),
-            })?;
-        let session = builder.commit_from_file(path).map_err(|e| AsrError {
-            message: format!("load Canary decoder {}: {e}", path.display()),
-        })?;
+            .map_err(|e| AsrError::Inference(format!("Canary decoder profiling {}: {e}", path.display())))?;
+        let session = builder.commit_from_file(path).map_err(|e| AsrError::ModelLoad(format!("load Canary decoder {}: {e}", path.display())))?;
         validate_decoder_io(&session, path)?;
         let (mems_layers, mems_hidden) = read_mems_shape(&session, path)?;
         Ok(Self {
@@ -621,20 +601,16 @@ impl CanaryDecoder {
         opts: &DecodeOptions,
     ) -> Result<DecodeOutput, AsrError> {
         if encoder_embeddings.shape()[0] != 1 {
-            return Err(AsrError {
-                message: format!(
+            return Err(AsrError::Inference(format!(
                     "decoder currently supports batch_size=1 (got {})",
                     encoder_embeddings.shape()[0]
-                ),
-            });
+                )));
         }
         if encoder_mask.shape()[0] != 1 {
-            return Err(AsrError {
-                message: format!(
+            return Err(AsrError::Inference(format!(
                     "encoder_mask batch must match encoder_embeddings (got {})",
                     encoder_mask.shape()[0]
-                ),
-            });
+                )));
         }
 
         if opts.beam_size > 1 {
@@ -655,39 +631,25 @@ impl CanaryDecoder {
         let mut decoder_mems: Array4<f32> =
             Array4::zeros((self.mems_layers, 1, 0, self.mems_hidden));
 
-        let mut session = self.session.lock().map_err(|e| AsrError {
-            message: format!("decoder session lock poisoned: {e}"),
-        })?;
+        let mut session = self.session.lock().map_err(|e| AsrError::Inference(format!("decoder session lock poisoned: {e}")))?;
 
         while batch_tokens.len() < max_len {
             // input_ids: full prefix on call 0 (decoder_mems empty),
             // just the latest token thereafter.
             let input_ids: Array2<i64> = if decoder_mems.shape()[2] == 0 {
                 Array2::from_shape_vec((1, batch_tokens.len()), batch_tokens.clone()).map_err(
-                    |e| AsrError {
-                        message: format!("input_ids reshape (initial): {e}"),
-                    },
+                    |e| AsrError::Inference(format!("input_ids reshape (initial): {e}")),
                 )?
             } else {
                 let last = *batch_tokens.last().unwrap();
-                Array2::from_shape_vec((1, 1), vec![last]).map_err(|e| AsrError {
-                    message: format!("input_ids reshape (step): {e}"),
-                })?
+                Array2::from_shape_vec((1, 1), vec![last]).map_err(|e| AsrError::Inference(format!("input_ids reshape (step): {e}")))?
             };
 
-            let input_ids_v = Value::from_array(input_ids).map_err(|e| AsrError {
-                message: format!("input_ids Value: {e}"),
-            })?;
+            let input_ids_v = Value::from_array(input_ids).map_err(|e| AsrError::Inference(format!("input_ids Value: {e}")))?;
             let enc_emb_v =
-                Value::from_array(encoder_embeddings.clone()).map_err(|e| AsrError {
-                    message: format!("encoder_embeddings Value: {e}"),
-                })?;
-            let enc_mask_v = Value::from_array(encoder_mask.clone()).map_err(|e| AsrError {
-                message: format!("encoder_mask Value: {e}"),
-            })?;
-            let mems_v = Value::from_array(decoder_mems.clone()).map_err(|e| AsrError {
-                message: format!("decoder_mems Value: {e}"),
-            })?;
+                Value::from_array(encoder_embeddings.clone()).map_err(|e| AsrError::Inference(format!("encoder_embeddings Value: {e}")))?;
+            let enc_mask_v = Value::from_array(encoder_mask.clone()).map_err(|e| AsrError::Inference(format!("encoder_mask Value: {e}")))?;
+            let mems_v = Value::from_array(decoder_mems.clone()).map_err(|e| AsrError::Inference(format!("decoder_mems Value: {e}")))?;
 
             let outputs = session
                 .run(vec![
@@ -696,39 +658,25 @@ impl CanaryDecoder {
                     (DECODER_INPUT_ENCODER_MASK, enc_mask_v.into_dyn()),
                     (DECODER_INPUT_DECODER_MEMS, mems_v.into_dyn()),
                 ])
-                .map_err(|e| AsrError {
-                    message: format!("Canary decoder run: {e}"),
-                })?;
+                .map_err(|e| AsrError::Inference(format!("Canary decoder run: {e}")))?;
 
             let logits_idx =
-                output_index(&outputs, DECODER_OUTPUT_LOGITS).ok_or_else(|| AsrError {
-                    message: format!("decoder missing output {DECODER_OUTPUT_LOGITS}"),
-                })?;
+                output_index(&outputs, DECODER_OUTPUT_LOGITS).ok_or_else(|| AsrError::Inference(format!("decoder missing output {DECODER_OUTPUT_LOGITS}")))?;
             let mems_idx =
-                output_index(&outputs, DECODER_OUTPUT_HIDDEN_STATES).ok_or_else(|| AsrError {
-                    message: format!("decoder missing output {DECODER_OUTPUT_HIDDEN_STATES}"),
-                })?;
+                output_index(&outputs, DECODER_OUTPUT_HIDDEN_STATES).ok_or_else(|| AsrError::Inference(format!("decoder missing output {DECODER_OUTPUT_HIDDEN_STATES}")))?;
 
             let mut logits: Array3<f32> = outputs[logits_idx]
                 .try_extract_array::<f32>()
-                .map_err(|e| AsrError {
-                    message: format!("extract {DECODER_OUTPUT_LOGITS}: {e}"),
-                })?
+                .map_err(|e| AsrError::Inference(format!("extract {DECODER_OUTPUT_LOGITS}: {e}")))?
                 .to_owned()
                 .into_dimensionality::<ndarray::Ix3>()
-                .map_err(|e| AsrError {
-                    message: format!("{DECODER_OUTPUT_LOGITS} rank: {e}"),
-                })?;
+                .map_err(|e| AsrError::Inference(format!("{DECODER_OUTPUT_LOGITS} rank: {e}")))?;
             let new_mems: Array4<f32> = outputs[mems_idx]
                 .try_extract_array::<f32>()
-                .map_err(|e| AsrError {
-                    message: format!("extract {DECODER_OUTPUT_HIDDEN_STATES}: {e}"),
-                })?
+                .map_err(|e| AsrError::Inference(format!("extract {DECODER_OUTPUT_HIDDEN_STATES}: {e}")))?
                 .to_owned()
                 .into_dimensionality::<ndarray::Ix4>()
-                .map_err(|e| AsrError {
-                    message: format!("{DECODER_OUTPUT_HIDDEN_STATES} rank: {e}"),
-                })?;
+                .map_err(|e| AsrError::Inference(format!("{DECODER_OUTPUT_HIDDEN_STATES} rank: {e}")))?;
             decoder_mems = new_mems;
 
             // Repetition-penalty applies to the SUFFIX of the
@@ -915,9 +863,7 @@ impl CanaryDecoder {
     ) -> Result<DecodeOutput, AsrError> {
         let beam_size = opts.beam_size;
         if beam_size < 2 {
-            return Err(AsrError {
-                message: format!("decode_beam requires beam_size ≥ 2 (got {beam_size})"),
-            });
+            return Err(AsrError::Config(format!("decode_beam requires beam_size ≥ 2 (got {beam_size})")));
         }
 
         let prefix = build_decoder_prefix(vocab, opts)?;
@@ -925,16 +871,12 @@ impl CanaryDecoder {
         let max_len = opts.max_sequence_length.max(prefix_len + 1);
         let eos = vocab.eos()?;
 
-        let mut session = self.session.lock().map_err(|e| AsrError {
-            message: format!("decoder session lock poisoned: {e}"),
-        })?;
+        let mut session = self.session.lock().map_err(|e| AsrError::Inference(format!("decoder session lock poisoned: {e}")))?;
 
         // === Step 0: identical prefix across all B beams; run once
         // and seed the beam set from the top-B candidates. ===
         let initial_input: Array2<i64> = Array2::from_shape_vec((1, prefix_len), prefix.clone())
-            .map_err(|e| AsrError {
-                message: format!("input_ids reshape (initial): {e}"),
-            })?;
+            .map_err(|e| AsrError::Inference(format!("input_ids reshape (initial): {e}")))?;
         let initial_mems: Array4<f32> = Array4::zeros((self.mems_layers, 1, 0, self.mems_hidden));
         let (init_logits, init_hidden) = run_decoder_step(
             &mut session,
@@ -996,9 +938,7 @@ impl CanaryDecoder {
             // Build input_ids = each beam's last token, shape [B, 1].
             let last_tokens: Vec<i64> = active.iter().map(|x| *x.tokens.last().unwrap()).collect();
             let input_ids: Array2<i64> = Array2::from_shape_vec((b, 1), last_tokens.clone())
-                .map_err(|e| AsrError {
-                    message: format!("input_ids reshape (step): {e}"),
-                })?;
+                .map_err(|e| AsrError::Inference(format!("input_ids reshape (step): {e}")))?;
 
             // Replicate encoder I/O across the batch dim.
             let enc_emb_b: Array3<f32> = repeat_along_axis0(encoder_embeddings, b);
@@ -1138,9 +1078,7 @@ impl CanaryDecoder {
             }
         }
 
-        let (best_tokens, best_logprobs) = best.ok_or_else(|| AsrError {
-            message: "beam search produced no candidates".into(),
-        })?;
+        let (best_tokens, best_logprobs) = best.ok_or_else(|| AsrError::Inference("beam search produced no candidates".into()))?;
 
         let all_ids: Vec<u32> = best_tokens.iter().map(|&x| x as u32).collect();
         let kept = strip_prefix_and_specials(&all_ids, prefix_len, vocab);
@@ -1168,18 +1106,10 @@ fn run_decoder_step(
     encoder_mask: Array2<i64>,
     decoder_mems: Array4<f32>,
 ) -> Result<(Array3<f32>, Array4<f32>), AsrError> {
-    let input_ids_v = Value::from_array(input_ids).map_err(|e| AsrError {
-        message: format!("input_ids Value: {e}"),
-    })?;
-    let enc_emb_v = Value::from_array(encoder_embeddings).map_err(|e| AsrError {
-        message: format!("encoder_embeddings Value: {e}"),
-    })?;
-    let enc_mask_v = Value::from_array(encoder_mask).map_err(|e| AsrError {
-        message: format!("encoder_mask Value: {e}"),
-    })?;
-    let mems_v = Value::from_array(decoder_mems).map_err(|e| AsrError {
-        message: format!("decoder_mems Value: {e}"),
-    })?;
+    let input_ids_v = Value::from_array(input_ids).map_err(|e| AsrError::Inference(format!("input_ids Value: {e}")))?;
+    let enc_emb_v = Value::from_array(encoder_embeddings).map_err(|e| AsrError::Inference(format!("encoder_embeddings Value: {e}")))?;
+    let enc_mask_v = Value::from_array(encoder_mask).map_err(|e| AsrError::Inference(format!("encoder_mask Value: {e}")))?;
+    let mems_v = Value::from_array(decoder_mems).map_err(|e| AsrError::Inference(format!("decoder_mems Value: {e}")))?;
     let outputs = session
         .run(vec![
             (DECODER_INPUT_IDS, input_ids_v.into_dyn()),
@@ -1187,36 +1117,22 @@ fn run_decoder_step(
             (DECODER_INPUT_ENCODER_MASK, enc_mask_v.into_dyn()),
             (DECODER_INPUT_DECODER_MEMS, mems_v.into_dyn()),
         ])
-        .map_err(|e| AsrError {
-            message: format!("Canary decoder run: {e}"),
-        })?;
-    let logits_idx = output_index(&outputs, DECODER_OUTPUT_LOGITS).ok_or_else(|| AsrError {
-        message: format!("decoder missing output {DECODER_OUTPUT_LOGITS}"),
-    })?;
+        .map_err(|e| AsrError::Inference(format!("Canary decoder run: {e}")))?;
+    let logits_idx = output_index(&outputs, DECODER_OUTPUT_LOGITS).ok_or_else(|| AsrError::Inference(format!("decoder missing output {DECODER_OUTPUT_LOGITS}")))?;
     let mems_idx =
-        output_index(&outputs, DECODER_OUTPUT_HIDDEN_STATES).ok_or_else(|| AsrError {
-            message: format!("decoder missing output {DECODER_OUTPUT_HIDDEN_STATES}"),
-        })?;
+        output_index(&outputs, DECODER_OUTPUT_HIDDEN_STATES).ok_or_else(|| AsrError::Inference(format!("decoder missing output {DECODER_OUTPUT_HIDDEN_STATES}")))?;
     let logits: Array3<f32> = outputs[logits_idx]
         .try_extract_array::<f32>()
-        .map_err(|e| AsrError {
-            message: format!("extract logits: {e}"),
-        })?
+        .map_err(|e| AsrError::Inference(format!("extract logits: {e}")))?
         .to_owned()
         .into_dimensionality()
-        .map_err(|e| AsrError {
-            message: format!("logits rank: {e}"),
-        })?;
+        .map_err(|e| AsrError::Inference(format!("logits rank: {e}")))?;
     let hidden: Array4<f32> = outputs[mems_idx]
         .try_extract_array::<f32>()
-        .map_err(|e| AsrError {
-            message: format!("extract hidden: {e}"),
-        })?
+        .map_err(|e| AsrError::Inference(format!("extract hidden: {e}")))?
         .to_owned()
         .into_dimensionality()
-        .map_err(|e| AsrError {
-            message: format!("hidden rank: {e}"),
-        })?;
+        .map_err(|e| AsrError::Inference(format!("hidden rank: {e}")))?;
     Ok((logits, hidden))
 }
 
@@ -1227,9 +1143,7 @@ fn run_decoder_step(
 fn stack_along_batch(hidden: &Array4<f32>, n_copies: usize) -> Result<Array4<f32>, AsrError> {
     let (l, b, t, h) = hidden.dim();
     if b != 1 {
-        return Err(AsrError {
-            message: format!("stack_along_batch expected batch=1, got {b}"),
-        });
+        return Err(AsrError::Inference(format!("stack_along_batch expected batch=1, got {b}")));
     }
     let mut out = Array4::<f32>::zeros((l, n_copies, t, h));
     for k in 0..n_copies {
@@ -1378,13 +1292,11 @@ fn validate_decoder_io(session: &Session, path: &Path) -> Result<(), AsrError> {
         .collect();
     for name in &want_in {
         if !got_in.iter().any(|n| n == name) {
-            return Err(AsrError {
-                message: format!(
+            return Err(AsrError::Inference(format!(
                     "decoder {} missing input {} (have: {got_in:?})",
                     path.display(),
                     name
-                ),
-            });
+                )));
         }
     }
 
@@ -1396,13 +1308,11 @@ fn validate_decoder_io(session: &Session, path: &Path) -> Result<(), AsrError> {
         .collect();
     for name in &want_out {
         if !got_out.iter().any(|n| n == name) {
-            return Err(AsrError {
-                message: format!(
+            return Err(AsrError::Inference(format!(
                     "decoder {} missing output {} (have: {got_out:?})",
                     path.display(),
                     name
-                ),
-            });
+                )));
         }
     }
     Ok(())
@@ -1417,37 +1327,29 @@ fn read_mems_shape(session: &Session, path: &Path) -> Result<(usize, usize), Asr
         .inputs()
         .iter()
         .find(|i| i.name() == DECODER_INPUT_DECODER_MEMS)
-        .ok_or_else(|| AsrError {
-            message: format!(
+        .ok_or_else(|| AsrError::Inference(format!(
                 "decoder {} missing input {DECODER_INPUT_DECODER_MEMS}",
                 path.display()
-            ),
-        })?;
-    let shape = input.dtype().tensor_shape().ok_or_else(|| AsrError {
-        message: format!(
+            )))?;
+    let shape = input.dtype().tensor_shape().ok_or_else(|| AsrError::Inference(format!(
             "decoder {} input {DECODER_INPUT_DECODER_MEMS} is not a tensor",
             path.display()
-        ),
-    })?;
+        )))?;
     if shape.len() != 4 {
-        return Err(AsrError {
-            message: format!(
+        return Err(AsrError::Inference(format!(
                 "decoder {} input {DECODER_INPUT_DECODER_MEMS} expected rank 4, got {}",
                 path.display(),
                 shape.len()
-            ),
-        });
+            )));
     }
     let layers = shape[0];
     let hidden = shape[3];
     if layers <= 0 || hidden <= 0 {
-        return Err(AsrError {
-            message: format!(
+        return Err(AsrError::Inference(format!(
                 "decoder {} input {DECODER_INPUT_DECODER_MEMS} has non-static \
                  layers/hidden dims (L={layers}, H={hidden})",
                 path.display(),
-            ),
-        });
+            )));
     }
     Ok((layers as usize, hidden as usize))
 }
@@ -1615,7 +1517,7 @@ mod tests {
             Ok(_) => panic!("expected error"),
             Err(e) => e,
         };
-        assert!(err.message.contains("ja"), "{}", err.message);
+        assert!(err.to_string().contains("ja"), "{}", err);
     }
 
     #[test]
@@ -1641,7 +1543,7 @@ mod tests {
             Ok(_) => panic!("expected error"),
             Err(e) => e,
         };
-        assert!(err.message.contains("<|noitn|>"), "{}", err.message);
+        assert!(err.to_string().contains("<|noitn|>"), "{}", err);
     }
 
     #[test]
@@ -2194,7 +2096,7 @@ mod tests {
     fn load_nonexistent_decoder_returns_error() {
         match CanaryDecoder::load("/nonexistent/path/to/decoder.onnx") {
             Ok(_) => panic!("expected error"),
-            Err(e) => assert!(e.message.contains("load Canary decoder"), "{}", e.message),
+            Err(e) => assert!(e.to_string().contains("load Canary decoder"), "{}", e.to_string()),
         }
     }
 

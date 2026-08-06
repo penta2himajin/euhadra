@@ -7,8 +7,8 @@ use euhadra::filter::{
     SpanishFillerFilter,
 };
 use euhadra::mic::{self, MicConfig};
-use euhadra::mock::{MockContextProvider, MockRefiner, StdoutEmitter};
-use euhadra::pipeline::Pipeline;
+use euhadra::mock::StdoutEmitter;
+use euhadra::pipeline::{Pipeline, SessionResult};
 use euhadra::processor::{
     BasicPunctuationRestorer, InverseTextNormalizer, SelfCorrectionDetector, SpokenFormNormalizer,
 };
@@ -174,29 +174,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .processor(BasicPunctuationRestorer);
             }
 
-            // Refiner — passthrough for now (no LLM)
-            builder = builder.refiner(MockRefiner::passthrough());
-
-            // Context — manual for CLI
-            builder = builder.context(MockContextProvider::new());
+            // No refiner and no context provider: this is the LLM-free
+            // Tier 1+2 path, and both are optional now.
 
             // Emitter — stdout
             builder = builder.emitter(StdoutEmitter);
 
             let pipeline = builder.build()?;
 
-            // Run session
-            let (audio_tx, _cancel, handle) = pipeline.session();
-            audio_tx.send(audio).await?;
-            drop(audio_tx);
+            // The whole file is already read, so this is the batch path.
+            let result = pipeline.transcribe(std::slice::from_ref(&audio)).await?;
 
-            let result = handle.await??;
-
-            if !result.emit_result.success {
-                if let Some(err) = result.emit_result.error {
-                    eprintln!("emit error: {err}");
-                }
-            }
+            report_emit(&result);
         }
 
         Commands::Record {
@@ -242,11 +231,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .processor(BasicPunctuationRestorer);
             }
 
-            // Refiner
-            builder = builder.refiner(MockRefiner::passthrough());
-
-            // Context
-            builder = builder.context(MockContextProvider::new());
+            // No refiner and no context provider: this is the LLM-free
+            // Tier 1+2 path, and both are optional now.
 
             // Emitter
             if clipboard {
@@ -261,10 +247,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let (mut mic_rx, _mic_guard) =
                 mic::record(MicConfig::default()).map_err(|e| format!("mic: {e}"))?;
 
-            // Start pipeline session
-            let (audio_tx, _cancel, handle) = pipeline.session();
+            // Live capture, so the session path: ASR starts while the
+            // speaker is still talking.
+            let session = pipeline.session();
 
             // Bridge mic → pipeline
+            let audio_tx = session.audio.clone();
             let bridge = tokio::spawn(async move {
                 while let Some(chunk) = mic_rx.recv().await {
                     if audio_tx.send(chunk).await.is_err() {
@@ -281,17 +269,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             drop(_mic_guard);
             let _ = bridge.await;
 
-            let result = handle.await??;
+            let result = session.finish().await?;
             if clipboard {
                 eprintln!("Text copied to clipboard.");
             }
-            if !result.emit_result.success {
-                if let Some(err) = result.emit_result.error {
-                    eprintln!("emit error: {err}");
-                }
-            }
+            report_emit(&result);
         }
     }
 
     Ok(())
+}
+
+/// Surface an emitter failure on stderr.
+///
+/// `emit_result` is `None` when the pipeline has no emitter configured,
+/// which is not a failure — there was simply nothing to deliver.
+fn report_emit(result: &SessionResult) {
+    let Some(emit) = &result.emit_result else {
+        return;
+    };
+    if !emit.success {
+        if let Some(err) = &emit.error {
+            eprintln!("emit error: {err}");
+        }
+    }
 }

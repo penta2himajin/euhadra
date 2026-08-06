@@ -124,18 +124,13 @@ impl AsrRouter {
 mod tests {
     use super::*;
     use crate::traits::{AsrAdapter, AsrError};
-    use crate::types::{AsrResult, AudioChunk};
-    use tokio::sync::mpsc;
+    use crate::types::{AudioChunk, Transcript};
 
     struct StubAdapter;
     #[async_trait]
     impl AsrAdapter for StubAdapter {
-        async fn transcribe(
-            &self,
-            _audio_rx: mpsc::Receiver<AudioChunk>,
-            _result_tx: mpsc::Sender<AsrResult>,
-        ) -> Result<(), AsrError> {
-            Ok(())
+        async fn transcribe(&self, _audio: &[AudioChunk]) -> Result<Transcript, AsrError> {
+            Ok(Transcript::default())
         }
     }
 

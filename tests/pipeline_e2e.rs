@@ -5,7 +5,7 @@
 
 mod common;
 
-use common::send_one_and_close;
+use common::send_one;
 use euhadra::prelude::*;
 
 #[tokio::test]
@@ -24,10 +24,10 @@ async fn english_full_pipeline_no_llm() {
         .build()
         .unwrap();
 
-    let (audio_tx, _cancel, handle) = pipeline.session();
-    send_one_and_close(audio_tx).await;
+    let session = pipeline.session();
+    send_one(&session.audio).await;
 
-    let result = handle.await.unwrap().unwrap();
+    let result = session.finish().await.unwrap();
     assert_eq!(
         result.raw_text, "um I want to go to Boston no wait to Denver",
         "raw_text should preserve the original ASR output"
@@ -64,10 +64,10 @@ async fn japanese_full_pipeline_no_llm() {
         .build()
         .unwrap();
 
-    let (audio_tx, _cancel, handle) = pipeline.session();
-    send_one_and_close(audio_tx).await;
+    let session = pipeline.session();
+    send_one(&session.audio).await;
 
-    handle.await.unwrap().unwrap();
+    session.finish().await.unwrap();
 
     let buf = outputs.lock().await;
     let RefinementOutput::TextInsertion { text, .. } = &buf[0] else {
@@ -108,10 +108,10 @@ async fn spanish_full_pipeline_no_llm() {
         .build()
         .unwrap();
 
-    let (audio_tx, _cancel, handle) = pipeline.session();
-    send_one_and_close(audio_tx).await;
+    let session = pipeline.session();
+    send_one(&session.audio).await;
 
-    let result = handle.await.unwrap().unwrap();
+    let result = session.finish().await.unwrap();
     assert_eq!(
         result.raw_text, "o sea voy a Madrid perdón a Barcelona",
         "raw_text should preserve the original ASR output"
@@ -152,10 +152,10 @@ async fn pipeline_emits_uppercase_via_mock_refiner() {
         .build()
         .unwrap();
 
-    let (audio_tx, _cancel, handle) = pipeline.session();
-    send_one_and_close(audio_tx).await;
+    let session = pipeline.session();
+    send_one(&session.audio).await;
 
-    handle.await.unwrap().unwrap();
+    session.finish().await.unwrap();
 
     let buf = outputs.lock().await;
     let RefinementOutput::TextInsertion { text, .. } = &buf[0] else {

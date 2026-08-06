@@ -60,24 +60,18 @@ impl Vocab {
             // spaces (e.g. " ▁") but the *last* whitespace-separated
             // token on the line is always the integer id. Splitting
             // on the rightmost ASCII space keeps both halves intact.
-            let split_at = raw.rfind(' ').ok_or_else(|| AsrError {
-                message: format!("vocab line {} missing id separator: {raw:?}", line_no + 1),
-            })?;
+            let split_at = raw.rfind(' ').ok_or_else(|| AsrError::ModelLoad(format!("vocab line {} missing id separator: {raw:?}", line_no + 1)))?;
             let piece = &raw[..split_at];
             let id_str = &raw[split_at + 1..];
-            let id: u32 = id_str.parse().map_err(|_| AsrError {
-                message: format!("vocab line {} id is not a u32: {id_str:?}", line_no + 1),
-            })?;
+            let id: u32 = id_str.parse().map_err(|_| AsrError::ModelLoad(format!("vocab line {} id is not a u32: {id_str:?}", line_no + 1)))?;
             if id as usize != id_to_piece.len() {
-                return Err(AsrError {
-                    message: format!(
+                return Err(AsrError::ModelLoad(format!(
                         "vocab line {} id={} but expected {} (ids must be \
                          dense and ascending from 0)",
                         line_no + 1,
                         id,
                         id_to_piece.len()
-                    ),
-                });
+                    )));
             }
             id_to_piece.push(piece.to_string());
             // First-occurrence wins. The real Canary vocab repeats
@@ -89,9 +83,7 @@ impl Vocab {
         }
 
         if id_to_piece.is_empty() {
-            return Err(AsrError {
-                message: "vocab is empty".into(),
-            });
+            return Err(AsrError::ModelLoad("vocab is empty".into()));
         }
 
         Ok(Self {
@@ -102,9 +94,7 @@ impl Vocab {
 
     /// Read and parse `vocab.txt` from a path.
     pub fn from_file(path: &Path) -> Result<Self, AsrError> {
-        let content = std::fs::read_to_string(path).map_err(|e| AsrError {
-            message: format!("read vocab {}: {e}", path.display()),
-        })?;
+        let content = std::fs::read_to_string(path).map_err(|e| AsrError::ModelLoad(format!("read vocab {}: {e}", path.display())))?;
         Self::from_text(&content)
     }
 
@@ -159,38 +149,28 @@ impl Vocab {
 
     /// `<|endoftext|>` — terminator for the autoregressive decoder.
     pub fn eos(&self) -> Result<u32, AsrError> {
-        self.id("<|endoftext|>").ok_or_else(|| AsrError {
-            message: "vocab missing <|endoftext|>".into(),
-        })
+        self.id("<|endoftext|>").ok_or_else(|| AsrError::ModelLoad("vocab missing <|endoftext|>".into()))
     }
 
     /// `<|startoftranscript|>` — first prefix token for the decoder.
     pub fn sot(&self) -> Result<u32, AsrError> {
-        self.id("<|startoftranscript|>").ok_or_else(|| AsrError {
-            message: "vocab missing <|startoftranscript|>".into(),
-        })
+        self.id("<|startoftranscript|>").ok_or_else(|| AsrError::ModelLoad("vocab missing <|startoftranscript|>".into()))
     }
 
     /// `<|startofcontext|>` — opens the context prompt slot. Canary
     /// always emits this even when no context is provided.
     pub fn soc(&self) -> Result<u32, AsrError> {
-        self.id("<|startofcontext|>").ok_or_else(|| AsrError {
-            message: "vocab missing <|startofcontext|>".into(),
-        })
+        self.id("<|startofcontext|>").ok_or_else(|| AsrError::ModelLoad("vocab missing <|startofcontext|>".into()))
     }
 
     /// `<|pnc|>` — request punctuation + capitalisation in the output.
     pub fn pnc(&self) -> Result<u32, AsrError> {
-        self.id("<|pnc|>").ok_or_else(|| AsrError {
-            message: "vocab missing <|pnc|>".into(),
-        })
+        self.id("<|pnc|>").ok_or_else(|| AsrError::ModelLoad("vocab missing <|pnc|>".into()))
     }
 
     /// `<|nopnc|>` — opposite of `<|pnc|>`.
     pub fn nopnc(&self) -> Result<u32, AsrError> {
-        self.id("<|nopnc|>").ok_or_else(|| AsrError {
-            message: "vocab missing <|nopnc|>".into(),
-        })
+        self.id("<|nopnc|>").ok_or_else(|| AsrError::ModelLoad("vocab missing <|nopnc|>".into()))
     }
 
     /// Detokenise a sequence of token ids into a single text string,
@@ -289,7 +269,7 @@ mod tests {
     fn rejects_non_dense_ids() {
         let bad = "<unk> 0\n<pad> 2\n";
         let err = Vocab::from_text(bad).unwrap_err();
-        assert!(err.message.contains("expected 1"), "{}", err.message);
+        assert!(err.to_string().contains("expected 1"), "{}", err);
     }
 
     #[test]
@@ -297,16 +277,16 @@ mod tests {
         let bad = "<unk>\n";
         let err = Vocab::from_text(bad).unwrap_err();
         assert!(
-            err.message.contains("missing id separator"),
+            err.to_string().contains("missing id separator"),
             "{}",
-            err.message
+            err
         );
     }
 
     #[test]
     fn rejects_empty_vocab() {
         let err = Vocab::from_text("").unwrap_err();
-        assert!(err.message.contains("empty"));
+        assert!(err.to_string().contains("empty"));
     }
 
     #[test]
@@ -327,7 +307,7 @@ mod tests {
         text.push_str("<pad> 1\n");
         let v = Vocab::from_text(&text).unwrap();
         let err = v.eos().unwrap_err();
-        assert!(err.message.contains("<|endoftext|>"));
+        assert!(err.to_string().contains("<|endoftext|>"));
     }
 
     #[test]

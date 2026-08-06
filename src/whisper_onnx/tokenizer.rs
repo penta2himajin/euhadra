@@ -33,12 +33,10 @@ impl WhisperTokenizer {
     /// Load `<dir>/tokenizer.json`.
     pub fn load(model_dir: &Path) -> Result<Self, AsrError> {
         let tok_path = model_dir.join("tokenizer.json");
-        let inner = Tokenizer::from_file(&tok_path).map_err(|e| AsrError {
-            message: format!(
+        let inner = Tokenizer::from_file(&tok_path).map_err(|e| AsrError::ModelLoad(format!(
                 "whisper-onnx tokenizer load failed at {}: {e}",
                 tok_path.display()
-            ),
-        })?;
+            )))?;
         let sot = lookup_id(&inner, SOT)?;
         let transcribe = lookup_id(&inner, TASK_TRANSCRIBE)?;
         let no_timestamps = lookup_id(&inner, NO_TIMESTAMPS)?;
@@ -76,9 +74,7 @@ impl WhisperTokenizer {
     /// the trimmed plain-text transcript.
     pub fn decode(&self, ids: &[i64]) -> Result<String, AsrError> {
         let u32_ids: Vec<u32> = ids.iter().map(|&x| x as u32).collect();
-        let text = self.inner.decode(&u32_ids, true).map_err(|e| AsrError {
-            message: format!("whisper-onnx tokenizer decode: {e}"),
-        })?;
+        let text = self.inner.decode(&u32_ids, true).map_err(|e| AsrError::ModelLoad(format!("whisper-onnx tokenizer decode: {e}")))?;
         Ok(text.trim().to_string())
     }
 }
@@ -86,9 +82,7 @@ impl WhisperTokenizer {
 fn lookup_id(tok: &Tokenizer, piece: &str) -> Result<i64, AsrError> {
     tok.token_to_id(piece)
         .map(|id| id as i64)
-        .ok_or_else(|| AsrError {
-            message: format!("whisper-onnx tokenizer missing special token {piece}"),
-        })
+        .ok_or_else(|| AsrError::ModelLoad(format!("whisper-onnx tokenizer missing special token {piece}")))
 }
 
 #[cfg(test)]

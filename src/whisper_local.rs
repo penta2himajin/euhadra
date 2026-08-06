@@ -2,11 +2,10 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::sync::mpsc;
 
 use crate::router::{AdapterRequest, AsrRuntimeFactory, ModelSource, RouterError};
 use crate::traits::{AsrAdapter, AsrError};
-use crate::types::{AsrResult, AudioChunk};
+use crate::types::{AudioChunk, Transcript};
 
 /// Local ASR adapter backed by whisper.cpp.
 ///
@@ -48,15 +47,13 @@ impl WhisperLocal {
             cmd.arg("-l").arg(lang);
         }
 
-        let output = cmd.output().await.map_err(|e| AsrError {
-            message: format!("failed to run whisper-cli: {e}"),
+        let output = cmd.output().await.map_err(|e| {
+            AsrError::ModelLoad(format!("failed to run whisper-cli: {e}"))
         })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(AsrError {
-                message: format!("whisper-cli exited with {}: {stderr}", output.status),
-            });
+            return Err(AsrError::Inference(format!("whisper-cli exited with {}: {stderr}", output.status)));
         }
 
         let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -66,53 +63,24 @@ impl WhisperLocal {
 
 #[async_trait]
 impl AsrAdapter for WhisperLocal {
-    async fn transcribe(
-        &self,
-        mut audio_rx: mpsc::Receiver<AudioChunk>,
-        result_tx: mpsc::Sender<AsrResult>,
-    ) -> Result<(), AsrError> {
-        // Accumulate all audio chunks
-        let mut all_samples: Vec<f32> = Vec::new();
-        let mut sample_rate = 16000u32;
-        let mut channels = 1u16;
-
-        while let Some(chunk) = audio_rx.recv().await {
-            sample_rate = chunk.sample_rate;
-            channels = chunk.channels;
-            all_samples.extend(&chunk.samples);
-        }
-
+    async fn transcribe(&self, audio: &[AudioChunk]) -> Result<Transcript, AsrError> {
+        let all_samples = AudioChunk::concat(audio);
         if all_samples.is_empty() {
-            return Err(AsrError {
-                message: "no audio received".into(),
-            });
+            return Err(AsrError::NoAudio);
         }
+        let sample_rate = AudioChunk::sample_rate_of(audio).unwrap_or(16_000);
+        let channels = audio.first().map(|c| c.channels).unwrap_or(1);
 
-        // Write to a temporary WAV file
+        // whisper-cli reads a file, so the buffer has to land on disk.
         let tmp_path = std::env::temp_dir().join(format!("euhadra_{}.wav", std::process::id()));
-        write_wav(&tmp_path, &all_samples, sample_rate, channels).map_err(|e| AsrError {
-            message: format!("failed to write WAV: {e}"),
-        })?;
+        write_wav(&tmp_path, &all_samples, sample_rate, channels)
+            .map_err(|e| AsrError::Inference(format!("failed to write WAV: {e}")))?;
 
-        // Transcribe
-        let text = self.transcribe_file(&tmp_path).await?;
+        let text = self.transcribe_file(&tmp_path).await;
 
-        // Clean up
         let _ = std::fs::remove_file(&tmp_path);
 
-        if !text.is_empty() {
-            let result = AsrResult {
-                text,
-                is_final: true,
-                confidence: 1.0,
-                timestamp: std::time::Duration::ZERO,
-            };
-            result_tx.send(result).await.map_err(|e| AsrError {
-                message: format!("failed to send result: {e}"),
-            })?;
-        }
-
-        Ok(())
+        Ok(Transcript::new(text?))
     }
 }
 
