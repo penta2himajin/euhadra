@@ -65,6 +65,58 @@ impl Transcript {
     }
 }
 
+/// A language whose text euhadra can process.
+///
+/// Text processing is not language-agnostic: Japanese and Chinese have no
+/// whitespace and are segmented on their respective commas, while English,
+/// Spanish and Korean are whitespace-delimited. Picking the wrong strategy
+/// does not degrade gracefully — it silently deletes text. This enum exists
+/// so that choice is made once, by type, rather than by remembering which
+/// constructor pairs with which script.
+///
+/// `#[non_exhaustive]`: more languages are expected, and adding one should
+/// not be a breaking change for callers that match on this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[non_exhaustive]
+pub enum Language {
+    English,
+    Japanese,
+    Chinese,
+    Korean,
+    Spanish,
+}
+
+impl Language {
+    /// Parse the primary subtag of a BCP 47 tag (`"ja"`, `"en-US"`, `"zh-Hans"`).
+    ///
+    /// Returns `None` for languages euhadra has no filter for, rather than
+    /// falling back to a default — a wrong-language filter is worse than
+    /// no filter. Region and script subtags are ignored: the filters are
+    /// script-level, and no supported language currently varies by region.
+    pub fn from_bcp47(tag: &str) -> Option<Self> {
+        let primary = tag.split(['-', '_']).next().unwrap_or(tag);
+        match primary.to_ascii_lowercase().as_str() {
+            "en" => Some(Self::English),
+            "ja" => Some(Self::Japanese),
+            "zh" => Some(Self::Chinese),
+            "ko" => Some(Self::Korean),
+            "es" => Some(Self::Spanish),
+            _ => None,
+        }
+    }
+
+    /// The BCP 47 primary subtag for this language.
+    pub fn as_bcp47(&self) -> &'static str {
+        match self {
+            Self::English => "en",
+            Self::Japanese => "ja",
+            Self::Chinese => "zh",
+            Self::Korean => "ko",
+            Self::Spanish => "es",
+        }
+    }
+}
+
 /// A half-open character range `[start, end)` within a piece of text.
 ///
 /// Filters report what they detected as spans so a caller can highlight,

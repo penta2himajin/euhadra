@@ -40,10 +40,27 @@ libraries. Opt into the rest:
 | `mic` | Microphone capture (`cpal`) | ALSA headers on Linux (`libasound2-dev`) |
 | `clipboard` | `ClipboardEmitter` (`arboard`) | — |
 | `cli` | The `euhadra` binary; implies `mic` + `clipboard` | needs Rust 1.85 |
+| `testing` | Mock adapters and the WER/CER evaluation harness | — |
 
 Microphone capture is behind a feature because `cpal` links ALSA on Linux, and a
 consumer who only wants the text-processing tiers should not have to install
 system packages to compile.
+
+`testing` is for building test doubles against euhadra's traits, and for running
+the evaluation harness. It is off by default because neither is library surface;
+put it under `[dev-dependencies]` rather than `[dependencies]`.
+
+### Stability
+
+This is `0.x`. The adapter traits — `AsrAdapter`, `TextFilter`, `TextProcessor`,
+`LlmRefiner`, `ContextProvider`, `OutputEmitter` — are the part meant to be
+stable, because implementing one is the reason to depend on this crate. They
+will still change if a real integration shows they are wrong, and Phase 2's
+`Command` and `StructuredInput` output modes are expected to move `LlmRefiner`.
+
+Everything around them is fluid: the builder, the concrete adapters, the
+evaluation harness. Minor versions may break either group until `1.0`. Pin an
+exact version if that matters to you.
 
 ### As a CLI
 
@@ -131,44 +148,46 @@ use euhadra::whisper_local::WhisperLocal;
 
 #[tokio::main]
 async fn main() {
-    // Minimal: ASR + filler filter + self-correction + punctuation
+    // Minimal: ASR + filler filter + self-correction + punctuation.
+    // Only .asr() is required; no LLM is involved anywhere below.
     let pipeline = Pipeline::builder()
         .asr(WhisperLocal::new("whisper-cli", "ggml-base.bin").with_language("en"))
-        .filter(SimpleFillerFilter::english())
+        .filter(FillerFilter::for_language(Language::English))
         .processor(SelfCorrectionDetector::new())
         .processor(BasicPunctuationRestorer)
-        .refiner(MockRefiner::passthrough())    // no LLM needed
-        .context(MockContextProvider::new())
         .emitter(StdoutEmitter)
         .build()
         .unwrap();
 
-    // Load audio and run
+    // Load audio and run it through every configured tier
     let audio = euhadra::whisper_local::read_wav("speech.wav".as_ref()).unwrap();
-    let (audio_tx, _cancel, handle) = pipeline.session();
-    audio_tx.send(audio).await.unwrap();
-    drop(audio_tx);
+    let result = pipeline.transcribe(&[audio]).await.unwrap();
 
-    let result = handle.await.unwrap().unwrap();
     // result.raw_text  — original ASR output
     // result.output    — filtered + processed text
 }
 ```
 
-For Japanese:
+For Japanese, change the ASR language and the filter language — nothing else:
 
 ```rust
 let pipeline = Pipeline::builder()
     .asr(WhisperLocal::new("whisper-cli", "ggml-base.bin").with_language("ja"))
-    .filter(JapaneseFillerFilter::new())
+    .filter(FillerFilter::for_language(Language::Japanese))
     .processor(SelfCorrectionDetector::new())
     .processor(BasicPunctuationRestorer)
-    .refiner(MockRefiner::passthrough())
-    .context(MockContextProvider::new())
     .emitter(ClipboardEmitter::new())   // requires the `clipboard` feature
     .build()
     .unwrap();
 ```
+
+`FillerFilter::for_language` picks the segmentation the script needs: whitespace
+for English, Spanish and Korean, `、` for Japanese, `，` for Chinese. Pairing
+these by hand is a real hazard — `SimpleFillerFilter` splits on whitespace, so a
+Japanese utterance arrives as a single token and one that opens with a filler is
+removed in full, leaving an empty transcript and no error. Prefer
+`for_language`; reach for a concrete filter only when you need to customise its
+lexicon, and then keep it matched to the language yourself.
 
 ## Three-tier text processing
 

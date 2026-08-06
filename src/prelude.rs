@@ -1,6 +1,18 @@
+//! The names needed to build and run a pipeline.
+//!
+//! Glob-importing this should be enough for ordinary use:
+//!
+//! ```
+//! use euhadra::prelude::*;
+//! ```
+//!
+//! Concrete adapters that carry a dependency (ONNX backends, ASR runtimes)
+//! are not here — import those from their own modules, so that what a
+//! dependent pulls in stays visible at the use site.
+
 pub use crate::filter::{
-    ChineseFillerFilter, FilterResult, JapaneseFillerFilter, SimpleFillerFilter,
-    SpanishFillerFilter, TextFilter,
+    ChineseFillerFilter, FillerFilter, FilterError, FilterResult, JapaneseFillerFilter,
+    SimpleFillerFilter, SpanishFillerFilter, TextFilter,
 };
 pub use crate::pipeline::{
     Diagnostics, Pipeline, PipelineBuilder, PipelineError, Session, SessionResult, Stage,
