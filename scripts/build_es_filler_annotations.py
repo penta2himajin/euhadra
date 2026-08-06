@@ -26,6 +26,13 @@ Usage:
   scripts/build_es_filler_annotations.py \\
       --out data/cache/es_filler_annotations.jsonl
 
+Note on what the resulting F1 measures: the lexicons here are byte-identical
+to `SpanishFillerFilter`\'s, so a perfect score means the Rust filter agrees
+with this generator, not that either matches human judgement. CIEMPIESS
+transcripts also carry no punctuation, so this corpus cannot exercise the
+punctuated-filler path. See the CI job comment for what the gate does and
+does not catch.
+
 Run unit tests (no external deps required):
   scripts/build_es_filler_annotations.py --self-test
 """
@@ -482,8 +489,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     p.add_argument(
         "--split",
-        default="train",
-        help="dataset split (default: train; ciempiess_test only ships one split)",
+        default="test",
+        help="dataset split (default: test; ciempiess_test only ships this one)",
     )
     p.add_argument(
         "--limit",
