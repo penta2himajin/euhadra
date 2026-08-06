@@ -1071,7 +1071,16 @@ fn tokenize_es(text: &str) -> Vec<EsToken> {
             i += 1;
         }
         let surface: String = chars[start..i].iter().collect();
-        let lower = surface.to_lowercase();
+        // Match on the word alone. Spanish tokenises on whitespace, so
+        // without this `"eh,"` never equals the `"eh"` lexicon entry and a
+        // punctuated filler survives untouched. `surface` and the char
+        // offsets keep the punctuation, so a removed token takes its
+        // trailing comma with it — the same result the English filter
+        // produces via `take_while(is_alphanumeric)`.
+        let lower = surface
+            .to_lowercase()
+            .trim_matches(|c: char| !c.is_alphanumeric())
+            .to_string();
         let char_count = lower.chars().count();
         out.push(EsToken {
             surface,
@@ -1951,29 +1960,66 @@ mod tests {
         assert_eq!(result.text, "我们明天开会。");
     }
 
-    /// No language may return empty for an utterance that is entirely
-    /// content once its leading filler is gone. This is the invariant the
-    /// old constructor broke, asserted across every language at once so a
-    /// future filter cannot reintroduce it quietly.
+    /// Every language must actually remove its leading filler *and* keep
+    /// the content. Asserting only the second half is what let a Spanish
+    /// no-op hide: an utterance nothing is removed from is trivially
+    /// non-empty. Both halves, across every language, in one place.
     #[tokio::test]
-    async fn no_language_deletes_the_whole_utterance() {
+    async fn every_language_removes_the_filler_and_keeps_the_content() {
         let cases = [
-            (Language::English, "um, the meeting is at three."),
-            (Language::Japanese, "えーと、会議は三時からです。"),
-            (Language::Chinese, "嗯，会议在三点开始。"),
-            (Language::Korean, "음 회의는 세 시에 시작합니다"),
-            (Language::Spanish, "eh, la reunión es a las tres."),
+            (
+                Language::English,
+                "um, the meeting is at three.",
+                "the meeting is at three.",
+            ),
+            (
+                Language::Japanese,
+                "えーと、会議は三時からです。",
+                "会議は三時からです。",
+            ),
+            (Language::Chinese, "嗯，会议在三点开始。", "会议在三点开始。"),
+            (
+                Language::Korean,
+                "음 회의는 세 시에 시작합니다",
+                "회의는 세 시에 시작합니다",
+            ),
+            (
+                Language::Spanish,
+                "eh, la reunión es a las tres.",
+                "la reunión es a las tres.",
+            ),
         ];
-        for (language, input) in cases {
+        for (language, input, expected) in cases {
             let result = FillerFilter::for_language(language)
                 .filter(input)
                 .await
                 .unwrap();
+            assert_eq!(result.text, expected, "{language:?} on {input:?}");
             assert!(
-                !result.text.trim().is_empty(),
-                "{language:?} emptied {input:?}"
+                !result.removed.is_empty(),
+                "{language:?} removed nothing from {input:?}"
             );
         }
+    }
+
+    /// A filler followed by punctuation is still a filler. Spanish
+    /// tokenises on whitespace alone, so `"eh,"` did not match the `"eh"`
+    /// lexicon entry and the filter silently did nothing — the sibling
+    /// filters all strip punctuation before matching.
+    #[tokio::test]
+    async fn spanish_filler_followed_by_punctuation_is_removed() {
+        let filter = SpanishFillerFilter::new();
+
+        let result = filter.filter("eh, la reunión es a las tres").await.unwrap();
+        assert_eq!(result.text, "la reunión es a las tres");
+
+        // Multi-word fillers take punctuation on the final token.
+        let result = filter.filter("o sea, no lo sé").await.unwrap();
+        assert_eq!(result.text, "no lo sé");
+
+        // The dominant CIEMPIESS form, punctuated.
+        let result = filter.filter("e, fuera del aire").await.unwrap();
+        assert_eq!(result.text, "fuera del aire");
     }
 
     /// Text with no filler must survive byte-for-byte in every language —
