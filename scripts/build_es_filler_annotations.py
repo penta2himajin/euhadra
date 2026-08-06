@@ -302,6 +302,14 @@ def stream_ciempiess_test(
     load_dataset = _import_datasets()
     print(f"[ciempiess] loading {name} split={split} (streaming)", file=sys.stderr)
     ds = load_dataset(name, split=split, streaming=True)
+    # Drop the audio column before iterating. We only read the transcript,
+    # but datasets encodes every declared feature per sample, and encoding
+    # an Audio feature needs `soundfile` — an import error on any machine
+    # that does not happen to have libsndfile, and pointless work even
+    # where it succeeds.
+    features = getattr(ds, "features", None) or {}
+    if "audio" in features:
+        ds = ds.remove_columns(["audio"])
     n_emitted = 0
     for sample in ds:
         if limit is not None and n_emitted >= limit:
