@@ -14,7 +14,7 @@ Microphone / WAV
     → ASR (whisper.cpp local)
     → TextFilter (filler removal: um, uh, えーと...)
     → TextProcessor (self-correction, punctuation, capitalization)
-    → [LlmRefiner] (optional: tone adjustment)
+    → [LlmRefiner] (seam only — no implementation ships)
     → Output (clipboard / stdout)
 ```
 
@@ -197,9 +197,45 @@ euhadra processes ASR output through three independent layers, each optional:
 |------|-----------|-------------|------|------|
 | 1 | **TextFilter** | Filler removal (um, uh, えーと) | No | 0 MB (rules) or 33 MB (embeddings) |
 | 2 | **TextProcessor** | Punctuation, capitalization, self-correction | No | 0 MB (rules) or 5-50 MB (ONNX) |
-| 3 | **LlmRefiner** | Tone adjustment, context-adaptive rewriting | Yes | Optional |
+| 3 | **LlmRefiner** | Tone adjustment, context-adaptive rewriting | Yes | Trait only — nothing ships |
 
 Tier 1 + 2 alone produce clean, punctuated text without any LLM or network calls.
+
+### Languages
+
+Text processing is per-language work — filler lexicons are hand-written, and
+punctuation and self-correction behave differently per script. euhadra therefore
+only claims a language it can measure.
+
+| Language | Filler filter | ASR baseline (CI) | Filler F1 gold |
+|----------|---------------|-------------------|----------------|
+| English  | ✅ | ✅ | ✅ in tree |
+| Japanese | ✅ | ✅ | ✅ in tree |
+| Chinese  | ✅ | ✅ | ✅ in tree |
+| Korean   | ✅ | ✅ | ✅ in tree |
+| Spanish  | ✅ | ✅ | ⚠️ generated on demand |
+
+The gold sets themselves are provisional. Most were drafted by Claude and have
+**not yet been reviewed by native speakers** — this covers the filler sets for
+English, Japanese, Chinese and Korean, and every self-correction set. The one
+language whose annotations come from human markup (Spanish, via CIEMPIESS) is
+the one not currently measured. Native-speaker review of the existing five is
+the single most useful contribution to this project right now; see
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
+Everything else is unmeasured. The pipeline will still run on other languages —
+ASR is a pluggable adapter and several backends are multilingual — but the Tier 1
+and Tier 2 stages have no lexicon for them and no way to tell you when they are
+wrong, so treat the output as unvalidated.
+
+Spanish is the case worth understanding. Its gold set is not missing; it cannot
+be shipped. The source corpus (CIEMPIESS Test) is CC-BY-SA-4.0, so committing
+derived annotations would propagate ShareAlike into this MIT/Apache tree. The
+generator is checked in and writes to a gitignored cache instead, and only the
+resulting scores are committed. That posture is deliberate — but the CI wiring
+that would run it never landed, so in practice Spanish went unverified, and a
+defect that silently disabled filler removal for punctuated input survived until
+every language was run by hand.
 
 ## CLI reference
 
@@ -268,18 +304,33 @@ let asr = WhisperOnnxAdapter::load("vendor/whisper_onnx_turbo")?
 ## Architecture
 
 ```
-[OS Shell (Swift/Kotlin/C++)]
-    ↕ C ABI / UniFFI
 [euhadra core (Rust)]
     ├── Pipeline runtime (tokio async)
     ├── ASR adapter trait         → WhisperLocal (whisper.cpp), ParakeetAdapter, ParaformerAdapter (zh)
-    ├── TextFilter trait          → SimpleFillerFilter, JapaneseFillerFilter, ChineseFillerFilter
-    ├── TextProcessor trait       → SelfCorrectionDetector, BasicPunctuationRestorer
-    ├── LLM refiner trait         → (optional, pluggable)
-    ├── Context provider trait    → Manual, Accessibility API
-    ├── Output emitter trait      → Clipboard, stdout
-    └── [onnx] ONNX processing   → OnnxEmbeddingFilter, OnnxPunctuationRestorer
+    ├── TextFilter trait          → FillerFilter::for_language → Simple / Japanese / Chinese / Spanish
+    ├── TextProcessor trait       → SelfCorrectionDetector, BasicPunctuationRestorer,
+    │                                SpokenFormNormalizer, InverseTextNormalizer,
+    │                                PhonemeCorrector, ParagraphSplitter
+    ├── LlmRefiner trait          → no implementation (see below)
+    ├── ContextProvider trait     → no implementation (see below)
+    ├── OutputEmitter trait       → StdoutEmitter, ClipboardEmitter [clipboard]
+    ├── [mic] Microphone capture  → cpal, cross-platform
+    └── [onnx] ONNX backends      → OnnxPunctuationRestorer, and the embedder / G2P
+                                    that PhonemeCorrector and ParagraphSplitter
+                                    use when available
 ```
+
+euhadra is a library, not an application. It ships the traits; native OS
+integration — accessibility APIs, global hotkeys, on-device LLM bridges — is
+something a consuming app provides, not something euhadra links in. Microphone
+capture and clipboard insertion are the exceptions, and only because they turned
+out to be solvable in cross-platform Rust.
+
+`LlmRefiner` and `ContextProvider` are therefore defined but unimplemented. That
+is deliberate rather than unfinished: Tiers 1 and 2 have ground truth and are
+gated on WER/CER/F1 in CI, whereas a free-form LLM rewrite has no test that can
+assert it is correct. euhadra provides the seam; what you plug into it is your
+opinion, not ours.
 
 ## Project structure
 
@@ -354,6 +405,10 @@ Licensed under either of
 at your option.
 
 ### Contribution
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to work on euhadra. The most
+useful contribution right now is native-speaker review of the evaluation gold
+sets — see the Languages section above for why.
 
 Unless you explicitly state otherwise, any contribution intentionally submitted
 for inclusion in the work by you, as defined in the Apache-2.0 license, shall be

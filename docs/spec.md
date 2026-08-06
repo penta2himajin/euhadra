@@ -97,16 +97,24 @@ euhadra は、音声入力を汎用的なプログラマブル入力として扱
 - キャンセル伝播: CancellationToken による inflight リクエストの即時中断
 - エラーハンドリング: ステージ単位の timeout / retry / fallback
 
-**OS Shell (ネイティブ層)**
-- マイクキャプチャと activation 制御（hotkey / VAD / push-to-talk）
-- Accessibility API を通じたフォーカスアプリ情報・テキストフィールド内容の取得
-- テキスト挿入（クリップボード / キーエミュレーション / IME 統合）
-- OS 固有のオンデバイスモデル呼び出し（Apple Foundation Models 等）
+**OS Shell (ネイティブ層) — euhadra の出荷物ではなく、利用側アプリの統合パターン**
 
-**C ABI / UniFFI 境界**
-- OS Shell と euhadra core の間のインターフェース
-- OS Shell は euhadra core が定義した trait の具体実装を C ABI 経由で注入する
-- euhadra core はプラットフォーム非依存のまま、OS 固有機能を利用可能
+当初この層には 4 つの責務を置いていたが、実装の結果 2 つはネイティブコードなしで解決した。
+
+| 当初の責務 | 現状 |
+|---|---|
+| マイクキャプチャ | `cpal`（`mic` feature）で実装済み。**Rust・クロスプラットフォーム** |
+| テキスト挿入（クリップボード） | `arboard`（`clipboard` feature）で実装済み。**Rust・クロスプラットフォーム** |
+| Accessibility 経由のコンテキスト取得 | 未実装。真にネイティブが必要（#123） |
+| OS 組み込み LLM 呼び出し | 未実装。真にネイティブが必要（#122） |
+
+残るネイティブ必須項目は Accessibility Provider、OS 組み込み LLM、グローバルホットキーによる activation（§7.1）、IME 統合（§9.3 で Phase 2 Non-Goal）である。前 2 者は #122 / #123 で保留とした。
+
+したがって **euhadra はこの層を出荷しない**。euhadra が提供するのは trait（接続点）であり、ネイティブ実装を注ぐかどうかは利用側アプリの判断となる。activation についても、mic / clipboard と同様に Rust のクロスプラットフォームクレートで済む可能性があり、ネイティブ前提と決めつけない。
+
+**C ABI / UniFFI 境界 — 未着工**
+
+構想は §10.3 の通りだが、現時点で `uniffi` / `extern "C"` / `#[no_mangle]` はリポジトリに存在しない。**消費者が現れるまで着工しない**方針を取る。理由は §10.3 に記す。
 
 ---
 
@@ -278,9 +286,11 @@ struct FilterResult {
 **想定実装**:
 - `FillerFilter::for_language(Language)` — **推奨エントリポイント**。言語から分かち書き方式（空白 / `、` / `，`）を型で選び、以下の具象フィルタへ委譲する。空白区切りの `SimpleFillerFilter` を日本語・中国語に手で組み合わせると、フィラーで始まる発話が丸ごと 1 トークンとして削除され、出力が空になる（エラーは出ない）。この組み合わせ事故を型で防ぐのが目的
 - `SimpleFillerFilter` — 辞書照合ベースのフィラー除去（階層化: pure / contextual / multi-word）。空白区切り言語（en / es / ko）専用
-- ~~`EmbeddingFillerFilter` / `OnnxEmbeddingFilter`~~ — 埋め込みコサイン類似度によるフィラー検出。**撤去済み**。実測でルールベース実装が全言語で上回ったため（[`model-upgrade-candidates.md`](./model-upgrade-candidates.md) §3.2）、Tier 1 のフィラー除去はルールベースのみとする
+- ~~`EmbeddingFillerFilter` / `OnnxEmbeddingFilter`~~ — 埋め込みコサイン類似度によるフィラー検出。**非推奨・未配線**。実測でルールベース実装が全言語で上回ったため（[`model-upgrade-candidates.md`](./model-upgrade-candidates.md) §3.2）、Tier 1 のフィラー除去はルールベースのみとする。なお `OnnxEmbeddingFilter` 自体は `src/onnx_processing.rs` に `onnx` feature 配下で**残っている**（本節は以前「撤去済み」と記述していたが誤り。§6.1 / §9.2 の記述が正）。実削除は公開 API の破壊変更となるため別途判断する
 - `JapaneseFillerFilter` — 読点区切り3パス検出 + ASR アーティファクト対応
 - `ChineseFillerFilter` — 中文 `，` 区切り 3 パス (pure: 嗯 / 呃 / 哦, contextual: 那个 / 这个 / 就是 / 然后 / 怎么说)
+
+各フィルタの品質は言語ごとに独立して測る必要がある。実装があることは測定されていることを意味しない（§11.4）。
 
 **設計判断: 埋め込みベースのフィラー除去**
 
@@ -511,6 +521,8 @@ refinement  ──[bounded(4)]───► output_emitter
 
 ## 5. On-Device Model Integration
 
+> **スコープ注記**: 本章の LLM 部分（§5.2 / §5.3、および §5.1 の LLM 列）は **Phase 1 スコープ外**であり、`llm` feature ごと #122 で保留としている。現時点で `impl LlmRefiner` は `MockRefiner` のみ。ASR 部分（§5.1 の ASR 列）は稼働中で、本注記の対象外。
+
 ### 5.1 Platform Matrix
 
 | Platform | ASR (on-device) | LLM (on-device) | LLM 統合方式 | Context API | Notes |
@@ -644,8 +656,8 @@ ASR Output (raw text)
     │  - SpokenFormNormalizer: 規則ベース辞書（英語）
     │
     ▼
-[Tier 3: LlmRefiner]  ← オプション、数百ミリ秒〜秒
-    │  自由な文体の言い換え                            ☐ 未実装
+[Tier 3: LlmRefiner]  ← オプション、数百ミリ秒〜秒 / 具象実装なし（#122 保留）
+    │  自由な文体の言い換え                            ☐ 未実装（issue #122 保留）
     │  トーン調整（app_name / field_type に基づく）   ☐ 未実装（issue #75 保留）
     │  コンテキスト適応書き換え（field_content 文脈） ☐ 未実装（issue #74 保留）
     │  コマンド解釈・構造化出力（Phase 2）            ☐ 未実装（issue #73 保留）
@@ -822,6 +834,8 @@ Tier 3:   LlmRefiner          — LLM 3B+、~700ms、オプション（意味理
 
 ## 7. OS Shell Specifications
 
+本章は euhadra が出荷する層の仕様ではなく、**利用側アプリが OS 統合を実装する際の設計指針**である（§2.2 参照）。このうち §7.2 の Clipboard + Paste は `ClipboardEmitter`（`clipboard` feature）として euhadra 側に実装済みで、ネイティブコードを要しない。
+
 ### 7.1 Activation Subsystem
 
 | Method | Description | Implementation |
@@ -886,6 +900,8 @@ MIT / Apache ライセンスのため、コード自体による参入障壁は�
 
 「80 点の Aqua Voice 体験が 10 行のコードで動く」こと。
 
+ただしこの表現は**アプリ**の言い方であり、Phase 1 が実際に出荷するのは**ライブラリ**である（`.asr()` のみ必須、CLI はデモ）。「10 行」が指すのは §9.4 の `PipelineBuilder` 構成であって、完成した dictation アプリではない。§1.3 の positioning（開発者向け OSS フレームワーク）が正であり、OS Shell を Phase 1 から外したのはこの整理に沿う（§2.2 / #123）。
+
 ### 9.2 MVP Feature Set
 
 **コアパイプライン**:
@@ -923,13 +939,16 @@ MIT / Apache ライセンスのため、コード自体による参入障壁は�
 **Tier 3: LlmRefiner**:
 - [x] LlmRefiner trait 定義
 - [x] MockRefiner（passthrough / uppercase、テスト用）
-- [ ] LlamaCppRefiner（llama.cpp C FFI、汎用オンデバイス）
-- [ ] クラウド refiner（OpenAI / Cerebras / Groq）
+- 具象実装（`LlamaCppRefiner` / OS 組み込み / クラウド）は **Phase 1 スコープ外**。`llm` feature ごと #122 で保留
+
+  trait は残す。§12 のプロダクトパターンは全てここに乗るため、euhadra をプログラマブルにしている接続点そのものである。一方 §3.6 の表は LLM 列からほぼ全項目を追い出しており、残る「自由な言い換え」「トーン調整」は *dictation* ではなく **編集**にあたる。接続点を提供するのはインフラの仕事だが、そこに何を挿すかは意見であり、実装を同梱した時点で euhadra が editorial な立場を取ることになる。この線引き自体が #122 の主論点。
 
 **Context Provider**:
 - [x] ContextProvider trait 定義
 - [x] MockContextProvider（手動コンテキスト指定）
-- [ ] MacAccessibilityProvider（macOS AXUIElement API）
+- Accessibility 系の具象実装は **Phase 1 スコープ外**（#123）
+
+  `ContextSnapshot` を実際に読んでいるのは `ParagraphSplitter` の `field_type` 1 フィールドのみで、残る 6 フィールドは未消費である。この構造体は §6.2 の「LLM プロンプトの Context Block」向けに設計されており、主な受益者が Tier 3 である以上 #122 の決着に従属する。なお `ParagraphSplitter` は `field_type` が `None` のとき分割する既定動作を持つため、Provider 不在でも動作する。
 
 **Output Emitter**:
 - [x] OutputEmitter trait 定義
@@ -945,12 +964,12 @@ MIT / Apache ライセンスのため、コード自体による参入障壁は�
 - [x] README.md + Getting Started ガイド
 - [x] 技術仕様書（spec.md）
 
-**OS Shell**:
-- [ ] macOS 向け OS Shell（Accessibility API + Clipboard 挿入 + Apple Foundation Models）
+**OS Shell**: Phase 1 スコープ外（#123）。§2.2 の通り euhadra が出荷する層ではない。4 責務のうちマイクキャプチャとテキスト挿入はクロスプラットフォーム Rust で実装済み、残る Accessibility と OS 組み込み LLM は #123 / #122 で保留。
 
 ### 9.3 MVP Non-Goals (Phase 2+)
 
-- Windows / Linux / iOS / Android OS Shell 対応
+- OS Shell 対応全般（macOS 含む）— euhadra の出荷物ではない。§2.2 / #123
+- LlmRefiner 具象実装と `llm` feature — #122
 - Command / StructuredInput 出力モード
 - Streaming（speculative）戦略
 - IME 統合
@@ -959,7 +978,7 @@ MIT / Apache ライセンスのため、コード自体による参入障壁は�
 ※ 当初 Non-Goals としていた以下は Phase 1 で実装済み:
 - オンデバイス ASR 統合 → WhisperLocal + ParakeetAdapter（ONNX）で実現
 - Tier 2 テキスト処理 → 自己訂正検出、句読点挿入（ルール+ONNX）、固有名詞補正（音素距離）、段落分割（埋め込み距離）
-- オンデバイス LLM → llama.cpp C FFI 統合を Phase 1 残タスクとして追加
+- オンデバイス LLM → 一度 Phase 1 残タスクとしたが、#122 で再び Phase 1 スコープ外に戻した（責務の線引き自体が未決のため）
 
 ### 9.4 Target User Experience
 
@@ -1052,6 +1071,14 @@ Tier 3（LlmRefiner）と `MacAccessibilityProvider` は未実装のため、上
 
 ### 10.3 FFI Strategy
 
+**現状: 未着工。消費者が現れるまで着工しない。**
+
+`uniffi` / `extern "C"` / `#[no_mangle]` はリポジトリに存在しない。これは意図的な保留であり、根拠は #119 の経験にある。`AsrAdapter` はチャネルベースで設計されていたが、実アダプタが 9 個揃った段階でバッチ API へ作り直す必要が生じた。設計が不注意だったのではなく、**実装が揃うまで誤りが見えなかった**。
+
+`ContextProvider` と `LlmRefiner` は現在まさにその状態にある（モック実装のみ）。この 2 つをまたぐ C ABI を先に確定させると、同種の誤りを修正コストの一桁高い層に固定してしまう。境界の設計は、注入される実物が少なくとも 1 つ存在してから行う。
+
+以下は着工時の方針:
+
 - **UniFFI** を第一候補とする（Kotlin / Swift / Python バインディングを自動生成）
 - Apple Foundation Models: Swift 側に薄い C ABI ブリッジを手書き（UniFFI で表現しにくい Apple 固有型のため）
 - Phi Silica: C++ 側に薄い C ABI ブリッジを手書き（Windows App SDK 固有型のため）
@@ -1083,6 +1110,89 @@ Tier 3（LlmRefiner）と `MacAccessibilityProvider` は未実装のため、上
 - macOS: マイク入力 → ASR → refinement → クリップボード挿入の全フロー
 - レイテンシ計測（activation → テキスト挿入までの end-to-end）
 - メモリリーク / リソースリークの検出
+
+### 11.4 Language Support Policy
+
+**測れない言語は出さない。**
+
+euhadra は言語ごとに品質が変わる。フィラー辞書は言語ごとの手書き、句読点や自己訂正の挙動も言語に依存する。したがって「対応言語」を名乗れるのは、**その言語で品質を測る手段があり、退行を検出できる**場合に限る。
+
+#### 現状の測定範囲
+
+| 層 | 測定対象 | gold / baseline がある言語 | CI で実際にゲートしている範囲 |
+|---|---|---|---|
+| L1 | ASR の WER / CER | en / ja / zh / es / ko | **5 言語すべて**（FLEURS 各 30 サンプル） |
+| L3 | フィラー除去の直接 F1 | en / ja / zh / ko（es は後述の理由でツリー外） | なし |
+| L3 | 自己訂正の F1 | en / ja / zh / es / ko | なし |
+| L3 | 固有名詞補正の F1 | **en のみ** | en のみ（`--min-f1 1.0`） |
+| L2 | 段落分割の WindowDiff | 実測は granite のみ、CI 非搭載 | なし |
+
+gold が存在することと CI がゲートしていることは別である。上表のとおり L3 で常時ゲートされているのは固有名詞補正の en だけで、それ以外は手動実行に留まる。**「gold がある」を「守られている」と読み替えてはならない。**
+
+#### gold 自体の出自（未検証である）
+
+上表の gold は大半が **Claude による下書きで、ネイティブ話者の人手レビューは未実施**である（[`annotations/guidelines.md`](../tests/evaluation/annotations/guidelines.md) §5）。対象は en / ja / zh / ko のフィラー、5 言語すべての自己訂正、en の固有名詞補正——**現在 CI とベースラインが依拠しているものほぼ全部**にあたる。
+
+ここに反転がある。**人手アノテーション由来の唯一の言語（es、CIEMPIESS の綴り字マークアップ）が、測定されていない言語である。** 測定されている 4 言語の gold は LLM 下書きで未レビューという状態にある。
+
+したがって現時点の「測れている」は二段階の弱さを持つ:
+
+1. gold があっても CI がゲートしていない（上記）
+2. gold 自体がネイティブ検証を経ていない（本項）
+
+`guidelines.md` §5 は PR レビューでのネイティブ確認を依頼しているが、その依頼は `tests/` 配下にあり貢献者の目に触れにくい。導線の整備は [`CONTRIBUTING.md`](../CONTRIBUTING.md) で扱う。
+
+#### 帰結 1: ライセンスが測定範囲を決めることがある
+
+es のフィラー gold は「未整備」ではない。生成器 `scripts/build_es_filler_annotations.py` は存在する。しかし原データの CIEMPIESS Test が **CC-BY-SA 4.0** であり、派生アノテーションをツリーにコミットすると ShareAlike が euhadra 本体（MIT / Apache 2.0）へ伝播する。そのため download-only / 都度動的計算とし、生成物は git 追跡外の `data/cache/` に置き、**事実情報である F1 スコアのみ** `docs/benchmarks/` にコミットする運用になっている（[`evaluation.md`](./evaluation.md) §2.5）。
+
+つまり es は「gold が作れない」のではなく「**gold を同梱できない**」。これは 100 言語規模へ広げる際に効いてくる制約で、逐語書き起こしを持つ音声コーパスには CC-BY-SA や NC が多い。**測定範囲を決めるのはデータの有無だけでなくライセンスでもある。**
+
+#### 帰結 2: 実装済みと測定済みは一致しない
+
+上記の運用は設計されているが、**CI への配線は未了**である。その結果 es のフィラー除去は実質的に無検証のまま推移し、**フィラーの直後にカンマがあると何も除去しない**という欠陥が長期間残った（句読点なしの CIEMPIESS 書き起こしを前提に実装・検証していたため）。発覚したのは 5 言語を手で流したときである。
+
+download-only の言語については、**gold が同梱されないぶん CI 配線が唯一の防波堤**になる。配線されるまでは「測定されていない」と扱う。
+
+新しい言語のフィルタや処理を追加する際は、gold と baseline を同時に用意するか、**測定されていないことを明示する**。
+
+#### 帰結 3: 層ごとに到達可能な言語数が違う
+
+「euhadra は N 言語対応」という単一の数字は書けない。gold の作られ方が層によって異なり、スケールの仕方が根本的に違うためである。
+
+| 層 | gold の作り方 | 現実的な上限 | 律速 |
+|---|---|---|---|
+| L1 ASR (WER / CER) | 既存ベンチをそのまま使う | **100+** | ほぼ無し（FLEURS 102 言語を既に使用） |
+| Tier 2 句読点・大文字化・ITN・口語縮約 | **逆変換で合成**（整形済みテキストから句読点を剥がせば入力、元が正解） | **数十〜百** | 無し。テキストコーパスがあれば足りる |
+| Tier 1 フィラー・自己訂正 | 逐語書き起こしコーパス、または人手アノテーション | **10 未満** | コーパスの存在 + **ライセンス** + ネイティブ話者 |
+| Tier 3 言い換え・トーン調整 | 正解が存在しない | — | 品質は測れない（後述） |
+
+**Tier 2 は中央で広げられる。** 破壊的変換の逆なので人手もアノテーションも LLM も要らない。自己教師ありの手法は 85 言語規模の実績がある。**euhadra の最大の伸びしろはここ**にある。ただし合成した「話し言葉」は実際の ASR 出力と分布が異なるため、**上限を測る指標であって実力の証明ではない**点は明示する。
+
+**Tier 1 は中央で広げられない。** 何がフィラーかはネイティブ話者の判断であり、人工挿入では実際の言い淀みの分布を再現できない。既存の多言語 disfluency コーパス（DISCO の en/hi/de/fr 等）を合わせても 10 言語に届かない。したがって:
+
+- **逐語コーパスが既にある言語** → euhadra 側で導出できる（es が実例。ライセンス運用は帰結 1）
+- **無い言語** → ネイティブ話者の貢献が必須
+
+コミュニティへ貢献を求める前に、対象言語について**逐語コーパスの棚卸しを先に行う**。既に導出可能な言語にまで人手を要求しないためである。また貢献を成立させるには、euhadra 側が「新言語の追加 = コード貢献（対象コーパス毎の生成スクリプト作成）」を「**データ貢献**」に変える必要がある。現在 `scripts/build_*_filler_annotations.py` は 5 本がそれぞれ個別実装になっている。
+
+**Tier 3 は品質ではなく不変条件を測る。** 自由な言い換えに正解は無く、LLM 出力を gold に据えると「元の LLM への近さ」を測ることになる。研究側でも TST の自動評価は人間判断との相関が低いことが繰り返し報告されている。代わりに euhadra が守るべきは「壊していないか」であり、これは決定的に検査できる:
+
+- 入力にあった固有表現が出力にも残っているか
+- 数値（金額・日付）が保存されているか
+- 否定が反転していないか
+- 入力に無い固有名詞を追加していないか
+- 長さが妥当な範囲か（切り落とし・要約が起きていないか）
+
+品質メトリクスではなく安全網である。dictation の文脈では、語尾の硬さより**金額が変わることの方が深刻**であり、この優先順位は妥当と考える。
+
+#### 帰結 4: モデルの対応言語数は選定基準として弱い
+
+Tier 2 / Tier 3 にモデルを導入する検討では対応言語数が指標になりやすいが、**律速は gold データであってモデルではない**。201 言語のモデルを採用しても、euhadra が品質を主張できるのは測れる範囲だけである。
+
+したがってモデル選定の優先順位は「対応言語数」より、**ライセンス（再配布可能か）** と **euhadra が現に測っている言語を含むか** に置く。言語数が効いてくるのは gold の整備が先行した後であり、それ以前は天井の高さでしかない。
+
+この原則は #84（ASR を 100 言語超へ拡張するロードマップ）とも整合させる必要がある。ASR はアダプタ追加で言語が増えるが、**テキスト処理層は同じようにスケールしない**。両者の到達言語数が乖離すること自体は許容するが、乖離を隠さず記述する。
 
 ---
 
