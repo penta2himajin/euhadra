@@ -536,8 +536,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
 
+      # Pinned below 3.0 on purpose. ciempiess_test is a script-based
+      # dataset (ciempiess_test.py), and datasets 3.x+ removed loading
+      # script support outright — an unpinned install resolves to 5.x and
+      # fails with "Dataset scripts are no longer supported". 2.21.0 is
+      # the last release that can read it, and is what this path was
+      # verified against. If the corpus is ever republished in a native
+      # format, drop the ceiling.
       - name: Install datasets
-        run: pip install --no-cache-dir 'datasets>=2.21.0'
+        run: pip install --no-cache-dir 'datasets>=2.21.0,<3'
 
       - name: Generator self-test
         run: python3 scripts/build_es_filler_annotations.py --self-test

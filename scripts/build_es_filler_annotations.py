@@ -265,7 +265,22 @@ def detect_fillers(text: str) -> List[FillerSpan]:
 
 def _import_datasets():
     try:
+        import datasets  # type: ignore
         from datasets import load_dataset  # type: ignore
+
+        # ciempiess_test ships a loading script, and datasets 3.0 removed
+        # support for those. Fail with the reason rather than letting the
+        # library raise "Dataset scripts are no longer supported" from
+        # four frames deep.
+        major = int(datasets.__version__.split(".", 1)[0])
+        if major >= 3:
+            print(
+                f"error: datasets {datasets.__version__} cannot load "
+                "script-based datasets, and ciempiess_test is one.\n"
+                "install with: pip install 'datasets>=2.21.0,<3'",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
     except ImportError as e:
         print(
             f"missing dependency: {e}\n"
