@@ -65,6 +65,48 @@ impl Transcript {
     }
 }
 
+/// A half-open character range `[start, end)` within a piece of text.
+///
+/// Filters report what they detected as spans so a caller can highlight,
+/// undo, or score them; the evaluation harness scores gold spans against
+/// detected ones. It lives here rather than in either because both need
+/// it and neither owns it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Span {
+    pub start: usize,
+    pub end: usize,
+}
+
+impl Span {
+    pub fn len(&self) -> usize {
+        self.end.saturating_sub(self.start)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.end <= self.start
+    }
+
+    /// Character-level intersection-over-union with another span.
+    /// Returns 0.0 when either span is empty.
+    pub fn iou(&self, other: &Span) -> f64 {
+        if self.is_empty() || other.is_empty() {
+            return 0.0;
+        }
+        let inter_start = self.start.max(other.start);
+        let inter_end = self.end.min(other.end);
+        if inter_start >= inter_end {
+            return 0.0;
+        }
+        let inter = (inter_end - inter_start) as f64;
+        let union = (self.len() + other.len()) as f64 - inter;
+        if union <= 0.0 {
+            0.0
+        } else {
+            inter / union
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Context layer
 // ---------------------------------------------------------------------------

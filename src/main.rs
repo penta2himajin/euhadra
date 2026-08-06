@@ -7,7 +7,7 @@ use euhadra::filter::{
     SpanishFillerFilter,
 };
 use euhadra::mic::{self, MicConfig};
-use euhadra::mock::StdoutEmitter;
+use euhadra::emitters::StdoutEmitter;
 use euhadra::pipeline::{Pipeline, SessionResult};
 use euhadra::processor::{
     BasicPunctuationRestorer, InverseTextNormalizer, SelfCorrectionDetector, SpokenFormNormalizer,

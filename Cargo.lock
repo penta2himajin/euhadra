@@ -585,6 +585,7 @@ dependencies = [
  "async-trait",
  "clap",
  "cpal",
+ "euhadra",
  "ndarray",
  "ort",
  "parakeet-rs-featsize",
