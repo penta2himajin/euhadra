@@ -201,6 +201,29 @@ euhadra processes ASR output through three independent layers, each optional:
 
 Tier 1 + 2 alone produce clean, punctuated text without any LLM or network calls.
 
+### Languages
+
+Text processing is per-language work — filler lexicons are hand-written, and
+punctuation and self-correction behave differently per script. euhadra therefore
+only claims a language it can measure.
+
+| Language | Filler filter | ASR baseline (CI) | Filler F1 gold |
+|----------|---------------|-------------------|----------------|
+| English  | ✅ | ✅ | ✅ |
+| Japanese | ✅ | ✅ | ✅ |
+| Chinese  | ✅ | ✅ | ✅ |
+| Korean   | ✅ | ✅ | ✅ |
+| Spanish  | ✅ | ✅ | ❌ not yet |
+
+Everything else is unmeasured. The pipeline will still run on other languages —
+ASR is a pluggable adapter and several backends are multilingual — but the Tier 1
+and Tier 2 stages have no lexicon for them and no way to tell you when they are
+wrong, so treat the output as unvalidated.
+
+Spanish is the honest cautionary case. It has had a filler filter and no gold set
+for as long as both have existed, and a defect that silently disabled removal for
+punctuated input survived undetected until every language was run by hand.
+
 ## CLI reference
 
 ```
