@@ -209,20 +209,25 @@ only claims a language it can measure.
 
 | Language | Filler filter | ASR baseline (CI) | Filler F1 gold |
 |----------|---------------|-------------------|----------------|
-| English  | ✅ | ✅ | ✅ |
-| Japanese | ✅ | ✅ | ✅ |
-| Chinese  | ✅ | ✅ | ✅ |
-| Korean   | ✅ | ✅ | ✅ |
-| Spanish  | ✅ | ✅ | ❌ not yet |
+| English  | ✅ | ✅ | ✅ in tree |
+| Japanese | ✅ | ✅ | ✅ in tree |
+| Chinese  | ✅ | ✅ | ✅ in tree |
+| Korean   | ✅ | ✅ | ✅ in tree |
+| Spanish  | ✅ | ✅ | ⚠️ generated on demand |
 
 Everything else is unmeasured. The pipeline will still run on other languages —
 ASR is a pluggable adapter and several backends are multilingual — but the Tier 1
 and Tier 2 stages have no lexicon for them and no way to tell you when they are
 wrong, so treat the output as unvalidated.
 
-Spanish is the honest cautionary case. It has had a filler filter and no gold set
-for as long as both have existed, and a defect that silently disabled removal for
-punctuated input survived undetected until every language was run by hand.
+Spanish is the case worth understanding. Its gold set is not missing; it cannot
+be shipped. The source corpus (CIEMPIESS Test) is CC-BY-SA-4.0, so committing
+derived annotations would propagate ShareAlike into this MIT/Apache tree. The
+generator is checked in and writes to a gitignored cache instead, and only the
+resulting scores are committed. That posture is deliberate — but the CI wiring
+that would run it never landed, so in practice Spanish went unverified, and a
+defect that silently disabled filler removal for punctuated input survived until
+every language was run by hand.
 
 ## CLI reference
 
