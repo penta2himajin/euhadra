@@ -189,11 +189,17 @@ impl Pipeline {
             let mut chunks: Vec<AudioChunk> = Vec::new();
             loop {
                 tokio::select! {
+                    // Biased so cancellation wins a tie. Without it, a
+                    // token tripped just as the audio stream closes is a
+                    // coin flip between "cancelled" and "here is your
+                    // result" — and a caller who cancelled should never
+                    // receive a result.
+                    biased;
+                    _ = cancel_inner.cancelled() => return Err(PipelineError::Cancelled { during: "recording" }),
                     maybe = audio_rx.recv() => match maybe {
                         Some(chunk) => chunks.push(chunk),
                         None => break,
                     },
-                    _ = cancel_inner.cancelled() => return Err(PipelineError::Cancelled { during: "recording" }),
                 }
             }
 
@@ -396,12 +402,13 @@ async fn run_session(
 
     // ── ASR ─────────────────────────────────────────────────────────────
     let transcript = tokio::select! {
-        result = asr.transcribe(audio) => result?,
+        biased;
         _ = cancel.cancelled() => {
             sm.cancel().ok();
             sm.reset();
             return Err(PipelineError::Cancelled { during: "recording" });
         }
+        result = asr.transcribe(audio) => result?,
     };
 
     let raw_text = transcript.text.trim().to_string();
@@ -419,12 +426,13 @@ async fn run_session(
     // to — meant they were always handed an empty one.
     let ctx = match context {
         Some(provider) => tokio::select! {
-            snapshot = provider.get_context() => snapshot,
+            biased;
             _ = cancel.cancelled() => {
                 sm.cancel().ok();
                 sm.reset();
                 return Err(PipelineError::Cancelled { during: "context" });
             }
+            snapshot = provider.get_context() => snapshot,
         },
         None => ContextSnapshot::default(),
     };
@@ -483,6 +491,12 @@ async fn run_session(
                 mode: RefinementMode::Dictation,
             };
             tokio::select! {
+                biased;
+                _ = cancel.cancelled() => {
+                    sm.cancel().ok();
+                    sm.reset();
+                    return Err(PipelineError::Cancelled { during: "refinement" });
+                }
                 result = refiner.refine(input) => match result {
                     Ok(output) => output,
                     Err(e) => {
@@ -498,11 +512,6 @@ async fn run_session(
                         RefinementOutput::TextInsertion { text: text.clone(), formatting: None }
                     }
                 },
-                _ = cancel.cancelled() => {
-                    sm.cancel().ok();
-                    sm.reset();
-                    return Err(PipelineError::Cancelled { during: "refinement" });
-                }
             }
         }
     };

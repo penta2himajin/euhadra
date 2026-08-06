@@ -164,15 +164,25 @@ async fn pipeline_emits_uppercase_via_mock_refiner() {
     assert_eq!(text, "HELLO WORLD");
 }
 
+/// An ASR adapter is the only component a pipeline cannot do without.
+///
+/// This used to assert the opposite — that omitting a context provider
+/// or an emitter was a configuration error. That requirement is what
+/// made the LLM-free pipeline in `docs/spec.md` §9.4 unbuildable, so it
+/// is gone; what remains required is the one component that has no
+/// sensible default.
 #[tokio::test]
-async fn missing_required_component_fails_build() {
-    let result = Pipeline::builder()
-        .asr(MockAsr::new("test"))
-        .refiner(MockRefiner::passthrough())
-        // missing context + emitter
-        .build();
+async fn build_requires_an_asr_adapter_and_nothing_else() {
+    let Err(err) = Pipeline::builder().build() else {
+        panic!("a pipeline with no ASR adapter must not build");
+    };
     assert!(
-        result.is_err(),
-        "builder must reject incomplete configurations"
+        matches!(err, PipelineError::MissingComponent("asr")),
+        "expected the missing component to be named, got: {err}"
     );
+
+    Pipeline::builder()
+        .asr(MockAsr::new("test"))
+        .build()
+        .expect("an ASR adapter alone must be enough");
 }
