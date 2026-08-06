@@ -243,7 +243,7 @@ impl SimpleFillerFilter {
     /// `detect_spans` so the L3 direct-F1 evaluator can compare
     /// emitted spans against the gold annotations in
     /// `tests/evaluation/annotations/{en,ko}_filler.jsonl`.
-    pub fn detect_spans(&self, text: &str) -> Vec<crate::eval::f1::Span> {
+    pub fn detect_spans(&self, text: &str) -> Vec<crate::types::Span> {
         let chars: Vec<char> = text.chars().collect();
         let n_chars = chars.len();
 
@@ -345,9 +345,9 @@ impl SimpleFillerFilter {
             }
         }
 
-        let mut spans: Vec<crate::eval::f1::Span> = detections
+        let mut spans: Vec<crate::types::Span> = detections
             .iter()
-            .map(|(s, e)| crate::eval::f1::Span {
+            .map(|(s, e)| crate::types::Span {
                 start: tokens[*s].cp_start,
                 end: tokens[*e].cp_end,
             })
@@ -585,7 +585,7 @@ impl JapaneseFillerFilter {
     /// filter's `detect_spans` so the L3 direct-F1 evaluator can
     /// compare emitted spans against the gold annotations in
     /// `tests/evaluation/annotations/ja_filler.jsonl`.
-    pub fn detect_spans(&self, text: &str) -> Vec<crate::eval::f1::Span> {
+    pub fn detect_spans(&self, text: &str) -> Vec<crate::types::Span> {
         // Tokenise on 、, tracking each segment's codepoint span in
         // the original text. The trimmed inner range is what the F1
         // evaluator scores against, so we record both the outer
@@ -681,9 +681,9 @@ impl JapaneseFillerFilter {
             }
         }
 
-        let mut spans: Vec<crate::eval::f1::Span> = detections
+        let mut spans: Vec<crate::types::Span> = detections
             .into_iter()
-            .map(|i| crate::eval::f1::Span {
+            .map(|i| crate::types::Span {
                 start: segs[i].cp_inner_start,
                 end: segs[i].cp_inner_end,
             })
@@ -838,7 +838,7 @@ impl ChineseFillerFilter {
     /// Japanese filter's `detect_spans` with `，` as the segment
     /// terminator instead of `、`. Used by the L3 direct-F1
     /// evaluator in `eval_l3 --task filler --lang zh`.
-    pub fn detect_spans(&self, text: &str) -> Vec<crate::eval::f1::Span> {
+    pub fn detect_spans(&self, text: &str) -> Vec<crate::types::Span> {
         let chars: Vec<char> = text.chars().collect();
         let n_chars = chars.len();
 
@@ -930,9 +930,9 @@ impl ChineseFillerFilter {
             }
         }
 
-        let mut spans: Vec<crate::eval::f1::Span> = detections
+        let mut spans: Vec<crate::types::Span> = detections
             .into_iter()
-            .map(|i| crate::eval::f1::Span {
+            .map(|i| crate::types::Span {
                 start: segs[i].cp_inner_start,
                 end: segs[i].cp_inner_end,
             })
@@ -1184,12 +1184,12 @@ impl SpanishFillerFilter {
     /// **codepoint-offset** half-open `[start, end)` ranges, sorted by
     /// `start`, suitable for direct comparison against
     /// `tests/evaluation/annotations/*.jsonl` filler entries.
-    pub fn detect_spans(&self, text: &str) -> Vec<crate::eval::f1::Span> {
+    pub fn detect_spans(&self, text: &str) -> Vec<crate::types::Span> {
         let tokens = tokenize_es(text);
         let (_removed, detections) = self.run_passes(&tokens);
-        let mut spans: Vec<crate::eval::f1::Span> = detections
+        let mut spans: Vec<crate::types::Span> = detections
             .iter()
-            .map(|d| crate::eval::f1::Span {
+            .map(|d| crate::types::Span {
                 start: tokens[d.start_token].char_start,
                 end: tokens[d.end_token].char_end,
             })
@@ -1724,8 +1724,8 @@ mod tests {
 
     // --- detect_spans (char-offset span emission for Tier 1 F1) ---
 
-    fn span(start: usize, end: usize) -> crate::eval::f1::Span {
-        crate::eval::f1::Span { start, end }
+    fn span(start: usize, end: usize) -> crate::types::Span {
+        crate::types::Span { start, end }
     }
 
     #[test]

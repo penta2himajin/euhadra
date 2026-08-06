@@ -30,6 +30,10 @@ impl StateMachine {
         }
     }
 
+    /// The current state. Retained for diagnostics and for the tests
+    /// that assert transition legality; the pipeline itself only ever
+    /// drives transitions.
+    #[allow(dead_code)]
     pub fn state(&self) -> PipelineState {
         self.state
     }

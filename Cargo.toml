@@ -109,6 +109,12 @@ mic = ["dep:cpal"]
 # ClipboardEmitter via arboard.
 clipboard = ["dep:arboard"]
 
+# Mock adapters and the evaluation harness. Off by default: they are how
+# euhadra is tested and measured, not how it is used, and leaving them on
+# the default surface would make 50-odd internal items SemVer promises.
+# Enable this to build mocks into your own tests against euhadra's traits.
+testing = []
+
 # Everything the `euhadra` binary needs. Enable this for
 # `cargo install euhadra`; a library consumer normally does not.
 cli = ["dep:clap", "dep:tracing-subscriber", "mic", "clipboard"]
@@ -148,6 +154,11 @@ name = "bench_dolphin_ko"
 required-features = ["onnx"]
 
 [dev-dependencies]
+# euhadra depends on itself with `testing` on so that integration tests
+# and the eval examples get the mocks and the harness without every
+# `cargo test` needing an explicit --features flag. Unit tests inside the
+# crate are covered by the `cfg(test)` half of the gate in lib.rs.
+euhadra = { path = ".", features = ["testing"] }
 tokio = { version = "1", features = ["full", "test-util"] }
 async-trait = "0.1"
 # Used by examples/eval_l2.rs for FFT-based RIR convolution. Dev-only

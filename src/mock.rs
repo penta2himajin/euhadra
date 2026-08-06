@@ -170,25 +170,3 @@ impl OutputEmitter for MockEmitter {
     }
 }
 
-// ---------------------------------------------------------------------------
-// StdoutEmitter — prints to stdout (for CLI use)
-// ---------------------------------------------------------------------------
-
-pub struct StdoutEmitter;
-
-#[async_trait]
-impl OutputEmitter for StdoutEmitter {
-    async fn emit(&self, output: RefinementOutput) -> EmitResult {
-        match &output {
-            RefinementOutput::TextInsertion { text, .. } => {
-                println!("{text}");
-                EmitResult::ok()
-            }
-            _ => EmitResult::fail("StdoutEmitter only supports TextInsertion"),
-        }
-    }
-
-    async fn undo(&self) -> EmitResult {
-        EmitResult::fail("StdoutEmitter does not support undo")
-    }
-}
