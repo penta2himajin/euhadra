@@ -1,8 +1,12 @@
 //! Per-stage cancellation propagation (spec §11.2).
 //!
-//! The pipeline reports the stage at which cancellation landed via the error
-//! message; these tests assert each stage is reachable and surfaces the
-//! expected diagnostic.
+//! `PipelineError::Cancelled` names the stage that was in flight; these
+//! tests assert each stage is reachable and reports itself correctly.
+//!
+//! Cancellation arrives from somewhere else — a hotkey release, a UI
+//! button — while the session runs, so these drive it from a spawned
+//! task rather than inline. `Session::finish` closes the audio stream
+//! and awaits in one step, which is exactly the ordering a caller has.
 
 mod common;
 
@@ -21,19 +25,20 @@ async fn cancel_during_recording() {
         .build()
         .unwrap();
 
-    let (audio_tx, cancel, handle) = pipeline.session();
+    let session = pipeline.session();
+    session.audio.send(silence_chunk()).await.unwrap();
 
-    // Send one chunk but DO NOT close the channel — MockAsr will keep
-    // awaiting more audio, parking the pipeline in the recording stage.
-    audio_tx.send(silence_chunk()).await.unwrap();
-    cancel.cancel();
+    // Cancel while the session is still collecting audio. `finish`
+    // closes the stream, but the token is already tripped, so the
+    // collection loop takes the cancellation branch.
+    session.cancel.cancel();
 
-    let err = handle
+    let err = session
+        .finish()
         .await
-        .expect("task must not panic")
         .expect_err("cancellation should surface an error");
     assert!(
-        err.message.contains("cancelled during recording"),
+        matches!(err, PipelineError::Cancelled { during } if during == "recording"),
         "expected recording-stage error, got: {err}"
     );
 }
@@ -52,20 +57,23 @@ async fn cancel_during_context() {
         .build()
         .unwrap();
 
-    let (audio_tx, cancel, handle) = pipeline.session();
-    audio_tx.send(silence_chunk()).await.unwrap();
-    drop(audio_tx); // let ASR finish so we advance into context fetch
+    let session = pipeline.session();
+    session.audio.send(silence_chunk()).await.unwrap();
 
-    // Give the runtime a moment to enter the context-fetch select!.
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    cancel.cancel();
+    // Let the session get as far as the context fetch, which the
+    // SlowContextProvider parks for 5s, then cancel from outside.
+    let cancel = session.cancel.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        cancel.cancel();
+    });
 
-    let err = handle
+    let err = session
+        .finish()
         .await
-        .expect("task must not panic")
         .expect_err("cancellation should surface an error");
     assert!(
-        err.message.contains("cancelled during context"),
+        matches!(err, PipelineError::Cancelled { during } if during == "context"),
         "expected context-stage error, got: {err}"
     );
 }
@@ -84,21 +92,23 @@ async fn cancel_during_refinement() {
         .build()
         .unwrap();
 
-    let (audio_tx, cancel, handle) = pipeline.session();
-    audio_tx.send(silence_chunk()).await.unwrap();
-    drop(audio_tx);
+    let session = pipeline.session();
+    session.audio.send(silence_chunk()).await.unwrap();
 
-    // Recording + context are instantaneous; this delay parks us inside
-    // refinement before the cancel fires.
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    cancel.cancel();
+    // Let the session get as far as the context fetch, which the
+    // SlowContextProvider parks for 5s, then cancel from outside.
+    let cancel = session.cancel.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        cancel.cancel();
+    });
 
-    let err = handle
+    let err = session
+        .finish()
         .await
-        .expect("task must not panic")
         .expect_err("cancellation should surface an error");
     assert!(
-        err.message.contains("cancelled during refinement"),
+        matches!(err, PipelineError::Cancelled { during } if during == "refinement"),
         "expected refinement-stage error, got: {err}"
     );
 }

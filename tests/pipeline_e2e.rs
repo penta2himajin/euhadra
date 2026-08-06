@@ -5,7 +5,7 @@
 
 mod common;
 
-use common::send_one_and_close;
+use common::send_one;
 use euhadra::prelude::*;
 
 #[tokio::test]
@@ -24,10 +24,10 @@ async fn english_full_pipeline_no_llm() {
         .build()
         .unwrap();
 
-    let (audio_tx, _cancel, handle) = pipeline.session();
-    send_one_and_close(audio_tx).await;
+    let session = pipeline.session();
+    send_one(&session.audio).await;
 
-    let result = handle.await.unwrap().unwrap();
+    let result = session.finish().await.unwrap();
     assert_eq!(
         result.raw_text, "um I want to go to Boston no wait to Denver",
         "raw_text should preserve the original ASR output"
@@ -64,10 +64,10 @@ async fn japanese_full_pipeline_no_llm() {
         .build()
         .unwrap();
 
-    let (audio_tx, _cancel, handle) = pipeline.session();
-    send_one_and_close(audio_tx).await;
+    let session = pipeline.session();
+    send_one(&session.audio).await;
 
-    handle.await.unwrap().unwrap();
+    session.finish().await.unwrap();
 
     let buf = outputs.lock().await;
     let RefinementOutput::TextInsertion { text, .. } = &buf[0] else {
@@ -108,10 +108,10 @@ async fn spanish_full_pipeline_no_llm() {
         .build()
         .unwrap();
 
-    let (audio_tx, _cancel, handle) = pipeline.session();
-    send_one_and_close(audio_tx).await;
+    let session = pipeline.session();
+    send_one(&session.audio).await;
 
-    let result = handle.await.unwrap().unwrap();
+    let result = session.finish().await.unwrap();
     assert_eq!(
         result.raw_text, "o sea voy a Madrid perdón a Barcelona",
         "raw_text should preserve the original ASR output"
@@ -152,10 +152,10 @@ async fn pipeline_emits_uppercase_via_mock_refiner() {
         .build()
         .unwrap();
 
-    let (audio_tx, _cancel, handle) = pipeline.session();
-    send_one_and_close(audio_tx).await;
+    let session = pipeline.session();
+    send_one(&session.audio).await;
 
-    handle.await.unwrap().unwrap();
+    session.finish().await.unwrap();
 
     let buf = outputs.lock().await;
     let RefinementOutput::TextInsertion { text, .. } = &buf[0] else {
@@ -164,15 +164,25 @@ async fn pipeline_emits_uppercase_via_mock_refiner() {
     assert_eq!(text, "HELLO WORLD");
 }
 
+/// An ASR adapter is the only component a pipeline cannot do without.
+///
+/// This used to assert the opposite — that omitting a context provider
+/// or an emitter was a configuration error. That requirement is what
+/// made the LLM-free pipeline in `docs/spec.md` §9.4 unbuildable, so it
+/// is gone; what remains required is the one component that has no
+/// sensible default.
 #[tokio::test]
-async fn missing_required_component_fails_build() {
-    let result = Pipeline::builder()
-        .asr(MockAsr::new("test"))
-        .refiner(MockRefiner::passthrough())
-        // missing context + emitter
-        .build();
+async fn build_requires_an_asr_adapter_and_nothing_else() {
+    let Err(err) = Pipeline::builder().build() else {
+        panic!("a pipeline with no ASR adapter must not build");
+    };
     assert!(
-        result.is_err(),
-        "builder must reject incomplete configurations"
+        matches!(err, PipelineError::MissingComponent("asr")),
+        "expected the missing component to be named, got: {err}"
     );
+
+    Pipeline::builder()
+        .asr(MockAsr::new("test"))
+        .build()
+        .expect("an ASR adapter alone must be enough");
 }

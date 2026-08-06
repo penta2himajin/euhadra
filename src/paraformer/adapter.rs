@@ -9,10 +9,9 @@ use ort::session::Session;
 use ort::value::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use tokio::sync::mpsc;
 
 use crate::traits::{AsrAdapter, AsrError};
-use crate::types::{AsrResult, AudioChunk};
+use crate::types::{AudioChunk, Transcript};
 
 use super::fbank::{Fbank, FbankOpts};
 use super::frontend::{apply_cmvn, apply_lfr, load_cmvn, Cmvn};
@@ -83,12 +82,10 @@ impl ParaformerAdapter {
 
         let session = Session::builder()
             .and_then(|mut b| b.commit_from_file(&model_path))
-            .map_err(|e| AsrError {
-                message: format!(
+            .map_err(|e| AsrError::ModelLoad(format!(
                     "failed to load Paraformer ONNX {}: {e}",
                     model_path.display()
-                ),
-            })?;
+                )))?;
 
         let cmvn = load_cmvn(&mvn_path)?;
         let vocab = load_tokens_json(&tokens_path)?;
@@ -96,24 +93,18 @@ impl ParaformerAdapter {
         // Sanity: post-LFR feature dim must equal CMVN dim.
         let expected_dim = cfg.fbank.n_mels * cfg.lfr_m;
         if cmvn.dim() != expected_dim {
-            return Err(AsrError {
-                message: format!(
+            return Err(AsrError::ModelLoad(format!(
                     "CMVN dim {} does not match n_mels({}) * lfr_m({}) = {}",
                     cmvn.dim(),
                     cfg.fbank.n_mels,
                     cfg.lfr_m,
                     expected_dim
-                ),
-            });
+                )));
         }
 
         let mut input_iter = session.inputs().iter().map(|i| i.name().to_string());
-        let speech_name = input_iter.next().ok_or_else(|| AsrError {
-            message: "Paraformer ONNX has no inputs".into(),
-        })?;
-        let lengths_name = input_iter.next().ok_or_else(|| AsrError {
-            message: "Paraformer ONNX has only one input (expected two)".into(),
-        })?;
+        let speech_name = input_iter.next().ok_or_else(|| AsrError::Inference("Paraformer ONNX has no inputs".into()))?;
+        let lengths_name = input_iter.next().ok_or_else(|| AsrError::Config("Paraformer ONNX has only one input (expected two)".into()))?;
 
         let fbank = Fbank::new(cfg.fbank.clone());
 
@@ -133,19 +124,15 @@ impl ParaformerAdapter {
     /// pipeline session.
     pub fn transcribe_samples(&self, samples: &[f32]) -> Result<String, AsrError> {
         if samples.is_empty() {
-            return Err(AsrError {
-                message: "no audio received".into(),
-            });
+            return Err(AsrError::NoAudio);
         }
 
         let (mel, n_frames) = self.fbank.compute(samples);
         if n_frames == 0 {
-            return Err(AsrError {
-                message: format!(
+            return Err(AsrError::Inference(format!(
                     "audio too short for one FBANK frame ({} samples)",
                     samples.len()
-                ),
-            });
+                )));
         }
 
         let n_mels = self.fbank.n_mels();
@@ -154,17 +141,11 @@ impl ParaformerAdapter {
         apply_cmvn(&mut feats, feat_dim, &self.cmvn);
 
         let speech: Array3<f32> =
-            Array3::from_shape_vec((1, t_lfr, feat_dim), feats).map_err(|e| AsrError {
-                message: format!("speech tensor shape: {e}"),
-            })?;
+            Array3::from_shape_vec((1, t_lfr, feat_dim), feats).map_err(|e| AsrError::Inference(format!("speech tensor shape: {e}")))?;
         let lengths: Array1<i32> = Array1::from(vec![t_lfr as i32]);
 
-        let speech_val = Value::from_array(speech).map_err(|e| AsrError {
-            message: format!("speech Value: {e}"),
-        })?;
-        let lengths_val = Value::from_array(lengths).map_err(|e| AsrError {
-            message: format!("lengths Value: {e}"),
-        })?;
+        let speech_val = Value::from_array(speech).map_err(|e| AsrError::Inference(format!("speech Value: {e}")))?;
+        let lengths_val = Value::from_array(lengths).map_err(|e| AsrError::Inference(format!("lengths Value: {e}")))?;
 
         let (speech_name, lengths_name) =
             (self.input_names.0.as_str(), self.input_names.1.as_str());
@@ -173,38 +154,28 @@ impl ParaformerAdapter {
         // borrowed output tensors stay live; the encoder pass is the
         // hot path and we want to avoid copying its full [T, V] tensor
         // before argmax.
-        let mut session = self.session.lock().map_err(|e| AsrError {
-            message: format!("session lock poisoned: {e}"),
-        })?;
+        let mut session = self.session.lock().map_err(|e| AsrError::Inference(format!("session lock poisoned: {e}")))?;
         let outputs = session
             .run(vec![
                 (speech_name, speech_val.into_dyn()),
                 (lengths_name, lengths_val.into_dyn()),
             ])
-            .map_err(|e| AsrError {
-                message: format!("Paraformer ONNX run: {e}"),
-            })?;
+            .map_err(|e| AsrError::Inference(format!("Paraformer ONNX run: {e}")))?;
 
         // Output 0: am_scores [1, T, V] f32
         let am = outputs[0]
             .try_extract_array::<f32>()
-            .map_err(|e| AsrError {
-                message: format!("extract am_scores: {e}"),
-            })?;
+            .map_err(|e| AsrError::Inference(format!("extract am_scores: {e}")))?;
         let view = am.view();
         let shape = view.shape().to_vec();
         if shape.len() != 3 {
-            return Err(AsrError {
-                message: format!("unexpected am_scores rank {}", shape.len()),
-            });
+            return Err(AsrError::Inference(format!("unexpected am_scores rank {}", shape.len())));
         }
         let t = shape[1];
         let v = shape[2];
 
         // Output 1: valid_token_num [1] (i32 or i64)
-        let valid_n = extract_first_int(&outputs[1]).ok_or_else(|| AsrError {
-            message: "could not read valid_token_num output".into(),
-        })?;
+        let valid_n = extract_first_int(&outputs[1]).ok_or_else(|| AsrError::ModelLoad("could not read valid_token_num output".into()))?;
 
         let usable = (valid_n as usize)
             .saturating_sub(self.cfg.predictor_bias)
@@ -241,20 +212,10 @@ fn extract_first_int(value: &ort::value::DynValue) -> Option<i64> {
 
 #[async_trait]
 impl AsrAdapter for ParaformerAdapter {
-    async fn transcribe(
-        &self,
-        mut audio_rx: mpsc::Receiver<AudioChunk>,
-        result_tx: mpsc::Sender<AsrResult>,
-    ) -> Result<(), AsrError> {
-        let mut all_samples: Vec<f32> = Vec::new();
-        while let Some(chunk) = audio_rx.recv().await {
-            all_samples.extend(&chunk.samples);
-        }
-
+    async fn transcribe(&self, audio: &[AudioChunk]) -> Result<Transcript, AsrError> {
+        let all_samples = AudioChunk::concat(audio);
         if all_samples.is_empty() {
-            return Err(AsrError {
-                message: "no audio received".into(),
-            });
+            return Err(AsrError::NoAudio);
         }
 
         tracing::info!(
@@ -263,20 +224,7 @@ impl AsrAdapter for ParaformerAdapter {
         );
 
         let text = self.transcribe_samples(&all_samples)?;
-        if !text.is_empty() {
-            result_tx
-                .send(AsrResult {
-                    text,
-                    is_final: true,
-                    confidence: 1.0,
-                    timestamp: std::time::Duration::ZERO,
-                })
-                .await
-                .map_err(|e| AsrError {
-                    message: format!("send: {e}"),
-                })?;
-        }
-        Ok(())
+        Ok(Transcript::new(text))
     }
 }
 
@@ -290,9 +238,9 @@ mod tests {
         assert!(res.is_err());
         let err = res.err().unwrap();
         assert!(
-            err.message.contains("failed to load") || err.message.contains("read"),
+            err.to_string().contains("failed to load") || err.to_string().contains("read"),
             "expected load-failure message, got: {}",
-            err.message
+            err
         );
     }
 
@@ -311,11 +259,8 @@ mod tests {
         // empty-channel handling.
         use crate::mock::MockAsr;
         use crate::traits::AsrAdapter;
-        let (tx, rx) = mpsc::channel::<AudioChunk>(1);
-        let (rtx, mut rrx) = mpsc::channel::<AsrResult>(1);
-        drop(tx);
         let mock = MockAsr::new("");
-        let _ = mock.transcribe(rx, rtx).await;
-        assert!(rrx.try_recv().is_ok());
+        let transcript = mock.transcribe(&[]).await.expect("mock always answers");
+        assert!(transcript.text.is_empty());
     }
 }

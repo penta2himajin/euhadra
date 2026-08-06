@@ -62,7 +62,7 @@ impl AsrRuntimeFactory for SenseVoiceFactory {
         let mut adapter = SenseVoiceAdapter::load_with_config(model_dir, cfg).map_err(|e| {
             RouterError::InstantiationFailed {
                 runtime: Self::ID.to_string(),
-                message: e.message,
+                message: e.to_string(),
             }
         })?;
         if !req.language.is_empty() {

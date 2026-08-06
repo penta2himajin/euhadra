@@ -388,18 +388,14 @@ async fn evaluate_language(
             audio.samples.len() as f64 / (audio.sample_rate as f64 * audio.channels as f64);
 
         let e2e_start = Instant::now();
-        let (audio_tx, _cancel, handle) = pipeline.session();
-
+        // The whole utterance is already in hand, so this is the batch
+        // path rather than a live session.
+        //
         // ASR latency = time from "audio handed off" to "session result";
         // for this final-only pipeline the two are nearly identical, but
         // we measure them separately so we can split them out once we add
         // a streaming ASR adapter.
         let asr_start = Instant::now();
-        audio_tx
-            .send(audio)
-            .await
-            .map_err(|e| format!("send audio: {e}"))?;
-        drop(audio_tx);
 
         // Per-utterance pipeline failures must not abort the whole
         // smoke run — ASR adapters legitimately produce zero text on
@@ -409,7 +405,7 @@ async fn evaluate_language(
         // mode behind a top-level error. Count empty hypotheses as
         // 100 % WER/CER (the reference is non-trivially missed) and
         // keep going.
-        let result_or_err = handle.await.map_err(|e| format!("join: {e}"))?;
+        let result_or_err = pipeline.transcribe(std::slice::from_ref(&audio)).await;
         let asr_elapsed = asr_start.elapsed();
         asr_latency.record(asr_elapsed);
         e2e_latency.record(e2e_start.elapsed());

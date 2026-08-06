@@ -111,31 +111,21 @@ pub fn apply_cmvn(feats: &mut [f32], feat_dim: usize, cmvn: &Cmvn) {
 /// Bracketed value lists may span multiple lines. We extract every
 /// numeric token between the matching `[` and `]`.
 pub fn load_cmvn(path: &Path) -> Result<Cmvn, AsrError> {
-    let text = std::fs::read_to_string(path).map_err(|e| AsrError {
-        message: format!("read am.mvn {}: {e}", path.display()),
-    })?;
+    let text = std::fs::read_to_string(path).map_err(|e| AsrError::ModelLoad(format!("read am.mvn {}: {e}", path.display())))?;
 
-    let means = extract_block(&text, "<AddShift>").ok_or_else(|| AsrError {
-        message: format!("am.mvn {}: missing <AddShift> block", path.display()),
-    })?;
-    let vars = extract_block(&text, "<Rescale>").ok_or_else(|| AsrError {
-        message: format!("am.mvn {}: missing <Rescale> block", path.display()),
-    })?;
+    let means = extract_block(&text, "<AddShift>").ok_or_else(|| AsrError::ModelLoad(format!("am.mvn {}: missing <AddShift> block", path.display())))?;
+    let vars = extract_block(&text, "<Rescale>").ok_or_else(|| AsrError::ModelLoad(format!("am.mvn {}: missing <Rescale> block", path.display())))?;
 
     if means.len() != vars.len() {
-        return Err(AsrError {
-            message: format!(
+        return Err(AsrError::ModelLoad(format!(
                 "am.mvn {}: mean dim {} != var dim {}",
                 path.display(),
                 means.len(),
                 vars.len()
-            ),
-        });
+            )));
     }
     if means.is_empty() {
-        return Err(AsrError {
-            message: format!("am.mvn {}: empty CMVN vectors", path.display()),
-        });
+        return Err(AsrError::ModelLoad(format!("am.mvn {}: empty CMVN vectors", path.display())));
     }
 
     Ok(Cmvn { means, vars })

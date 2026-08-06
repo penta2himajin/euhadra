@@ -16,24 +16,33 @@ pub trait TextFilter: Send + Sync {
     async fn filter(&self, text: &str) -> Result<FilterResult, FilterError>;
 }
 
-#[derive(Debug, Clone)]
+/// What a [`TextFilter`] did to the text.
+///
+/// `#[non_exhaustive]`: callers read this, and per-segment positions are
+/// a plausible future addition.
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct FilterResult {
+    /// The text after filtering.
     pub text: String,
+    /// The segments that were removed, in text order — for diagnostics
+    /// and for undo.
     pub removed: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
-pub struct FilterError {
-    pub message: String,
-}
+/// Why a [`TextFilter`] could not filter its input.
+#[derive(Debug, Clone, thiserror::Error)]
+#[non_exhaustive]
+pub enum FilterError {
+    /// A resource the filter depends on could not be loaded — an
+    /// embedding model, a dictionary file.
+    #[error("filter resource unavailable: {0}")]
+    Unavailable(String),
 
-impl std::fmt::Display for FilterError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "filter error: {}", self.message)
-    }
+    /// The filter ran but could not complete.
+    #[error("filter failed: {0}")]
+    Failed(String),
 }
-
-impl std::error::Error for FilterError {}
 
 // ---------------------------------------------------------------------------
 // SimpleFillerFilter — tiered, position-aware, zero-dependency

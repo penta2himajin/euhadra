@@ -65,13 +65,12 @@ use ort::value::Value;
 use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use tokio::sync::mpsc;
 
 use super::mel::{self, WhisperMel};
 use super::tokenizer::WhisperTokenizer;
 use crate::router::{AdapterRequest, AsrRuntimeFactory, ModelSource, RouterError};
 use crate::traits::{AsrAdapter, AsrError};
-use crate::types::{AsrResult, AudioChunk};
+use crate::types::{AudioChunk, Transcript};
 
 /// Whisper-large-v3-turbo has 4 decoder layers.
 const N_DECODER_LAYERS: usize = 4;
@@ -188,34 +187,22 @@ impl WhisperOnnxAdapter {
         // ---- Mel features ----
         let mel_data = self.mel.compute(samples);
         let input_features = Array3::from_shape_vec((1, mel::N_MELS, mel::N_FRAMES), mel_data)
-            .map_err(|e| AsrError {
-                message: format!("whisper-onnx mel reshape: {e}"),
-            })?;
+            .map_err(|e| AsrError::Inference(format!("whisper-onnx mel reshape: {e}")))?;
 
         // ---- Encoder ----
-        let enc_value = Value::from_array(input_features).map_err(|e| AsrError {
-            message: format!("whisper-onnx input_features Value: {e}"),
-        })?;
+        let enc_value = Value::from_array(input_features).map_err(|e| AsrError::Inference(format!("whisper-onnx input_features Value: {e}")))?;
         let encoder_hidden = {
-            let mut session = self.encoder.lock().map_err(|e| AsrError {
-                message: format!("whisper-onnx encoder lock poisoned: {e}"),
-            })?;
+            let mut session = self.encoder.lock().map_err(|e| AsrError::Inference(format!("whisper-onnx encoder lock poisoned: {e}")))?;
             let outputs = session
                 .run(vec![("input_features", enc_value.into_dyn())])
-                .map_err(|e| AsrError {
-                    message: format!("whisper-onnx encoder run: {e}"),
-                })?;
+                .map_err(|e| AsrError::Inference(format!("whisper-onnx encoder run: {e}")))?;
             // Single output: `last_hidden_state (1, 1500, 1280)`.
             outputs[0]
                 .try_extract_array::<f32>()
-                .map_err(|e| AsrError {
-                    message: format!("extract last_hidden_state: {e}"),
-                })?
+                .map_err(|e| AsrError::Inference(format!("extract last_hidden_state: {e}")))?
                 .to_owned()
                 .into_dimensionality::<ndarray::Ix3>()
-                .map_err(|e| AsrError {
-                    message: format!("last_hidden_state rank: {e}"),
-                })?
+                .map_err(|e| AsrError::Inference(format!("last_hidden_state rank: {e}")))?
         };
 
         // ---- Build prompt ----
@@ -229,29 +216,19 @@ impl WhisperOnnxAdapter {
         // ---- Decoder first step ----
         let input_ids =
             ndarray::Array2::from_shape_vec((1, prompt_len), prompt.clone()).map_err(|e| {
-                AsrError {
-                    message: format!("whisper-onnx prompt reshape: {e}"),
-                }
+                AsrError::Inference(format!("whisper-onnx prompt reshape: {e}"))
             })?;
 
-        let ids_v = Value::from_array(input_ids).map_err(|e| AsrError {
-            message: format!("whisper-onnx input_ids Value: {e}"),
-        })?;
-        let enc_v = Value::from_array(encoder_hidden.clone()).map_err(|e| AsrError {
-            message: format!("whisper-onnx encoder_hidden_states Value: {e}"),
-        })?;
+        let ids_v = Value::from_array(input_ids).map_err(|e| AsrError::Inference(format!("whisper-onnx input_ids Value: {e}")))?;
+        let enc_v = Value::from_array(encoder_hidden.clone()).map_err(|e| AsrError::Inference(format!("whisper-onnx encoder_hidden_states Value: {e}")))?;
 
-        let mut session = self.decoder.lock().map_err(|e| AsrError {
-            message: format!("whisper-onnx decoder lock poisoned: {e}"),
-        })?;
+        let mut session = self.decoder.lock().map_err(|e| AsrError::Inference(format!("whisper-onnx decoder lock poisoned: {e}")))?;
         let outputs = session
             .run(vec![
                 ("input_ids", ids_v.into_dyn()),
                 ("encoder_hidden_states", enc_v.into_dyn()),
             ])
-            .map_err(|e| AsrError {
-                message: format!("whisper-onnx decoder run: {e}"),
-            })?;
+            .map_err(|e| AsrError::Inference(format!("whisper-onnx decoder run: {e}")))?;
 
         // Output 0 is `logits (1, prompt_len, vocab)`; the rest are
         // `present.<i>.{decoder|encoder}.{key|value}` in declaration
@@ -259,9 +236,7 @@ impl WhisperOnnxAdapter {
         // subsequent loop can rebuild `past_key_values.*` feeds.
         let logits = outputs[0]
             .try_extract_array::<f32>()
-            .map_err(|e| AsrError {
-                message: format!("extract logits: {e}"),
-            })?
+            .map_err(|e| AsrError::Inference(format!("extract logits: {e}")))?
             .to_owned();
         let mut next_token = greedy_last(&logits)?;
 
@@ -270,14 +245,10 @@ impl WhisperOnnxAdapter {
         for (i, name) in self.decoder_output_names.iter().enumerate().skip(1) {
             let arr: Array4<f32> = outputs[i]
                 .try_extract_array::<f32>()
-                .map_err(|e| AsrError {
-                    message: format!("extract {name}: {e}"),
-                })?
+                .map_err(|e| AsrError::Inference(format!("extract {name}: {e}")))?
                 .to_owned()
                 .into_dimensionality::<ndarray::Ix4>()
-                .map_err(|e| AsrError {
-                    message: format!("{name} rank: {e}"),
-                })?;
+                .map_err(|e| AsrError::Inference(format!("{name} rank: {e}")))?;
             let past_name = present_to_past(name);
             if name.contains(".encoder.") {
                 encoder_kv.push((past_name, arr));
@@ -293,40 +264,28 @@ impl WhisperOnnxAdapter {
 
         // ---- decoder_with_past loop ----
         if next_token != eot {
-            let mut past_session = self.decoder_with_past.lock().map_err(|e| AsrError {
-                message: format!("whisper-onnx decoder_with_past lock poisoned: {e}"),
-            })?;
+            let mut past_session = self.decoder_with_past.lock().map_err(|e| AsrError::Inference(format!("whisper-onnx decoder_with_past lock poisoned: {e}")))?;
             for _ in 0..MAX_NEW_TOKENS {
                 if next_token == eot {
                     break;
                 }
                 let ids =
                     ndarray::Array2::from_shape_vec((1, 1), vec![next_token]).map_err(|e| {
-                        AsrError {
-                            message: format!("whisper-onnx step input_ids reshape: {e}"),
-                        }
+                        AsrError::Inference(format!("whisper-onnx step input_ids reshape: {e}"))
                     })?;
-                let ids_v = Value::from_array(ids).map_err(|e| AsrError {
-                    message: format!("whisper-onnx step input_ids Value: {e}"),
-                })?;
+                let ids_v = Value::from_array(ids).map_err(|e| AsrError::Inference(format!("whisper-onnx step input_ids Value: {e}")))?;
                 let mut feeds: Vec<(&str, ort::value::DynValue)> =
                     Vec::with_capacity(1 + N_DECODER_LAYERS * 4);
                 feeds.push(("input_ids", ids_v.into_dyn()));
                 for (name, arr) in decoder_kv.iter().chain(encoder_kv.iter()) {
-                    let v = Value::from_array(arr.clone()).map_err(|e| AsrError {
-                        message: format!("whisper-onnx step {name} Value: {e}"),
-                    })?;
+                    let v = Value::from_array(arr.clone()).map_err(|e| AsrError::Inference(format!("whisper-onnx step {name} Value: {e}")))?;
                     feeds.push((name.as_str(), v.into_dyn()));
                 }
 
-                let outs = past_session.run(feeds).map_err(|e| AsrError {
-                    message: format!("whisper-onnx decoder_with_past run: {e}"),
-                })?;
+                let outs = past_session.run(feeds).map_err(|e| AsrError::Inference(format!("whisper-onnx decoder_with_past run: {e}")))?;
                 let logits = outs[0]
                     .try_extract_array::<f32>()
-                    .map_err(|e| AsrError {
-                        message: format!("extract step logits: {e}"),
-                    })?
+                    .map_err(|e| AsrError::Inference(format!("extract step logits: {e}")))?
                     .to_owned();
                 next_token = greedy_last(&logits)?;
                 generated.push(next_token);
@@ -338,14 +297,10 @@ impl WhisperOnnxAdapter {
                 for (i, name) in self.decoder_past_output_names.iter().enumerate().skip(1) {
                     let arr: Array4<f32> = outs[i]
                         .try_extract_array::<f32>()
-                        .map_err(|e| AsrError {
-                            message: format!("extract step {name}: {e}"),
-                        })?
+                        .map_err(|e| AsrError::Inference(format!("extract step {name}: {e}")))?
                         .to_owned()
                         .into_dimensionality::<ndarray::Ix4>()
-                        .map_err(|e| AsrError {
-                            message: format!("step {name} rank: {e}"),
-                        })?;
+                        .map_err(|e| AsrError::Inference(format!("step {name} rank: {e}")))?;
                     new_decoder_kv.push((present_to_past(name), arr));
                 }
                 decoder_kv = new_decoder_kv;
@@ -364,25 +319,10 @@ impl WhisperOnnxAdapter {
 
 #[async_trait]
 impl AsrAdapter for WhisperOnnxAdapter {
-    async fn transcribe(
-        &self,
-        mut audio_rx: mpsc::Receiver<AudioChunk>,
-        result_tx: mpsc::Sender<AsrResult>,
-    ) -> Result<(), AsrError> {
-        let mut samples: Vec<f32> = Vec::new();
-        while let Some(chunk) = audio_rx.recv().await {
-            samples.extend(&chunk.samples);
-        }
+    async fn transcribe(&self, audio: &[AudioChunk]) -> Result<Transcript, AsrError> {
+        let samples = AudioChunk::concat(audio);
         let text = self.transcribe_samples(&samples)?;
-        let _ = result_tx
-            .send(AsrResult {
-                text,
-                is_final: true,
-                confidence: 1.0,
-                timestamp: std::time::Duration::from_secs(0),
-            })
-            .await;
-        Ok(())
+        Ok(Transcript::new(text))
     }
 }
 
@@ -398,18 +338,10 @@ impl AsrAdapter for WhisperOnnxAdapter {
 /// threads; the encoder's matmuls dominate and saturate ~4.
 fn build_session(path: &std::path::Path, role: &str) -> Result<Session, AsrError> {
     let threads = std::cmp::min(num_cpus_hint(), 4);
-    let mut builder = Session::builder().map_err(|e| AsrError {
-        message: format!("whisper-onnx {role} builder: {e}"),
-    })?;
-    builder = builder.with_intra_threads(threads).map_err(|e| AsrError {
-        message: format!("whisper-onnx {role} with_intra_threads({threads}): {e}"),
-    })?;
-    builder = builder.with_inter_threads(1).map_err(|e| AsrError {
-        message: format!("whisper-onnx {role} with_inter_threads(1): {e}"),
-    })?;
-    builder.commit_from_file(path).map_err(|e| AsrError {
-        message: format!("whisper-onnx {role} load failed at {}: {e}", path.display()),
-    })
+    let mut builder = Session::builder().map_err(|e| AsrError::ModelLoad(format!("whisper-onnx {role} builder: {e}")))?;
+    builder = builder.with_intra_threads(threads).map_err(|e| AsrError::Inference(format!("whisper-onnx {role} with_intra_threads({threads}): {e}")))?;
+    builder = builder.with_inter_threads(1).map_err(|e| AsrError::Inference(format!("whisper-onnx {role} with_inter_threads(1): {e}")))?;
+    builder.commit_from_file(path).map_err(|e| AsrError::ModelLoad(format!("whisper-onnx {role} load failed at {}: {e}", path.display())))
 }
 
 /// Cheap available-parallelism probe; falls back to 1 when the
@@ -432,22 +364,16 @@ fn present_to_past(name: &str) -> String {
 fn greedy_last(logits: &ArrayD<f32>) -> Result<i64, AsrError> {
     let shape = logits.shape();
     if shape.len() != 3 {
-        return Err(AsrError {
-            message: format!("logits expected rank 3, got {shape:?}"),
-        });
+        return Err(AsrError::Inference(format!("logits expected rank 3, got {shape:?}")));
     }
     let (_b, t, v) = (shape[0], shape[1], shape[2]);
     if t == 0 || v == 0 {
-        return Err(AsrError {
-            message: format!("logits empty: shape={shape:?}"),
-        });
+        return Err(AsrError::Inference(format!("logits empty: shape={shape:?}")));
     }
     let last = logits
         .view()
         .into_dimensionality::<ndarray::Ix3>()
-        .map_err(|e| AsrError {
-            message: format!("logits rank3 view: {e}"),
-        })?
+        .map_err(|e| AsrError::Inference(format!("logits rank3 view: {e}")))?
         .slice(s![0, t - 1, ..])
         .to_owned();
     let mut best = 0_usize;
@@ -527,7 +453,7 @@ impl AsrRuntimeFactory for WhisperOnnxFactory {
         })?
         .map_err(|e| RouterError::InstantiationFailed {
             runtime: Self::ID.to_string(),
-            message: e.message,
+            message: e.to_string(),
         })?;
         Ok(Arc::new(adapter))
     }

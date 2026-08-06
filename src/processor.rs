@@ -21,20 +21,28 @@ pub trait TextProcessor: Send + Sync {
     ) -> Result<ProcessResult, ProcessError>;
 }
 
-#[derive(Debug, Clone)]
+/// What a [`TextProcessor`] did to the text.
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct ProcessResult {
+    /// The text after processing.
     pub text: String,
+    /// The corrections that were applied, for diagnostics.
     pub corrections: Vec<Correction>,
 }
 
+/// One correction a [`TextProcessor`] made.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Correction {
     pub kind: CorrectionKind,
     pub original: String,
     pub replacement: String,
 }
 
+/// The kind of change a [`Correction`] represents.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CorrectionKind {
     PunctuationInserted,
     Capitalized,
@@ -45,18 +53,22 @@ pub enum CorrectionKind {
     SpokenFormNormalized,
 }
 
-#[derive(Debug, Clone)]
-pub struct ProcessError {
-    pub message: String,
-}
+/// Why a [`TextProcessor`] could not process its input.
+#[derive(Debug, Clone, thiserror::Error)]
+#[non_exhaustive]
+pub enum ProcessError {
+    /// A model or data file the processor needs could not be loaded.
+    #[error("processor resource unavailable: {0}")]
+    Unavailable(String),
 
-impl std::fmt::Display for ProcessError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "process error: {}", self.message)
-    }
-}
+    /// Inference failed inside the processor.
+    #[error("processor inference failed: {0}")]
+    Inference(String),
 
-impl std::error::Error for ProcessError {}
+    /// The processor ran but could not complete.
+    #[error("processor failed: {0}")]
+    Failed(String),
+}
 
 // ---------------------------------------------------------------------------
 // SelfCorrectionDetector

@@ -57,21 +57,17 @@ pub fn pack_mel_for_encoder(
     n_frames: usize,
 ) -> Result<(Array3<f32>, Array1<i64>), AsrError> {
     if n_mels == 0 || n_frames == 0 {
-        return Err(AsrError {
-            message: format!("empty mel features (n_mels={n_mels}, n_frames={n_frames})"),
-        });
+        return Err(AsrError::Inference(format!("empty mel features (n_mels={n_mels}, n_frames={n_frames})")));
     }
     let expected = n_mels * n_frames;
     if mel_row_major.len() != expected {
-        return Err(AsrError {
-            message: format!(
+        return Err(AsrError::Inference(format!(
                 "mel buffer length {} does not match n_mels({}) * n_frames({}) = {}",
                 mel_row_major.len(),
                 n_mels,
                 n_frames,
                 expected
-            ),
-        });
+            )));
     }
 
     let mut packed = Array3::<f32>::zeros((1, n_mels, n_frames));
@@ -101,16 +97,10 @@ impl CanaryEncoder {
     /// expose I/O names matching `ENCODER_INPUT_*` / `ENCODER_OUTPUT_*`.
     pub fn load(path: impl AsRef<Path>) -> Result<Self, AsrError> {
         let path = path.as_ref();
-        let builder = Session::builder().map_err(|e| AsrError {
-            message: format!("Canary encoder builder {}: {e}", path.display()),
-        })?;
+        let builder = Session::builder().map_err(|e| AsrError::ModelLoad(format!("Canary encoder builder {}: {e}", path.display())))?;
         let (mut builder, profiling) = crate::canary::profiling::apply(builder, "encoder")
-            .map_err(|e| AsrError {
-                message: format!("Canary encoder profiling {}: {e}", path.display()),
-            })?;
-        let session = builder.commit_from_file(path).map_err(|e| AsrError {
-            message: format!("load Canary encoder {}: {e}", path.display()),
-        })?;
+            .map_err(|e| AsrError::Inference(format!("Canary encoder profiling {}: {e}", path.display())))?;
+        let session = builder.commit_from_file(path).map_err(|e| AsrError::ModelLoad(format!("load Canary encoder {}: {e}", path.display())))?;
         validate_encoder_io(&session, path)?;
         Ok(Self {
             session: Mutex::new(session),
@@ -131,56 +121,36 @@ impl CanaryEncoder {
     ) -> Result<EncoderOutput, AsrError> {
         let (audio_signal, length) = pack_mel_for_encoder(mel_row_major, n_mels, n_frames)?;
 
-        let audio_value = Value::from_array(audio_signal).map_err(|e| AsrError {
-            message: format!("audio_signal Value: {e}"),
-        })?;
-        let length_value = Value::from_array(length).map_err(|e| AsrError {
-            message: format!("length Value: {e}"),
-        })?;
+        let audio_value = Value::from_array(audio_signal).map_err(|e| AsrError::Inference(format!("audio_signal Value: {e}")))?;
+        let length_value = Value::from_array(length).map_err(|e| AsrError::Inference(format!("length Value: {e}")))?;
 
-        let mut session = self.session.lock().map_err(|e| AsrError {
-            message: format!("encoder session lock poisoned: {e}"),
-        })?;
+        let mut session = self.session.lock().map_err(|e| AsrError::Inference(format!("encoder session lock poisoned: {e}")))?;
         let outputs = session
             .run(vec![
                 (ENCODER_INPUT_AUDIO, audio_value.into_dyn()),
                 (ENCODER_INPUT_LENGTH, length_value.into_dyn()),
             ])
-            .map_err(|e| AsrError {
-                message: format!("Canary encoder run: {e}"),
-            })?;
+            .map_err(|e| AsrError::Inference(format!("Canary encoder run: {e}")))?;
 
         // The order ort gives back outputs in matches the input order
         // declared in the ONNX graph. Look up by name to be robust to
         // re-exports that swap the two.
         let emb_idx =
-            output_index(&outputs, ENCODER_OUTPUT_EMBEDDINGS).ok_or_else(|| AsrError {
-                message: format!("encoder missing output {ENCODER_OUTPUT_EMBEDDINGS}"),
-            })?;
-        let mask_idx = output_index(&outputs, ENCODER_OUTPUT_MASK).ok_or_else(|| AsrError {
-            message: format!("encoder missing output {ENCODER_OUTPUT_MASK}"),
-        })?;
+            output_index(&outputs, ENCODER_OUTPUT_EMBEDDINGS).ok_or_else(|| AsrError::Inference(format!("encoder missing output {ENCODER_OUTPUT_EMBEDDINGS}")))?;
+        let mask_idx = output_index(&outputs, ENCODER_OUTPUT_MASK).ok_or_else(|| AsrError::Inference(format!("encoder missing output {ENCODER_OUTPUT_MASK}")))?;
 
         let embeddings = outputs[emb_idx]
             .try_extract_array::<f32>()
-            .map_err(|e| AsrError {
-                message: format!("extract {ENCODER_OUTPUT_EMBEDDINGS}: {e}"),
-            })?
+            .map_err(|e| AsrError::Inference(format!("extract {ENCODER_OUTPUT_EMBEDDINGS}: {e}")))?
             .to_owned()
             .into_dimensionality::<ndarray::Ix3>()
-            .map_err(|e| AsrError {
-                message: format!("{ENCODER_OUTPUT_EMBEDDINGS} rank: {e}"),
-            })?;
+            .map_err(|e| AsrError::Inference(format!("{ENCODER_OUTPUT_EMBEDDINGS} rank: {e}")))?;
         let mask = outputs[mask_idx]
             .try_extract_array::<i64>()
-            .map_err(|e| AsrError {
-                message: format!("extract {ENCODER_OUTPUT_MASK}: {e}"),
-            })?
+            .map_err(|e| AsrError::Inference(format!("extract {ENCODER_OUTPUT_MASK}: {e}")))?
             .to_owned()
             .into_dimensionality::<ndarray::Ix2>()
-            .map_err(|e| AsrError {
-                message: format!("{ENCODER_OUTPUT_MASK} rank: {e}"),
-            })?;
+            .map_err(|e| AsrError::Inference(format!("{ENCODER_OUTPUT_MASK} rank: {e}")))?;
 
         Ok(EncoderOutput { embeddings, mask })
     }
@@ -201,20 +171,16 @@ fn validate_encoder_io(session: &Session, path: &Path) -> Result<(), AsrError> {
         .map(|i| i.name().to_string())
         .collect();
     if !input_names.iter().any(|n| n == ENCODER_INPUT_AUDIO) {
-        return Err(AsrError {
-            message: format!(
+        return Err(AsrError::Inference(format!(
                 "encoder {} missing input {ENCODER_INPUT_AUDIO} (have: {input_names:?})",
                 path.display()
-            ),
-        });
+            )));
     }
     if !input_names.iter().any(|n| n == ENCODER_INPUT_LENGTH) {
-        return Err(AsrError {
-            message: format!(
+        return Err(AsrError::Inference(format!(
                 "encoder {} missing input {ENCODER_INPUT_LENGTH} (have: {input_names:?})",
                 path.display()
-            ),
-        });
+            )));
     }
     let output_names: Vec<String> = session
         .outputs()
@@ -222,20 +188,16 @@ fn validate_encoder_io(session: &Session, path: &Path) -> Result<(), AsrError> {
         .map(|o| o.name().to_string())
         .collect();
     if !output_names.iter().any(|n| n == ENCODER_OUTPUT_EMBEDDINGS) {
-        return Err(AsrError {
-            message: format!(
+        return Err(AsrError::Inference(format!(
                 "encoder {} missing output {ENCODER_OUTPUT_EMBEDDINGS} (have: {output_names:?})",
                 path.display()
-            ),
-        });
+            )));
     }
     if !output_names.iter().any(|n| n == ENCODER_OUTPUT_MASK) {
-        return Err(AsrError {
-            message: format!(
+        return Err(AsrError::Inference(format!(
                 "encoder {} missing output {ENCODER_OUTPUT_MASK} (have: {output_names:?})",
                 path.display()
-            ),
-        });
+            )));
     }
     Ok(())
 }
@@ -279,7 +241,7 @@ mod tests {
         // 3 mels × 4 frames = 12, but only 11 values supplied.
         let mel = vec![0.0_f32; 11];
         let err = pack_mel_for_encoder(&mel, 3, 4).unwrap_err();
-        assert!(err.message.contains("does not match"), "{}", err.message);
+        assert!(err.to_string().contains("does not match"), "{}", err);
     }
 
     #[test]
@@ -308,7 +270,7 @@ mod tests {
         // Don't use `unwrap_err` (would require Debug on the Ok variant).
         match CanaryEncoder::load("/nonexistent/path/to/encoder.onnx") {
             Ok(_) => panic!("expected error, got Ok"),
-            Err(e) => assert!(e.message.contains("load Canary encoder"), "{}", e.message),
+            Err(e) => assert!(e.to_string().contains("load Canary encoder"), "{}", e.to_string()),
         }
     }
 

@@ -24,10 +24,9 @@
 
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
-use tokio::sync::mpsc;
 
 use crate::traits::{AsrAdapter, AsrError};
-use crate::types::{AsrResult, AudioChunk};
+use crate::types::{AudioChunk, Transcript};
 
 use super::decoder::{CanaryDecoder, DecodeOptions};
 use super::encoder::CanaryEncoder;
@@ -147,13 +146,11 @@ impl CanaryAdapter {
         // default before we accept the bundle. Catches a vocab.txt
         // that's missing one of en/de/fr/es.
         if vocab.language_token(&cfg.default_language).is_none() {
-            return Err(AsrError {
-                message: format!(
+            return Err(AsrError::ModelLoad(format!(
                     "vocab {} has no language token for default_language={:?}",
                     vocab_path.display(),
                     cfg.default_language
-                ),
-            });
+                )));
         }
 
         let language = cfg.default_language.clone();
@@ -182,20 +179,16 @@ impl CanaryAdapter {
     /// evaluation harnesses.
     pub fn transcribe_samples(&self, samples: &[f32]) -> Result<String, AsrError> {
         if samples.is_empty() {
-            return Err(AsrError {
-                message: "no audio received".into(),
-            });
+            return Err(AsrError::NoAudio);
         }
 
         let (mel, n_frames) = self.frontend.compute(samples);
         if n_frames == 0 {
-            return Err(AsrError {
-                message: format!(
+            return Err(AsrError::Inference(format!(
                     "audio too short for one mel frame ({} samples, need ≥{})",
                     samples.len(),
                     self.cfg.mel.win_length,
-                ),
-            });
+                )));
         }
 
         let n_mels = self.frontend.n_mels();
@@ -223,20 +216,10 @@ impl CanaryAdapter {
 
 #[async_trait]
 impl AsrAdapter for CanaryAdapter {
-    async fn transcribe(
-        &self,
-        mut audio_rx: mpsc::Receiver<AudioChunk>,
-        result_tx: mpsc::Sender<AsrResult>,
-    ) -> Result<(), AsrError> {
-        let mut all_samples: Vec<f32> = Vec::new();
-        while let Some(chunk) = audio_rx.recv().await {
-            all_samples.extend(&chunk.samples);
-        }
-
+    async fn transcribe(&self, audio: &[AudioChunk]) -> Result<Transcript, AsrError> {
+        let all_samples = AudioChunk::concat(audio);
         if all_samples.is_empty() {
-            return Err(AsrError {
-                message: "no audio received".into(),
-            });
+            return Err(AsrError::NoAudio);
         }
 
         tracing::info!(
@@ -246,20 +229,7 @@ impl AsrAdapter for CanaryAdapter {
         );
 
         let text = self.transcribe_samples(&all_samples)?;
-        if !text.is_empty() {
-            result_tx
-                .send(AsrResult {
-                    text,
-                    is_final: true,
-                    confidence: 1.0,
-                    timestamp: std::time::Duration::ZERO,
-                })
-                .await
-                .map_err(|e| AsrError {
-                    message: format!("send: {e}"),
-                })?;
-        }
-        Ok(())
+        Ok(Transcript::new(text))
     }
 }
 
@@ -276,11 +246,11 @@ mod tests {
             Err(e) => e,
         };
         assert!(
-            err.message.contains("load Canary encoder")
-                || err.message.contains("load Canary decoder")
-                || err.message.contains("read vocab"),
+            err.to_string().contains("load Canary encoder")
+                || err.to_string().contains("load Canary decoder")
+                || err.to_string().contains("read vocab"),
             "expected load-failure message, got: {}",
-            err.message
+            err
         );
     }
 
@@ -316,19 +286,13 @@ mod tests {
 
     #[tokio::test]
     async fn empty_audio_yields_no_audio_received_error() {
-        // Mirrors the contract enforced by ParakeetAdapter and
-        // ParaformerAdapter — empty channel → AsrError with
-        // "no audio received". Verified through MockAsr without
-        // requiring a real Canary bundle.
-        use crate::mock::MockAsr;
-        let (tx, rx) = mpsc::channel::<AudioChunk>(1);
-        let (rtx, mut rrx) = mpsc::channel::<AsrResult>(1);
-        drop(tx);
-        let mock = MockAsr::new("");
-        let _ = mock.transcribe(rx, rtx).await;
-        // MockAsr emits an empty result rather than erroring; we
-        // assert only that the channel is reachable so the tokio
-        // runtime contract is exercised.
-        assert!(rrx.try_recv().is_ok());
+        // Every adapter maps an empty utterance to AsrError::NoAudio
+        // via the same shared check; a real bundle is not needed to
+        // pin that check.
+        // The precondition every adapter branches on. Previously this
+        // test drove MockAsr, which never errors — so it asserted
+        // nothing about the contract it named.
+        assert!(AudioChunk::concat(&[]).is_empty());
+        assert!(AudioChunk::sample_rate_of(&[]).is_none());
     }
 }

@@ -299,7 +299,7 @@ fn run() -> Result<(), String> {
     // --- Embedding segmenters -----------------------------------------
     if let Some(dir) = &cli.embedder_dir {
         let embedder = euhadra::phoneme::OnnxTextEmbedder::load(dir)
-            .map_err(|e| format!("loading embedder {}: {}", dir.display(), e.message))?;
+            .map_err(|e| format!("loading embedder {}: {}", dir.display(), e))?;
         let cache: Arc<dyn TextEmbedder> =
             Arc::new(CachedEmbedder::new(embedder));
 

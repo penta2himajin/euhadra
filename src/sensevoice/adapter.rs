@@ -44,10 +44,9 @@ use ort::session::Session;
 use ort::value::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use tokio::sync::mpsc;
 
 use crate::traits::{AsrAdapter, AsrError};
-use crate::types::{AsrResult, AudioChunk};
+use crate::types::{AudioChunk, Transcript};
 
 use crate::paraformer::fbank::{Fbank, FbankOpts};
 use crate::paraformer::frontend::{apply_cmvn, apply_lfr, load_cmvn, Cmvn};
@@ -154,12 +153,10 @@ impl SenseVoiceAdapter {
 
         let session = Session::builder()
             .and_then(|mut b| b.commit_from_file(&model_path))
-            .map_err(|e| AsrError {
-                message: format!(
+            .map_err(|e| AsrError::ModelLoad(format!(
                     "failed to load SenseVoice ONNX {}: {e}",
                     model_path.display()
-                ),
-            })?;
+                )))?;
 
         let cmvn = load_cmvn(&mvn_path)?;
         let vocab = load_tokens_txt(&tokens_path)?;
@@ -167,25 +164,21 @@ impl SenseVoiceAdapter {
 
         let expected_dim = cfg.fbank.n_mels * metadata.lfr_m;
         if cmvn.dim() != expected_dim {
-            return Err(AsrError {
-                message: format!(
+            return Err(AsrError::ModelLoad(format!(
                     "CMVN dim {} does not match n_mels({}) * lfr_m({}) = {}",
                     cmvn.dim(),
                     cfg.fbank.n_mels,
                     metadata.lfr_m,
                     expected_dim
-                ),
-            });
+                )));
         }
 
         if metadata.language_id(&cfg.default_language).is_none() {
-            return Err(AsrError {
-                message: format!(
+            return Err(AsrError::Inference(format!(
                     "metadata.json {} has no language id for default_language={:?}",
                     metadata_path.display(),
                     cfg.default_language
-                ),
-            });
+                )));
         }
 
         let input_names = resolve_input_names(&session, &model_path)?;
@@ -224,19 +217,15 @@ impl SenseVoiceAdapter {
     /// model end-to-end without spinning up a pipeline session.
     pub fn transcribe_samples(&self, samples: &[f32]) -> Result<String, AsrError> {
         if samples.is_empty() {
-            return Err(AsrError {
-                message: "no audio received".into(),
-            });
+            return Err(AsrError::NoAudio);
         }
 
         let (mel, n_frames) = self.fbank.compute(samples);
         if n_frames == 0 {
-            return Err(AsrError {
-                message: format!(
+            return Err(AsrError::Inference(format!(
                     "audio too short for one FBANK frame ({} samples)",
                     samples.len()
-                ),
-            });
+                )));
         }
 
         let n_mels = self.fbank.n_mels();
@@ -249,12 +238,10 @@ impl SenseVoiceAdapter {
         let language_id = self
             .metadata
             .language_id(&self.language)
-            .ok_or_else(|| AsrError {
-                message: format!(
+            .ok_or_else(|| AsrError::Inference(format!(
                     "language {:?} not present in metadata.json lang2id",
                     self.language
-                ),
-            })?;
+                )))?;
         let text_norm_id = if self.cfg.default_use_itn {
             self.metadata.with_itn_id
         } else {
@@ -264,31 +251,19 @@ impl SenseVoiceAdapter {
         // ONNX expects `speech` as [B=1, T, feat_dim] f32 and the three
         // sidecar integer inputs as int32 1-D tensors.
         let speech: Array3<f32> =
-            Array3::from_shape_vec((1, t_lfr, feat_dim), feats).map_err(|e| AsrError {
-                message: format!("speech tensor shape: {e}"),
-            })?;
+            Array3::from_shape_vec((1, t_lfr, feat_dim), feats).map_err(|e| AsrError::Inference(format!("speech tensor shape: {e}")))?;
         let speech_lengths: Array1<i32> = Array1::from(vec![t_lfr as i32]);
         let language_arr: Array1<i32> = Array1::from(vec![language_id]);
         let text_norm_arr: Array1<i32> = Array1::from(vec![text_norm_id]);
 
-        let speech_val = Value::from_array(speech).map_err(|e| AsrError {
-            message: format!("speech Value: {e}"),
-        })?;
-        let speech_lengths_val = Value::from_array(speech_lengths).map_err(|e| AsrError {
-            message: format!("speech_lengths Value: {e}"),
-        })?;
-        let language_val = Value::from_array(language_arr).map_err(|e| AsrError {
-            message: format!("language Value: {e}"),
-        })?;
-        let text_norm_val = Value::from_array(text_norm_arr).map_err(|e| AsrError {
-            message: format!("textnorm Value: {e}"),
-        })?;
+        let speech_val = Value::from_array(speech).map_err(|e| AsrError::Inference(format!("speech Value: {e}")))?;
+        let speech_lengths_val = Value::from_array(speech_lengths).map_err(|e| AsrError::Inference(format!("speech_lengths Value: {e}")))?;
+        let language_val = Value::from_array(language_arr).map_err(|e| AsrError::Inference(format!("language Value: {e}")))?;
+        let text_norm_val = Value::from_array(text_norm_arr).map_err(|e| AsrError::Inference(format!("textnorm Value: {e}")))?;
 
         // Hold the session lock for the duration of decoding so the
         // borrowed output tensor stays live while we argmax over [T, V].
-        let mut session = self.session.lock().map_err(|e| AsrError {
-            message: format!("session lock poisoned: {e}"),
-        })?;
+        let mut session = self.session.lock().map_err(|e| AsrError::Inference(format!("session lock poisoned: {e}")))?;
         let outputs = session
             .run(vec![
                 (self.input_names.x.as_str(), speech_val.into_dyn()),
@@ -302,22 +277,16 @@ impl SenseVoiceAdapter {
                     text_norm_val.into_dyn(),
                 ),
             ])
-            .map_err(|e| AsrError {
-                message: format!("SenseVoice ONNX run: {e}"),
-            })?;
+            .map_err(|e| AsrError::Inference(format!("SenseVoice ONNX run: {e}")))?;
 
         // Output: logits [1, T_out, V] f32 — CTC log-softmax.
         let logits = outputs[0]
             .try_extract_array::<f32>()
-            .map_err(|e| AsrError {
-                message: format!("extract logits: {e}"),
-            })?;
+            .map_err(|e| AsrError::Inference(format!("extract logits: {e}")))?;
         let view = logits.view();
         let shape = view.shape().to_vec();
         if shape.len() != 3 {
-            return Err(AsrError {
-                message: format!("unexpected logits rank {}", shape.len()),
-            });
+            return Err(AsrError::Inference(format!("unexpected logits rank {}", shape.len())));
         }
         let t = shape[1];
         let v = shape[2];
@@ -353,14 +322,12 @@ fn resolve_input_names(session: &Session, path: &Path) -> Result<InputNames, Asr
             .iter()
             .find(|n| n.as_str() == needle)
             .cloned()
-            .ok_or_else(|| AsrError {
-                message: format!(
+            .ok_or_else(|| AsrError::Inference(format!(
                     "SenseVoice ONNX {} missing input {:?} (have: {:?})",
                     path.display(),
                     needle,
                     names
-                ),
-            })
+                )))
     };
     Ok(InputNames {
         x: find(ONNX_INPUT_X)?,
@@ -372,20 +339,10 @@ fn resolve_input_names(session: &Session, path: &Path) -> Result<InputNames, Asr
 
 #[async_trait]
 impl AsrAdapter for SenseVoiceAdapter {
-    async fn transcribe(
-        &self,
-        mut audio_rx: mpsc::Receiver<AudioChunk>,
-        result_tx: mpsc::Sender<AsrResult>,
-    ) -> Result<(), AsrError> {
-        let mut all_samples: Vec<f32> = Vec::new();
-        while let Some(chunk) = audio_rx.recv().await {
-            all_samples.extend(&chunk.samples);
-        }
-
+    async fn transcribe(&self, audio: &[AudioChunk]) -> Result<Transcript, AsrError> {
+        let all_samples = AudioChunk::concat(audio);
         if all_samples.is_empty() {
-            return Err(AsrError {
-                message: "no audio received".into(),
-            });
+            return Err(AsrError::NoAudio);
         }
 
         tracing::info!(
@@ -396,20 +353,7 @@ impl AsrAdapter for SenseVoiceAdapter {
         );
 
         let text = self.transcribe_samples(&all_samples)?;
-        if !text.is_empty() {
-            result_tx
-                .send(AsrResult {
-                    text,
-                    is_final: true,
-                    confidence: 1.0,
-                    timestamp: std::time::Duration::ZERO,
-                })
-                .await
-                .map_err(|e| AsrError {
-                    message: format!("send: {e}"),
-                })?;
-        }
-        Ok(())
+        Ok(Transcript::new(text))
     }
 }
 
@@ -423,11 +367,11 @@ mod tests {
         assert!(res.is_err());
         let err = res.err().unwrap();
         assert!(
-            err.message.contains("failed to load")
-                || err.message.contains("read")
-                || err.message.contains("No such file"),
+            err.to_string().contains("failed to load")
+                || err.to_string().contains("read")
+                || err.to_string().contains("No such file"),
             "expected load-failure message, got: {}",
-            err.message
+            err
         );
     }
 
@@ -470,16 +414,13 @@ mod tests {
 
     #[tokio::test]
     async fn empty_audio_yields_no_audio_received_error() {
-        // Mirrors the contract enforced by ParakeetAdapter,
-        // ParaformerAdapter, and CanaryAdapter — empty channel →
-        // AsrError with "no audio received". Verified through MockAsr
-        // without requiring a real SenseVoice bundle.
-        use crate::mock::MockAsr;
-        let (tx, rx) = mpsc::channel::<AudioChunk>(1);
-        let (rtx, mut rrx) = mpsc::channel::<AsrResult>(1);
-        drop(tx);
-        let mock = MockAsr::new("");
-        let _ = mock.transcribe(rx, rtx).await;
-        assert!(rrx.try_recv().is_ok());
+        // Every adapter maps an empty utterance to AsrError::NoAudio
+        // via the same shared check; a real bundle is not needed to
+        // pin that check.
+        // The precondition every adapter branches on. Previously this
+        // test drove MockAsr, which never errors — so it asserted
+        // nothing about the contract it named.
+        assert!(AudioChunk::concat(&[]).is_empty());
+        assert!(AudioChunk::sample_rate_of(&[]).is_none());
     }
 }

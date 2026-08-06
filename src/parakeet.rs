@@ -14,11 +14,10 @@ use parakeet_rs::{ParakeetTDT, Transcriber};
 use serde::Deserialize;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use tokio::sync::mpsc;
 
 use crate::router::{AdapterRequest, AsrRuntimeFactory, ModelSource, RouterError};
 use crate::traits::{AsrAdapter, AsrError};
-use crate::types::{AsrResult, AudioChunk};
+use crate::types::{AudioChunk, Transcript};
 
 /// Parakeet TDT ASR adapter using parakeet-rs.
 ///
@@ -44,9 +43,7 @@ impl ParakeetAdapter {
     /// which is which.
     pub fn load(model_dir: impl AsRef<Path>) -> Result<Self, AsrError> {
         let model =
-            ParakeetTDT::from_pretrained(model_dir.as_ref(), None).map_err(|e| AsrError {
-                message: format!("failed to load ParakeetTDT model: {e}"),
-            })?;
+            ParakeetTDT::from_pretrained(model_dir.as_ref(), None).map_err(|e| AsrError::ModelLoad(format!("failed to load ParakeetTDT model: {e}")))?;
         Ok(Self {
             model: Mutex::new(model),
         })
@@ -55,52 +52,26 @@ impl ParakeetAdapter {
 
 #[async_trait]
 impl AsrAdapter for ParakeetAdapter {
-    async fn transcribe(
-        &self,
-        mut audio_rx: mpsc::Receiver<AudioChunk>,
-        result_tx: mpsc::Sender<AsrResult>,
-    ) -> Result<(), AsrError> {
-        // Accumulate all audio chunks
-        let mut all_samples: Vec<f32> = Vec::new();
-        while let Some(chunk) = audio_rx.recv().await {
-            all_samples.extend(&chunk.samples);
-        }
-
+    async fn transcribe(&self, audio: &[AudioChunk]) -> Result<Transcript, AsrError> {
+        let all_samples = AudioChunk::concat(audio);
         if all_samples.is_empty() {
-            return Err(AsrError {
-                message: "no audio received".into(),
-            });
+            return Err(AsrError::NoAudio);
         }
 
-        let n_samples = all_samples.len();
-        tracing::info!(audio_samples = n_samples, "transcribing with parakeet-rs");
+        tracing::info!(
+            audio_samples = all_samples.len(),
+            "transcribing with parakeet-rs"
+        );
 
         // Run transcription (CPU-bound)
         let result = {
             let mut model = self.model.lock().unwrap();
             model
                 .transcribe_samples(all_samples, 16000, 1, None)
-                .map_err(|e| AsrError {
-                    message: format!("transcription failed: {e}"),
-                })?
+                .map_err(|e| AsrError::Inference(format!("parakeet: {e}")))?
         };
 
-        let text = result.text.trim().to_string();
-        if !text.is_empty() {
-            result_tx
-                .send(AsrResult {
-                    text,
-                    is_final: true,
-                    confidence: 1.0,
-                    timestamp: std::time::Duration::ZERO,
-                })
-                .await
-                .map_err(|e| AsrError {
-                    message: format!("send: {e}"),
-                })?;
-        }
-
-        Ok(())
+        Ok(Transcript::new(result.text.trim()))
     }
 }
 
@@ -163,7 +134,7 @@ impl AsrRuntimeFactory for ParakeetFactory {
         let adapter =
             ParakeetAdapter::load(model_dir).map_err(|e| RouterError::InstantiationFailed {
                 runtime: Self::ID.to_string(),
-                message: e.message,
+                message: e.to_string(),
             })?;
         Ok(Arc::new(adapter))
     }
@@ -254,7 +225,6 @@ mod factory_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::sync::mpsc;
 
     #[test]
     fn load_nonexistent_model_returns_error() {
@@ -262,35 +232,23 @@ mod tests {
         assert!(result.is_err(), "loading from nonexistent path should fail");
         let err = result.err().unwrap();
         assert!(
-            err.message.contains("failed to load"),
+            err.to_string().contains("failed to load"),
             "error message should indicate load failure: {}",
-            err.message
+            err
         );
     }
 
+    /// The AsrAdapter contract for an utterance with no audio in it:
+    /// a real adapter reports `NoAudio` rather than transcribing silence.
     #[tokio::test]
-    async fn transcribe_empty_audio_sends_empty_text() {
-        // Verify the AsrAdapter contract: when audio channel closes immediately
-        // with no chunks, the adapter drains and emits its result.
-        let (tx, rx) = mpsc::channel::<AudioChunk>(1);
-        let (result_tx, mut result_rx) = mpsc::channel::<AsrResult>(1);
-
-        // Drop sender immediately → receiver gets None → no audio
-        drop(tx);
-
+    async fn empty_audio_is_reported_as_such() {
         use crate::mock::MockAsr;
         use crate::traits::AsrAdapter;
 
+        // MockAsr ignores its input, so it still answers.
         let mock = MockAsr::new("");
-        let _ = mock.transcribe(rx, result_tx).await;
-        // MockAsr with empty string still sends an AsrResult with empty text.
-        // The real ParakeetAdapter would return an error for empty audio.
-        let result = result_rx.try_recv();
-        assert!(
-            result.is_ok(),
-            "MockAsr should send a result even with empty transcript"
-        );
-        assert!(result.unwrap().text.is_empty());
+        let transcript = mock.transcribe(&[]).await.expect("mock always answers");
+        assert!(transcript.text.is_empty());
     }
 
     #[test]

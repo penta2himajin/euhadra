@@ -27,10 +27,9 @@ use ort::session::Session;
 use ort::value::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use tokio::sync::mpsc;
 
 use crate::traits::{AsrAdapter, AsrError};
-use crate::types::{AsrResult, AudioChunk};
+use crate::types::{AudioChunk, Transcript};
 
 use crate::paraformer::fbank::{Fbank, FbankOpts};
 use crate::sensevoice::vocab::ctc_collapse;
@@ -98,25 +97,15 @@ impl DolphinAdapter {
         let vocab = load_tokens(&tokens_path)?;
 
         let session = Session::builder()
-            .map_err(|e| AsrError {
-                message: format!("dolphin session builder: {e}"),
-            })?
+            .map_err(|e| AsrError::ModelLoad(format!("dolphin session builder: {e}")))?
             .with_optimization_level(GraphOptimizationLevel::Level3)
-            .map_err(|e| AsrError {
-                message: format!("dolphin optimization level: {e}"),
-            })?
+            .map_err(|e| AsrError::Inference(format!("dolphin optimization level: {e}")))?
             .with_intra_threads(INTRA_THREADS)
-            .map_err(|e| AsrError {
-                message: format!("dolphin with_intra_threads({INTRA_THREADS}): {e}"),
-            })?
+            .map_err(|e| AsrError::Inference(format!("dolphin with_intra_threads({INTRA_THREADS}): {e}")))?
             .with_inter_threads(1)
-            .map_err(|e| AsrError {
-                message: format!("dolphin with_inter_threads(1): {e}"),
-            })?
+            .map_err(|e| AsrError::Inference(format!("dolphin with_inter_threads(1): {e}")))?
             .commit_from_file(&model_path)
-            .map_err(|e| AsrError {
-                message: format!("dolphin load failed at {}: {e}", model_path.display()),
-            })?;
+            .map_err(|e| AsrError::ModelLoad(format!("dolphin load failed at {}: {e}", model_path.display())))?;
 
         let (input_x, input_x_len) = resolve_input_names(&session, &model_path)?;
         let cmvn = read_cmvn(&session, &model_path)?;
@@ -127,14 +116,12 @@ impl DolphinAdapter {
         // front-end *from* the CMVN instead would make this check
         // vacuous and quietly feed the model the wrong band layout.
         if cmvn.dim() != fbank.n_mels() {
-            return Err(AsrError {
-                message: format!(
+            return Err(AsrError::ModelLoad(format!(
                     "dolphin {}: CMVN covers {} bins but the front-end produces {}",
                     model_path.display(),
                     cmvn.dim(),
                     fbank.n_mels()
-                ),
-            });
+                )));
         }
 
         Ok(Self {
@@ -158,56 +145,40 @@ impl DolphinAdapter {
 
         let dim = self.cmvn.dim();
         let x: Array3<f32> =
-            Array3::from_shape_vec((1, n_frames, dim), feats).map_err(|e| AsrError {
-                message: format!("dolphin x tensor shape: {e}"),
-            })?;
+            Array3::from_shape_vec((1, n_frames, dim), feats).map_err(|e| AsrError::Inference(format!("dolphin x tensor shape: {e}")))?;
         // x_len is int64 here, not the int32 SenseVoice takes.
         let x_len: Array1<i64> = Array1::from(vec![n_frames as i64]);
 
-        let x_val = Value::from_array(x).map_err(|e| AsrError {
-            message: format!("dolphin x Value: {e}"),
-        })?;
-        let x_len_val = Value::from_array(x_len).map_err(|e| AsrError {
-            message: format!("dolphin x_len Value: {e}"),
-        })?;
+        let x_val = Value::from_array(x).map_err(|e| AsrError::Inference(format!("dolphin x Value: {e}")))?;
+        let x_len_val = Value::from_array(x_len).map_err(|e| AsrError::Inference(format!("dolphin x_len Value: {e}")))?;
 
-        let mut session = self.session.lock().map_err(|e| AsrError {
-            message: format!("dolphin session lock poisoned: {e}"),
-        })?;
+        let mut session = self.session.lock().map_err(|e| AsrError::Inference(format!("dolphin session lock poisoned: {e}")))?;
         let outputs = session
             .run(vec![
                 (self.input_x.as_str(), x_val.into_dyn()),
                 (self.input_x_len.as_str(), x_len_val.into_dyn()),
             ])
-            .map_err(|e| AsrError {
-                message: format!("dolphin ONNX run: {e}"),
-            })?;
+            .map_err(|e| AsrError::Inference(format!("dolphin ONNX run: {e}")))?;
 
         let log_probs = outputs[0]
             .try_extract_array::<f32>()
-            .map_err(|e| AsrError {
-                message: format!("dolphin extract log_probs: {e}"),
-            })?;
+            .map_err(|e| AsrError::Inference(format!("dolphin extract log_probs: {e}")))?;
         let view = log_probs.view();
         let shape = view.shape().to_vec();
         if shape.len() != 3 {
-            return Err(AsrError {
-                message: format!(
+            return Err(AsrError::Inference(format!(
                     "dolphin {}: unexpected log_probs rank {} (shape {shape:?})",
                     self.model_path.display(),
                     shape.len()
-                ),
-            });
+                )));
         }
         let (t, v) = (shape[1], shape[2]);
         if v != self.vocab.len() {
-            return Err(AsrError {
-                message: format!(
+            return Err(AsrError::ModelLoad(format!(
                     "dolphin {}: model emits {v} classes but tokens.txt has {}",
                     self.model_path.display(),
                     self.vocab.len()
-                ),
-            });
+                )));
         }
 
         let mut ids = Vec::with_capacity(t);
@@ -244,31 +215,25 @@ fn prepare_features(
     samples: &[f32],
 ) -> Result<(Vec<f32>, usize), AsrError> {
     if samples.is_empty() {
-        return Err(AsrError {
-            message: "no audio received".into(),
-        });
+        return Err(AsrError::NoAudio);
     }
 
     let (mut feats, n_frames) = fbank.compute(samples);
     if n_frames == 0 {
-        return Err(AsrError {
-            message: format!(
+        return Err(AsrError::Inference(format!(
                 "audio too short for one FBANK frame ({} samples)",
                 samples.len()
-            ),
-        });
+            )));
     }
     // 2000 features is a whole number of 40-wide frames as well as of
     // 80-wide ones, so `Cmvn::apply`'s divisibility check cannot catch
     // a half-width CMVN on its own.
     if cmvn.dim() != fbank.n_mels() {
-        return Err(AsrError {
-            message: format!(
+        return Err(AsrError::ModelLoad(format!(
                 "dolphin CMVN covers {} bins but the front-end produces {}",
                 cmvn.dim(),
                 fbank.n_mels()
-            ),
-        });
+            )));
     }
     cmvn.apply(&mut feats)?;
     Ok((feats, n_frames))
@@ -285,20 +250,16 @@ fn resolve_input_names(session: &Session, path: &Path) -> Result<(String, String
             .iter()
             .find(|n| n.as_str() == needle)
             .cloned()
-            .ok_or_else(|| AsrError {
-                message: format!(
+            .ok_or_else(|| AsrError::Inference(format!(
                     "dolphin ONNX {} missing input {needle:?} (have: {names:?})",
                     path.display()
-                ),
-            })
+                )))
     };
     Ok((find(ONNX_INPUT_X)?, find(ONNX_INPUT_X_LEN)?))
 }
 
 fn read_cmvn(session: &Session, path: &Path) -> Result<Cmvn, AsrError> {
-    let meta = session.metadata().map_err(|e| AsrError {
-        message: format!("dolphin metadata {}: {e}", path.display()),
-    })?;
+    let meta = session.metadata().map_err(|e| AsrError::Inference(format!("dolphin metadata {}: {e}", path.display())))?;
 
     // Not fatal, but a bundle that does not say "dolphin-ctc" is very
     // likely the wrong file for this adapter.
@@ -312,33 +273,21 @@ fn read_cmvn(session: &Session, path: &Path) -> Result<Cmvn, AsrError> {
     }
 
     let get = |key: &str| -> Result<String, AsrError> {
-        meta.custom(key).ok_or_else(|| AsrError {
-            message: format!(
+        meta.custom(key).ok_or_else(|| AsrError::ModelLoad(format!(
                 "dolphin {}: graph metadata has no {key:?}; this adapter reads \
                  the CMVN from the model rather than a sidecar",
                 path.display()
-            ),
-        })
+            )))
     };
     Cmvn::parse(&get(META_MEAN)?, &get(META_INVSTD)?)
 }
 
 #[async_trait]
 impl AsrAdapter for DolphinAdapter {
-    async fn transcribe(
-        &self,
-        mut audio_rx: mpsc::Receiver<AudioChunk>,
-        result_tx: mpsc::Sender<AsrResult>,
-    ) -> Result<(), AsrError> {
-        let mut all_samples: Vec<f32> = Vec::new();
-        while let Some(chunk) = audio_rx.recv().await {
-            all_samples.extend(&chunk.samples);
-        }
-
+    async fn transcribe(&self, audio: &[AudioChunk]) -> Result<Transcript, AsrError> {
+        let all_samples = AudioChunk::concat(audio);
         if all_samples.is_empty() {
-            return Err(AsrError {
-                message: "no audio received".into(),
-            });
+            return Err(AsrError::NoAudio);
         }
 
         tracing::info!(
@@ -347,20 +296,7 @@ impl AsrAdapter for DolphinAdapter {
         );
 
         let text = self.transcribe_samples(&all_samples)?;
-        if !text.is_empty() {
-            result_tx
-                .send(AsrResult {
-                    text,
-                    is_final: true,
-                    confidence: 1.0,
-                    timestamp: std::time::Duration::ZERO,
-                })
-                .await
-                .map_err(|e| AsrError {
-                    message: format!("send: {e}"),
-                })?;
-        }
-        Ok(())
+        Ok(Transcript::new(text))
     }
 }
 
@@ -386,9 +322,9 @@ mod tests {
             panic!("loading a nonexistent bundle should fail");
         };
         assert!(
-            err.message.contains("tokens.txt"),
+            err.to_string().contains("tokens.txt"),
             "unexpected error: {}",
-            err.message
+            err
         );
     }
 
@@ -407,7 +343,7 @@ mod tests {
     #[test]
     fn empty_audio_is_rejected_before_any_inference() {
         let err = prepare_features(&test_fbank(), &identity_cmvn(80), &[]).unwrap_err();
-        assert_eq!(err.message, "no audio received");
+        assert_eq!(err.to_string(), "no audio received");
     }
 
     #[test]
@@ -439,6 +375,6 @@ mod tests {
         // so this has to be caught by comparing widths, not by
         // divisibility.
         let err = prepare_features(&test_fbank(), &identity_cmvn(40), &[0.1; 4_000]).unwrap_err();
-        assert!(err.message.contains("covers 40 bins"), "{}", err.message);
+        assert!(err.to_string().contains("covers 40 bins"), "{}", err);
     }
 }

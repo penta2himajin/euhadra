@@ -13,14 +13,56 @@ pub struct AudioChunk {
     pub channels: u16,
 }
 
-/// The result produced by an ASR adapter — either a partial hypothesis or a
-/// final, committed transcription.
-#[derive(Debug, Clone)]
-pub struct AsrResult {
+impl AudioChunk {
+    /// Flatten a captured utterance into one sample buffer.
+    ///
+    /// Every backend wants a contiguous buffer, and the chunk
+    /// boundaries only record how the audio happened to arrive, so this
+    /// lives here rather than being rewritten in each adapter.
+    pub fn concat(chunks: &[AudioChunk]) -> Vec<f32> {
+        let total = chunks.iter().map(|c| c.samples.len()).sum();
+        let mut out = Vec::with_capacity(total);
+        for chunk in chunks {
+            out.extend_from_slice(&chunk.samples);
+        }
+        out
+    }
+
+    /// The sample rate of the first chunk, if there is one. Capture does
+    /// not change rate mid-utterance, so the first chunk speaks for all.
+    pub fn sample_rate_of(chunks: &[AudioChunk]) -> Option<u32> {
+        chunks.first().map(|c| c.sample_rate)
+    }
+}
+
+/// What an [`AsrAdapter`](crate::traits::AsrAdapter) produces for one
+/// utterance.
+///
+/// `#[non_exhaustive]`: word timings and per-token confidences are the
+/// obvious future additions, and callers only ever read this, so
+/// reserving the right to grow it costs them nothing.
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct Transcript {
+    /// The recognised text.
     pub text: String,
-    pub is_final: bool,
+    /// How confident the model is, in `0.0..=1.0`. Backends that do not
+    /// report a confidence leave this at `1.0` rather than inventing a
+    /// number.
     pub confidence: f32,
-    pub timestamp: Duration,
+    /// Length of the audio this came from, when the adapter knows it.
+    pub duration: Option<Duration>,
+}
+
+impl Transcript {
+    /// A transcript carrying only text, with no confidence claim.
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            confidence: 1.0,
+            duration: None,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -107,28 +149,36 @@ pub enum RefinementOutput {
 // Output layer
 // ---------------------------------------------------------------------------
 
-/// Error information when emission fails.
-#[derive(Debug, Clone)]
-pub struct EmitError {
-    pub message: String,
-}
+/// Why an [`OutputEmitter`](crate::traits::OutputEmitter) could not
+/// deliver its output.
+#[derive(Debug, Clone, thiserror::Error)]
+#[non_exhaustive]
+pub enum EmitError {
+    /// The target refused the write — clipboard unavailable, no focused
+    /// window, permission denied.
+    #[error("output target unavailable: {0}")]
+    Unavailable(String),
 
-impl std::fmt::Display for EmitError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.message)
-    }
-}
+    /// The emitter cannot represent this output kind, e.g. a
+    /// `Command` handed to a text-insertion emitter.
+    #[error("unsupported output: {0}")]
+    Unsupported(String),
 
-impl std::error::Error for EmitError {}
+    /// There was nothing to undo.
+    #[error("nothing to undo")]
+    NothingToUndo,
+}
 
 /// The result of an output emission attempt.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct EmitResult {
     pub success: bool,
     pub error: Option<EmitError>,
 }
 
 impl EmitResult {
+    /// The emission succeeded.
     pub fn ok() -> Self {
         Self {
             success: true,
@@ -136,13 +186,18 @@ impl EmitResult {
         }
     }
 
-    pub fn fail(msg: impl Into<String>) -> Self {
+    /// The emission failed for the given reason.
+    pub fn failed(error: EmitError) -> Self {
         Self {
             success: false,
-            error: Some(EmitError {
-                message: msg.into(),
-            }),
+            error: Some(error),
         }
+    }
+
+    /// The emission failed with an unavailable target. Shorthand for
+    /// the common case; use [`failed`](Self::failed) to pick a variant.
+    pub fn fail(msg: impl Into<String>) -> Self {
+        Self::failed(EmitError::Unavailable(msg.into()))
     }
 }
 

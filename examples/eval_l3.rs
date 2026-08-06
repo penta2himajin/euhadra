@@ -760,7 +760,7 @@ async fn run_phoneme_correction(cli: &Cli) -> Result<(), String> {
         .collect();
     let base_dict = match cli.base_dict.as_ref() {
         Some(path) => euhadra::phoneme::IpaDictionary::load(path)
-            .map_err(|e| format!("loading base dict {}: {}", path.display(), e.message))?,
+            .map_err(|e| format!("loading base dict {}: {}", path.display(), e))?,
         None => euhadra::phoneme::IpaDictionary::empty(),
     };
     // `mut` is only needed on the onnx path; without the feature the
@@ -773,7 +773,7 @@ async fn run_phoneme_correction(cli: &Cli) -> Result<(), String> {
     #[cfg(feature = "onnx")]
     if let Some(dir) = &cli.embedder_dir {
         let embedder = euhadra::phoneme::OnnxTextEmbedder::load(dir)
-            .map_err(|e| format!("loading embedder {}: {}", dir.display(), e.message))?;
+            .map_err(|e| format!("loading embedder {}: {}", dir.display(), e))?;
         corrector = corrector.with_embedder(embedder, cli.alpha);
         eprintln!(
             "[phoneme] embedder={} alpha={:.2} composite_threshold={:.2}",
@@ -1045,19 +1045,14 @@ async fn mean_error_rate(
 
     for fix in fixtures {
         let pipeline = build_pipeline(lang, cfg, &fix.asr_hypothesis)?;
-        let (audio_tx, _cancel, handle) = pipeline.session();
-        audio_tx
-            .send(AudioChunk {
-                samples: vec![0.0; 160],
-                sample_rate: 16000,
-                channels: 1,
-            })
-            .await
-            .map_err(|e| format!("send: {e}"))?;
-        drop(audio_tx);
-        let result = handle
-            .await
-            .map_err(|e| format!("join: {e}"))?
+        // MockAsr ignores audio content; one silent chunk is enough
+        // to drive the pipeline.
+        let audio = vec![AudioChunk {
+            samples: vec![0.0; 160],
+            sample_rate: 16000,
+            channels: 1,
+        }];
+        let result = pipeline.transcribe(&audio).await
             .map_err(|e| format!("pipeline: {e}"))?;
         let RefinementOutput::TextInsertion { text, .. } = &result.output else {
             return Err("expected TextInsertion".into());

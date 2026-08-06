@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use tokio::sync::mpsc;
 
 use crate::traits::*;
 use crate::types::*;
@@ -22,26 +21,8 @@ impl MockAsr {
 
 #[async_trait]
 impl AsrAdapter for MockAsr {
-    async fn transcribe(
-        &self,
-        mut audio_rx: mpsc::Receiver<AudioChunk>,
-        result_tx: mpsc::Sender<AsrResult>,
-    ) -> Result<(), AsrError> {
-        // Drain all audio (simulate listening)
-        while audio_rx.recv().await.is_some() {}
-
-        // Emit a single final result
-        let result = AsrResult {
-            text: self.transcript.clone(),
-            is_final: true,
-            confidence: 1.0,
-            timestamp: std::time::Duration::ZERO,
-        };
-        result_tx.send(result).await.map_err(|e| AsrError {
-            message: format!("send failed: {e}"),
-        })?;
-
-        Ok(())
+    async fn transcribe(&self, _audio: &[AudioChunk]) -> Result<Transcript, AsrError> {
+        Ok(Transcript::new(self.transcript.clone()))
     }
 }
 
@@ -141,9 +122,7 @@ impl LlmRefiner for MockRefiner {
                 text: s.clone(),
                 formatting: None,
             }),
-            MockRefinerBehavior::Fail(msg) => Err(RefineError {
-                message: msg.clone(),
-            }),
+            MockRefinerBehavior::Fail(msg) => Err(RefineError::Failed(msg.clone())),
         }
     }
 }

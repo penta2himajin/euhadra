@@ -48,6 +48,10 @@ async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
+# Typed errors. Proc-macro only — no runtime cost, and it keeps the
+# per-layer error enums readable instead of hand-rolling Display and
+# From for each one.
+thiserror = "2"
 # Inverse text normalization (spoken-form numerals → written form) for
 # the non-LLM TextProcessor tier. Pure Rust, no native deps, so it
 # stays in the default build.
