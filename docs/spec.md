@@ -97,16 +97,24 @@ euhadra は、音声入力を汎用的なプログラマブル入力として扱
 - キャンセル伝播: CancellationToken による inflight リクエストの即時中断
 - エラーハンドリング: ステージ単位の timeout / retry / fallback
 
-**OS Shell (ネイティブ層)**
-- マイクキャプチャと activation 制御（hotkey / VAD / push-to-talk）
-- Accessibility API を通じたフォーカスアプリ情報・テキストフィールド内容の取得
-- テキスト挿入（クリップボード / キーエミュレーション / IME 統合）
-- OS 固有のオンデバイスモデル呼び出し（Apple Foundation Models 等）
+**OS Shell (ネイティブ層) — euhadra の出荷物ではなく、利用側アプリの統合パターン**
 
-**C ABI / UniFFI 境界**
-- OS Shell と euhadra core の間のインターフェース
-- OS Shell は euhadra core が定義した trait の具体実装を C ABI 経由で注入する
-- euhadra core はプラットフォーム非依存のまま、OS 固有機能を利用可能
+当初この層には 4 つの責務を置いていたが、実装の結果 2 つはネイティブコードなしで解決した。
+
+| 当初の責務 | 現状 |
+|---|---|
+| マイクキャプチャ | `cpal`（`mic` feature）で実装済み。**Rust・クロスプラットフォーム** |
+| テキスト挿入（クリップボード） | `arboard`（`clipboard` feature）で実装済み。**Rust・クロスプラットフォーム** |
+| Accessibility 経由のコンテキスト取得 | 未実装。真にネイティブが必要（#123） |
+| OS 組み込み LLM 呼び出し | 未実装。真にネイティブが必要（#122） |
+
+残るネイティブ必須項目は Accessibility Provider、OS 組み込み LLM、グローバルホットキーによる activation（§7.1）、IME 統合（§9.3 で Phase 2 Non-Goal）である。前 2 者は #122 / #123 で保留とした。
+
+したがって **euhadra はこの層を出荷しない**。euhadra が提供するのは trait（接続点）であり、ネイティブ実装を注ぐかどうかは利用側アプリの判断となる。activation についても、mic / clipboard と同様に Rust のクロスプラットフォームクレートで済む可能性があり、ネイティブ前提と決めつけない。
+
+**C ABI / UniFFI 境界 — 未着工**
+
+構想は §10.3 の通りだが、現時点で `uniffi` / `extern "C"` / `#[no_mangle]` はリポジトリに存在しない。**消費者が現れるまで着工しない**方針を取る。理由は §10.3 に記す。
 
 ---
 
@@ -278,7 +286,7 @@ struct FilterResult {
 **想定実装**:
 - `FillerFilter::for_language(Language)` — **推奨エントリポイント**。言語から分かち書き方式（空白 / `、` / `，`）を型で選び、以下の具象フィルタへ委譲する。空白区切りの `SimpleFillerFilter` を日本語・中国語に手で組み合わせると、フィラーで始まる発話が丸ごと 1 トークンとして削除され、出力が空になる（エラーは出ない）。この組み合わせ事故を型で防ぐのが目的
 - `SimpleFillerFilter` — 辞書照合ベースのフィラー除去（階層化: pure / contextual / multi-word）。空白区切り言語（en / es / ko）専用
-- ~~`EmbeddingFillerFilter` / `OnnxEmbeddingFilter`~~ — 埋め込みコサイン類似度によるフィラー検出。**撤去済み**。実測でルールベース実装が全言語で上回ったため（[`model-upgrade-candidates.md`](./model-upgrade-candidates.md) §3.2）、Tier 1 のフィラー除去はルールベースのみとする
+- ~~`EmbeddingFillerFilter` / `OnnxEmbeddingFilter`~~ — 埋め込みコサイン類似度によるフィラー検出。**非推奨・未配線**。実測でルールベース実装が全言語で上回ったため（[`model-upgrade-candidates.md`](./model-upgrade-candidates.md) §3.2）、Tier 1 のフィラー除去はルールベースのみとする。なお `OnnxEmbeddingFilter` 自体は `src/onnx_processing.rs` に `onnx` feature 配下で**残っている**（本節は以前「撤去済み」と記述していたが誤り。§6.1 / §9.2 の記述が正）。実削除は公開 API の破壊変更となるため別途判断する
 - `JapaneseFillerFilter` — 読点区切り3パス検出 + ASR アーティファクト対応
 - `ChineseFillerFilter` — 中文 `，` 区切り 3 パス (pure: 嗯 / 呃 / 哦, contextual: 那个 / 这个 / 就是 / 然后 / 怎么说)
 
@@ -511,6 +519,8 @@ refinement  ──[bounded(4)]───► output_emitter
 
 ## 5. On-Device Model Integration
 
+> **スコープ注記**: 本章の LLM 部分（§5.2 / §5.3、および §5.1 の LLM 列）は **Phase 1 スコープ外**であり、`llm` feature ごと #122 で保留としている。現時点で `impl LlmRefiner` は `MockRefiner` のみ。ASR 部分（§5.1 の ASR 列）は稼働中で、本注記の対象外。
+
 ### 5.1 Platform Matrix
 
 | Platform | ASR (on-device) | LLM (on-device) | LLM 統合方式 | Context API | Notes |
@@ -644,8 +654,8 @@ ASR Output (raw text)
     │  - SpokenFormNormalizer: 規則ベース辞書（英語）
     │
     ▼
-[Tier 3: LlmRefiner]  ← オプション、数百ミリ秒〜秒
-    │  自由な文体の言い換え                            ☐ 未実装
+[Tier 3: LlmRefiner]  ← オプション、数百ミリ秒〜秒 / 具象実装なし（#122 保留）
+    │  自由な文体の言い換え                            ☐ 未実装（issue #122 保留）
     │  トーン調整（app_name / field_type に基づく）   ☐ 未実装（issue #75 保留）
     │  コンテキスト適応書き換え（field_content 文脈） ☐ 未実装（issue #74 保留）
     │  コマンド解釈・構造化出力（Phase 2）            ☐ 未実装（issue #73 保留）
@@ -822,6 +832,8 @@ Tier 3:   LlmRefiner          — LLM 3B+、~700ms、オプション（意味理
 
 ## 7. OS Shell Specifications
 
+本章は euhadra が出荷する層の仕様ではなく、**利用側アプリが OS 統合を実装する際の設計指針**である（§2.2 参照）。このうち §7.2 の Clipboard + Paste は `ClipboardEmitter`（`clipboard` feature）として euhadra 側に実装済みで、ネイティブコードを要しない。
+
 ### 7.1 Activation Subsystem
 
 | Method | Description | Implementation |
@@ -886,6 +898,8 @@ MIT / Apache ライセンスのため、コード自体による参入障壁は�
 
 「80 点の Aqua Voice 体験が 10 行のコードで動く」こと。
 
+ただしこの表現は**アプリ**の言い方であり、Phase 1 が実際に出荷するのは**ライブラリ**である（`.asr()` のみ必須、CLI はデモ）。「10 行」が指すのは §9.4 の `PipelineBuilder` 構成であって、完成した dictation アプリではない。§1.3 の positioning（開発者向け OSS フレームワーク）が正であり、OS Shell を Phase 1 から外したのはこの整理に沿う（§2.2 / #123）。
+
 ### 9.2 MVP Feature Set
 
 **コアパイプライン**:
@@ -923,13 +937,16 @@ MIT / Apache ライセンスのため、コード自体による参入障壁は�
 **Tier 3: LlmRefiner**:
 - [x] LlmRefiner trait 定義
 - [x] MockRefiner（passthrough / uppercase、テスト用）
-- [ ] LlamaCppRefiner（llama.cpp C FFI、汎用オンデバイス）
-- [ ] クラウド refiner（OpenAI / Cerebras / Groq）
+- 具象実装（`LlamaCppRefiner` / OS 組み込み / クラウド）は **Phase 1 スコープ外**。`llm` feature ごと #122 で保留
+
+  trait は残す。§12 のプロダクトパターンは全てここに乗るため、euhadra をプログラマブルにしている接続点そのものである。一方 §3.6 の表は LLM 列からほぼ全項目を追い出しており、残る「自由な言い換え」「トーン調整」は *dictation* ではなく **編集**にあたる。接続点を提供するのはインフラの仕事だが、そこに何を挿すかは意見であり、実装を同梱した時点で euhadra が editorial な立場を取ることになる。この線引き自体が #122 の主論点。
 
 **Context Provider**:
 - [x] ContextProvider trait 定義
 - [x] MockContextProvider（手動コンテキスト指定）
-- [ ] MacAccessibilityProvider（macOS AXUIElement API）
+- Accessibility 系の具象実装は **Phase 1 スコープ外**（#123）
+
+  `ContextSnapshot` を実際に読んでいるのは `ParagraphSplitter` の `field_type` 1 フィールドのみで、残る 6 フィールドは未消費である。この構造体は §6.2 の「LLM プロンプトの Context Block」向けに設計されており、主な受益者が Tier 3 である以上 #122 の決着に従属する。なお `ParagraphSplitter` は `field_type` が `None` のとき分割する既定動作を持つため、Provider 不在でも動作する。
 
 **Output Emitter**:
 - [x] OutputEmitter trait 定義
@@ -945,12 +962,12 @@ MIT / Apache ライセンスのため、コード自体による参入障壁は�
 - [x] README.md + Getting Started ガイド
 - [x] 技術仕様書（spec.md）
 
-**OS Shell**:
-- [ ] macOS 向け OS Shell（Accessibility API + Clipboard 挿入 + Apple Foundation Models）
+**OS Shell**: Phase 1 スコープ外（#123）。§2.2 の通り euhadra が出荷する層ではない。4 責務のうちマイクキャプチャとテキスト挿入はクロスプラットフォーム Rust で実装済み、残る Accessibility と OS 組み込み LLM は #123 / #122 で保留。
 
 ### 9.3 MVP Non-Goals (Phase 2+)
 
-- Windows / Linux / iOS / Android OS Shell 対応
+- OS Shell 対応全般（macOS 含む）— euhadra の出荷物ではない。§2.2 / #123
+- LlmRefiner 具象実装と `llm` feature — #122
 - Command / StructuredInput 出力モード
 - Streaming（speculative）戦略
 - IME 統合
@@ -959,7 +976,7 @@ MIT / Apache ライセンスのため、コード自体による参入障壁は�
 ※ 当初 Non-Goals としていた以下は Phase 1 で実装済み:
 - オンデバイス ASR 統合 → WhisperLocal + ParakeetAdapter（ONNX）で実現
 - Tier 2 テキスト処理 → 自己訂正検出、句読点挿入（ルール+ONNX）、固有名詞補正（音素距離）、段落分割（埋め込み距離）
-- オンデバイス LLM → llama.cpp C FFI 統合を Phase 1 残タスクとして追加
+- オンデバイス LLM → 一度 Phase 1 残タスクとしたが、#122 で再び Phase 1 スコープ外に戻した（責務の線引き自体が未決のため）
 
 ### 9.4 Target User Experience
 
@@ -1051,6 +1068,14 @@ Tier 3（LlmRefiner）と `MacAccessibilityProvider` は未実装のため、上
 **Feature gate 設計**: デフォルトビルドは ML 依存ゼロ（ルールベース処理のみ）。`onnx` フラグで ONNX モデル推論を有効化。`llm` フラグ（予定）で llama.cpp 統合を有効化。
 
 ### 10.3 FFI Strategy
+
+**現状: 未着工。消費者が現れるまで着工しない。**
+
+`uniffi` / `extern "C"` / `#[no_mangle]` はリポジトリに存在しない。これは意図的な保留であり、根拠は #119 の経験にある。`AsrAdapter` はチャネルベースで設計されていたが、実アダプタが 9 個揃った段階でバッチ API へ作り直す必要が生じた。設計が不注意だったのではなく、**実装が揃うまで誤りが見えなかった**。
+
+`ContextProvider` と `LlmRefiner` は現在まさにその状態にある（モック実装のみ）。この 2 つをまたぐ C ABI を先に確定させると、同種の誤りを修正コストの一桁高い層に固定してしまう。境界の設計は、注入される実物が少なくとも 1 つ存在してから行う。
+
+以下は着工時の方針:
 
 - **UniFFI** を第一候補とする（Kotlin / Swift / Python バインディングを自動生成）
 - Apple Foundation Models: Swift 側に薄い C ABI ブリッジを手書き（UniFFI で表現しにくい Apple 固有型のため）

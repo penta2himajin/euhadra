@@ -14,7 +14,7 @@ Microphone / WAV
     → ASR (whisper.cpp local)
     → TextFilter (filler removal: um, uh, えーと...)
     → TextProcessor (self-correction, punctuation, capitalization)
-    → [LlmRefiner] (optional: tone adjustment)
+    → [LlmRefiner] (seam only — no implementation ships)
     → Output (clipboard / stdout)
 ```
 
@@ -197,7 +197,7 @@ euhadra processes ASR output through three independent layers, each optional:
 |------|-----------|-------------|------|------|
 | 1 | **TextFilter** | Filler removal (um, uh, えーと) | No | 0 MB (rules) or 33 MB (embeddings) |
 | 2 | **TextProcessor** | Punctuation, capitalization, self-correction | No | 0 MB (rules) or 5-50 MB (ONNX) |
-| 3 | **LlmRefiner** | Tone adjustment, context-adaptive rewriting | Yes | Optional |
+| 3 | **LlmRefiner** | Tone adjustment, context-adaptive rewriting | Yes | Trait only — nothing ships |
 
 Tier 1 + 2 alone produce clean, punctuated text without any LLM or network calls.
 
@@ -268,18 +268,33 @@ let asr = WhisperOnnxAdapter::load("vendor/whisper_onnx_turbo")?
 ## Architecture
 
 ```
-[OS Shell (Swift/Kotlin/C++)]
-    ↕ C ABI / UniFFI
 [euhadra core (Rust)]
     ├── Pipeline runtime (tokio async)
     ├── ASR adapter trait         → WhisperLocal (whisper.cpp), ParakeetAdapter, ParaformerAdapter (zh)
-    ├── TextFilter trait          → SimpleFillerFilter, JapaneseFillerFilter, ChineseFillerFilter
-    ├── TextProcessor trait       → SelfCorrectionDetector, BasicPunctuationRestorer
-    ├── LLM refiner trait         → (optional, pluggable)
-    ├── Context provider trait    → Manual, Accessibility API
-    ├── Output emitter trait      → Clipboard, stdout
-    └── [onnx] ONNX processing   → OnnxEmbeddingFilter, OnnxPunctuationRestorer
+    ├── TextFilter trait          → FillerFilter::for_language → Simple / Japanese / Chinese / Spanish
+    ├── TextProcessor trait       → SelfCorrectionDetector, BasicPunctuationRestorer,
+    │                                SpokenFormNormalizer, InverseTextNormalizer,
+    │                                PhonemeCorrector, ParagraphSplitter
+    ├── LlmRefiner trait          → no implementation (see below)
+    ├── ContextProvider trait     → no implementation (see below)
+    ├── OutputEmitter trait       → StdoutEmitter, ClipboardEmitter [clipboard]
+    ├── [mic] Microphone capture  → cpal, cross-platform
+    └── [onnx] ONNX backends      → OnnxPunctuationRestorer, and the embedder / G2P
+                                    that PhonemeCorrector and ParagraphSplitter
+                                    use when available
 ```
+
+euhadra is a library, not an application. It ships the traits; native OS
+integration — accessibility APIs, global hotkeys, on-device LLM bridges — is
+something a consuming app provides, not something euhadra links in. Microphone
+capture and clipboard insertion are the exceptions, and only because they turned
+out to be solvable in cross-platform Rust.
+
+`LlmRefiner` and `ContextProvider` are therefore defined but unimplemented. That
+is deliberate rather than unfinished: Tiers 1 and 2 have ground truth and are
+gated on WER/CER/F1 in CI, whereas a free-form LLM rewrite has no test that can
+assert it is correct. euhadra provides the seam; what you plug into it is your
+opinion, not ours.
 
 ## Project structure
 
