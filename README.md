@@ -215,6 +215,14 @@ only claims a language it can measure.
 | Korean   | ✅ | ✅ | ✅ in tree |
 | Spanish  | ✅ | ✅ | ⚠️ generated on demand |
 
+The gold sets themselves are provisional. Most were drafted by Claude and have
+**not yet been reviewed by native speakers** — this covers the filler sets for
+English, Japanese, Chinese and Korean, and every self-correction set. The one
+language whose annotations come from human markup (Spanish, via CIEMPIESS) is
+the one not currently measured. Native-speaker review of the existing five is
+the single most useful contribution to this project right now; see
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
 Everything else is unmeasured. The pipeline will still run on other languages —
 ASR is a pluggable adapter and several backends are multilingual — but the Tier 1
 and Tier 2 stages have no lexicon for them and no way to tell you when they are
@@ -397,6 +405,10 @@ Licensed under either of
 at your option.
 
 ### Contribution
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to work on euhadra. The most
+useful contribution right now is native-speaker review of the evaluation gold
+sets — see the Languages section above for why.
 
 Unless you explicitly state otherwise, any contribution intentionally submitted
 for inclusion in the work by you, as defined in the Apache-2.0 license, shall be
