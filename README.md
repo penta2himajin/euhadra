@@ -293,6 +293,25 @@ re-transcribing a growing prefix was measured and rejected — the text churned
 get instead is one transcript per utterance, which for dictation is the useful
 granularity anyway.
 
+### Does it help? Measured, yes
+
+On the FLEURS en/ja subsets with 5 s of silence added either side of each
+utterance, using the models euhadra actually ships. Full table and method in
+[`docs/benchmarks/vad_delta_wer.md`](docs/benchmarks/vad_delta_wer.md).
+
+| condition | en (WER) | Δ | ja (CER) | Δ |
+|---|---|---|---|---|
+| clean, no detector | 0.0762 | — | 0.0724 | — |
+| padded, **no detector** | **0.1875** | **+0.1114** | 0.1211 | +0.0487 |
+| padded, `SpeechOnly` (default) | 0.0762 | **+0.0000** | 0.0759 | +0.0035 |
+
+How much silence costs you depends on the decoder. Ask Canary — the `en`
+model — to transcribe 10 seconds of silence alone and it returns a runaway
+repetition (`".S. Sometimes it's a long way, …"` fifty times over) or a fluent
+invented paragraph. Ask Parakeet and it returns 「心の声。」. An attention
+decoder chooses its own output length; a transducer's is bounded by acoustic
+frames. Both improve with a detector; only one was dangerous without.
+
 Partials are advisory by default. `FinalPass` decides what the returned
 transcript is actually computed from:
 
@@ -309,6 +328,12 @@ nothing at all — useful for measuring one policy against another.
 `JoinSegments` is the cheap one and the only one that inherits segmentation
 errors in full. Dropping `session.partials` skips the per-utterance pass
 entirely, which saves the second ASR run under the first two policies.
+
+The gap between the first and last is not theoretical. Off *identical*
+segmentation, `en` at −45 dBFS scored 0.0855 under `SpeechOnly` and 0.3940 under
+`JoinSegments` — 4.6× worse, because the fragments went to an attention decoder
+that answered them fluently and wrongly. Use `JoinSegments` when one ASR pass
+matters more than the transcript does.
 
 ## CLI reference
 
