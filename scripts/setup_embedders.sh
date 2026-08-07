@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Download the sentence-embedding ONNX bundles that
-# `OnnxEmbeddingFilter::load` / `OnnxTextEmbedder::load` accept, into
+# `OnnxTextEmbedder::load` accepts, into
 # the directory layout those loaders expect:
 #
 #   <DIR>/
