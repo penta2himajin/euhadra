@@ -65,6 +65,25 @@ struct Cli {
     #[arg(long, value_delimiter = ',', default_value = "-100,-45")]
     noise_db: Vec<f32>,
 
+    /// Which detectors to run.
+    #[arg(long, value_delimiter = ',', default_value = "none,energy,earshot")]
+    detectors: Vec<String>,
+
+    /// Speech-score thresholds to sweep, overriding each backend's own
+    /// `default_threshold`. Sweeping is how those defaults were chosen:
+    /// a backend whose scores are not on the scale the segmenter assumes
+    /// looks exactly like a backend that is wrong about which frames are
+    /// speech, and only a sweep tells the two apart.
+    ///
+    /// Empty — the default — leaves each backend on its own calibration,
+    /// which is what a caller of the library gets.
+    #[arg(long, value_delimiter = ',')]
+    thresholds: Vec<f32>,
+
+    /// Which final-pass policies to run.
+    #[arg(long, value_delimiter = ',', default_value = "speech-only,join")]
+    policies: Vec<String>,
+
     /// Where to write the results as JSON.
     #[arg(long)]
     out: Option<PathBuf>,
@@ -233,6 +252,7 @@ fn main() {
             |_, chunk| chunk.clone(),
             Detector::None,
             FinalPass::WholeUtterance,
+            None,
             by_chars,
             None,
         ));
@@ -243,7 +263,7 @@ fn main() {
         report
             .entry(lang.clone())
             .or_default()
-            .insert("clean|none|whole".into(), clean.clone());
+            .insert("clean|none|tdefault|whole".into(), clean.clone());
 
         // ── The hallucination probe: what the model says to silence ─────
         for &db in &cli.noise_db {
@@ -271,28 +291,54 @@ fn main() {
             };
 
             for detector in [Detector::None, Detector::Energy, Detector::Earshot] {
-                let policies: &[FinalPass] = if detector == Detector::None {
-                    &[FinalPass::WholeUtterance]
+                if !cli.detectors.iter().any(|d| d == detector.label()) {
+                    continue;
+                }
+                // The threshold only exists for a detector, and only one
+                // policy is defined without one.
+                let thresholds: Vec<Option<f32>> = if detector == Detector::None {
+                    vec![None]
+                } else if cli.thresholds.is_empty() {
+                    vec![None]
                 } else {
-                    &[FinalPass::SpeechOnly, FinalPass::JoinSegments]
+                    cli.thresholds.iter().copied().map(Some).collect()
                 };
-                for &policy in policies {
-                    let mut cell = runtime.block_on(measure(
-                        &asr,
-                        &audio,
-                        padder,
-                        detector,
-                        policy,
-                        by_chars,
-                        Some(&clean),
-                    ));
-                    cell.delta = cell.error_rate - clean.error_rate;
-                    let key = format!("{db}|{}|{}", detector.label(), policy_label(policy));
-                    eprintln!(
-                        "[{lang}] {key}: {:.4} (Δ{:+.4}) segments {:.2} inflated {} ({:.1}s)",
-                        cell.error_rate, cell.delta, cell.segments, cell.inflated, cell.seconds
-                    );
-                    report.entry(lang.clone()).or_default().insert(key, cell);
+                let policies: Vec<FinalPass> = if detector == Detector::None {
+                    vec![FinalPass::WholeUtterance]
+                } else {
+                    [FinalPass::SpeechOnly, FinalPass::JoinSegments]
+                        .into_iter()
+                        .filter(|p| cli.policies.iter().any(|s| s == policy_label(*p)))
+                        .collect()
+                };
+                for &threshold in &thresholds {
+                    for &policy in &policies {
+                        let mut cell = runtime.block_on(measure(
+                            &asr,
+                            &audio,
+                            padder,
+                            detector,
+                            policy,
+                            threshold,
+                            by_chars,
+                            Some(&clean),
+                        ));
+                        cell.delta = cell.error_rate - clean.error_rate;
+                        let key = format!(
+                            "{db}|{}|t{}|{}",
+                            detector.label(),
+                            match threshold {
+                                Some(t) => t.to_string(),
+                                None => "default".to_string(),
+                            },
+                            policy_label(policy)
+                        );
+                        eprintln!(
+                            "[{lang}] {key}: {:.4} (Δ{:+.4}) segments {:.2} inflated {} ({:.1}s)",
+                            cell.error_rate, cell.delta, cell.segments, cell.inflated, cell.seconds
+                        );
+                        report.entry(lang.clone()).or_default().insert(key, cell);
+                    }
                 }
             }
         }
@@ -331,6 +377,7 @@ async fn measure<F>(
     prepare: F,
     detector: Detector,
     policy: FinalPass,
+    threshold: Option<f32>,
     by_chars: bool,
     clean: Option<&Cell>,
 ) -> Cell
@@ -351,7 +398,15 @@ where
     let mut builder = PipelineBuilder::new()
         .asr(Shared(std::sync::Arc::clone(asr)))
         .final_pass(policy)
-        .segmenter_config(SegmenterConfig::default());
+        .segmenter_config({
+            // `#[non_exhaustive]`, so it is built by mutation rather
+            // than a struct literal.
+            let mut config = SegmenterConfig::default();
+            if threshold.is_some() {
+                config.threshold = threshold;
+            }
+            config
+        });
     if let Some(backend) = detector.backend() {
         builder = builder.vad(BoxedVad(backend));
     }

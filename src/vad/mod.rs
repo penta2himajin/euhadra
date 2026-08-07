@@ -89,6 +89,24 @@ pub trait VadBackend: Send + Sync {
     /// utterance into the next, while the backend itself is shared
     /// (`Arc<dyn VadBackend>`) across sessions.
     fn start(&self) -> Box<dyn VadStream>;
+
+    /// The score above which this backend means "speech".
+    ///
+    /// Calibration belongs to the backend, not to the segmentation
+    /// policy: a probability is only comparable against a threshold that
+    /// was chosen for the same scale. 0.5 is the default because it is
+    /// what a calibrated detector produces, and `EnergyVad` is built to
+    /// hit it exactly — but a backend is free to disagree, and
+    /// `EarshotVad` does.
+    ///
+    /// Measured, not assumed. Getting this wrong is silent and
+    /// expensive: `EarshotVad` scored at 0.5 lost whole utterances and
+    /// cost +0.05 WER (en) / +0.13 CER (ja) against no detector at all,
+    /// which read as "this backend is bad" rather than "this number is
+    /// wrong". See `docs/benchmarks/vad_delta_wer.md`.
+    fn default_threshold(&self) -> f32 {
+        0.5
+    }
 }
 
 /// One detection pass over consecutive frames of a single recording.

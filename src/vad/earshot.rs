@@ -63,6 +63,35 @@ impl VadBackend for EarshotVad {
         Some(SAMPLE_RATE)
     }
 
+    /// 0.2, not the 0.5 the crate's README suggests.
+    ///
+    /// Measured on the FLEURS 30-utterance subsets with 5 s of silence
+    /// added either side (`examples/eval_vad.rs`, full table in
+    /// `docs/benchmarks/vad_delta_wer.md`). ΔWER (en) / ΔCER (ja) against
+    /// the clean recording, at −45 dBFS background:
+    ///
+    /// | threshold | en | ja |
+    /// |---|---|---|
+    /// | 0.05 | — | +0.0274 |
+    /// | 0.1 | −0.0060 | +0.0290 |
+    /// | 0.15 | — | +0.0142 |
+    /// | **0.2** | **−0.0111** | **−0.0226** |
+    /// | 0.3 | −0.0037 | +0.0083 |
+    /// | 0.5 | +0.0529 | +0.1263 |
+    /// | 0.7 | +0.2515 | — |
+    /// | 0.9 | +0.5945 | — |
+    ///
+    /// The window is narrow in both directions. Below ~0.15 every frame
+    /// scores as speech and the numbers converge exactly on the
+    /// no-detector baseline — the detector is on but deciding nothing. At
+    /// 0.5 it misses speech instead, dropping whole utterances, and the
+    /// result looked like a bad backend rather than a bad number. That
+    /// mistake is why calibration is a backend concern here and not a
+    /// field of [`SegmenterConfig`](super::SegmenterConfig).
+    fn default_threshold(&self) -> f32 {
+        0.2
+    }
+
     fn start(&self) -> Box<dyn VadStream> {
         // A fresh detector per pass: it carries state across frames, and
         // one utterance's must not colour the next.

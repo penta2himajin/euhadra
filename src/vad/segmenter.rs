@@ -14,8 +14,14 @@ use super::{SpeechSegment, VadBackend, VadError};
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct SegmenterConfig {
-    /// Probability at or above which a frame counts as speech.
-    pub threshold: f32,
+    /// Score at or above which a frame counts as speech.
+    ///
+    /// `None` — the default — takes
+    /// [`VadBackend::default_threshold`], which is where the
+    /// backend's own calibration lives. Set it only to override that,
+    /// and expect the right value to differ per backend rather than
+    /// being a property of the audio.
+    pub threshold: Option<f32>,
 
     /// How much continuous speech opens an utterance. Guards against a
     /// door slam or a keystroke starting one.
@@ -44,7 +50,7 @@ pub struct SegmenterConfig {
 impl Default for SegmenterConfig {
     fn default() -> Self {
         Self {
-            threshold: 0.5,
+            threshold: None,
             min_speech: Duration::from_millis(120),
             min_silence: Duration::from_millis(700),
             speech_pad: Duration::from_millis(200),
@@ -103,12 +109,13 @@ impl Segmenter {
             }
         }
         let frame_size = backend.frame_size().max(1);
+        let threshold = config.threshold.unwrap_or_else(|| backend.default_threshold());
         let frames = |d: Duration| -> usize {
             let samples = d.as_secs_f64() * sample_rate as f64;
             (samples / frame_size as f64).ceil() as usize
         };
         Ok(Self {
-            threshold: config.threshold,
+            threshold,
             frame_size,
             // At least one frame of each, so a zero duration still means
             // "one frame of evidence" rather than "no evidence needed".
@@ -402,6 +409,73 @@ mod tests {
             1,
             "default min_silence must be longer than a mid-sentence pause; \
              got {segments:?}"
+        );
+    }
+
+    /// A backend's own calibration is what an unset threshold means.
+    /// `EarshotVad` scores on a different scale from `EnergyVad`, and
+    /// assuming one number fits both cost +0.05 WER before it was
+    /// measured — so the wiring that reads it is pinned here.
+    #[test]
+    fn an_unset_threshold_takes_the_backends_calibration() {
+        struct Quiet;
+        impl VadBackend for Quiet {
+            fn frame_size(&self) -> usize {
+                160
+            }
+            fn required_sample_rate(&self) -> Option<u32> {
+                None
+            }
+            fn default_threshold(&self) -> f32 {
+                0.2
+            }
+            fn start(&self) -> Box<dyn crate::vad::VadStream> {
+                unreachable!("this test drives the segmenter directly")
+            }
+        }
+
+        let config = no_padding();
+        assert!(config.threshold.is_none(), "the default must be unset");
+
+        // 0.3 is speech at the backend's 0.2 and silence at the
+        // segmenter's own 0.5, so the two cannot be confused.
+        let seg = Segmenter::new(&Quiet, 16_000, config).unwrap();
+        let mut probs = frames(30, 0.3);
+        probs.extend(frames(100, 0.0));
+        assert_eq!(
+            run(seg, &probs).len(),
+            1,
+            "0.3 should count as speech at the backend's threshold of 0.2"
+        );
+    }
+
+    #[test]
+    fn an_explicit_threshold_overrides_the_backend() {
+        struct Quiet;
+        impl VadBackend for Quiet {
+            fn frame_size(&self) -> usize {
+                160
+            }
+            fn required_sample_rate(&self) -> Option<u32> {
+                None
+            }
+            fn default_threshold(&self) -> f32 {
+                0.2
+            }
+            fn start(&self) -> Box<dyn crate::vad::VadStream> {
+                unreachable!("this test drives the segmenter directly")
+            }
+        }
+
+        let mut config = no_padding();
+        config.threshold = Some(0.5);
+        let seg = Segmenter::new(&Quiet, 16_000, config).unwrap();
+
+        let mut probs = frames(30, 0.3);
+        probs.extend(frames(100, 0.0));
+        assert!(
+            run(seg, &probs).is_empty(),
+            "an explicit 0.5 must win over the backend's 0.2"
         );
     }
 
