@@ -1,0 +1,171 @@
+{
+  "lead_silence_s": 5.0,
+  "note": "Synthetic silence measures an upper bound; a real room's background noise is what makes a level detector fail.",
+  "results": {
+    "en": {
+      "-100|earshot|tdefault|join": {
+        "delta": 0.002217578079647037,
+        "error_rate": 0.07841318329014495,
+        "inflated": 1,
+        "seconds": 54.3737198,
+        "segments": 1.0
+      },
+      "-100|earshot|tdefault|speech-only": {
+        "delta": 0.002217578079647037,
+        "error_rate": 0.07841318329014495,
+        "inflated": 1,
+        "seconds": 55.349273868,
+        "segments": 1.0
+      },
+      "-100|energy|tdefault|join": {
+        "delta": 0.0,
+        "error_rate": 0.07619560521049791,
+        "inflated": 2,
+        "seconds": 44.983614682,
+        "segments": 1.0333333333333334
+      },
+      "-100|energy|tdefault|speech-only": {
+        "delta": 0.0,
+        "error_rate": 0.07619560521049791,
+        "inflated": 2,
+        "seconds": 46.263544893,
+        "segments": 1.0333333333333334
+      },
+      "-100|none|tdefault|whole": {
+        "delta": 0.11135179024404494,
+        "error_rate": 0.18754739545454285,
+        "inflated": 7,
+        "seconds": 71.740483827,
+        "segments": 0.0
+      },
+      "-45|earshot|tdefault|join": {
+        "delta": 0.24639710829028322,
+        "error_rate": 0.3225927135007811,
+        "inflated": 14,
+        "seconds": 63.79696712,
+        "segments": 2.033333333333333
+      },
+      "-45|earshot|tdefault|speech-only": {
+        "delta": 0.014977962403498885,
+        "error_rate": 0.0911735676139968,
+        "inflated": 0,
+        "seconds": 79.90405442,
+        "segments": 2.033333333333333
+      },
+      "-45|energy|tdefault|join": {
+        "delta": 0.3178329745259206,
+        "error_rate": 0.39402857973641847,
+        "inflated": 16,
+        "seconds": 68.943143815,
+        "segments": 2.2
+      },
+      "-45|energy|tdefault|speech-only": {
+        "delta": 0.00931248409096172,
+        "error_rate": 0.08550808930145963,
+        "inflated": 1,
+        "seconds": 53.613720125,
+        "segments": 2.2
+      },
+      "-45|none|tdefault|whole": {
+        "delta": 0.1093413776260473,
+        "error_rate": 0.1855369828365452,
+        "inflated": 7,
+        "seconds": 71.612154589,
+        "segments": 0.0
+      },
+      "clean|none|tdefault|whole": {
+        "delta": 0.0,
+        "error_rate": 0.07619560521049791,
+        "inflated": 0,
+        "seconds": 58.855086624,
+        "segments": 0.0
+      }
+    },
+    "ja": {
+      "-100|earshot|tdefault|join": {
+        "delta": 0.014929250214651218,
+        "error_rate": 0.08733120928718958,
+        "inflated": 1,
+        "seconds": 31.920044173,
+        "segments": 1.2666666666666666
+      },
+      "-100|earshot|tdefault|speech-only": {
+        "delta": 0.0019371497225507267,
+        "error_rate": 0.07433910879508909,
+        "inflated": 1,
+        "seconds": 31.690586427,
+        "segments": 1.2666666666666666
+      },
+      "-100|energy|tdefault|join": {
+        "delta": 0.0035393475572046834,
+        "error_rate": 0.07594130662974305,
+        "inflated": 1,
+        "seconds": 32.190329205,
+        "segments": 1.0
+      },
+      "-100|energy|tdefault|speech-only": {
+        "delta": 0.0035393475572046834,
+        "error_rate": 0.07594130662974305,
+        "inflated": 1,
+        "seconds": 33.829386181,
+        "segments": 1.0
+      },
+      "-100|none|tdefault|whole": {
+        "delta": 0.04867533110711089,
+        "error_rate": 0.12107729017964926,
+        "inflated": 1,
+        "seconds": 56.45932699,
+        "segments": 0.0
+      },
+      "-45|earshot|tdefault|join": {
+        "delta": 0.05223317004726907,
+        "error_rate": 0.12463512911980744,
+        "inflated": 2,
+        "seconds": 40.92137774,
+        "segments": 2.2
+      },
+      "-45|earshot|tdefault|speech-only": {
+        "delta": -0.02256661811455045,
+        "error_rate": 0.04983534095798792,
+        "inflated": 1,
+        "seconds": 49.38984873,
+        "segments": 2.2
+      },
+      "-45|energy|tdefault|join": {
+        "delta": 0.06517931853074592,
+        "error_rate": 0.13758127760328429,
+        "inflated": 1,
+        "seconds": 36.479444285,
+        "segments": 2.0
+      },
+      "-45|energy|tdefault|speech-only": {
+        "delta": -0.022218694433293433,
+        "error_rate": 0.05018326463924493,
+        "inflated": 1,
+        "seconds": 32.654814979,
+        "segments": 2.0
+      },
+      "-45|none|tdefault|whole": {
+        "delta": 0.02743632791676706,
+        "error_rate": 0.09983828698930543,
+        "inflated": 1,
+        "seconds": 56.565330562,
+        "segments": 0.0
+      },
+      "clean|none|tdefault|whole": {
+        "delta": 0.0,
+        "error_rate": 0.07240195907253837,
+        "inflated": 0,
+        "seconds": 31.894164594,
+        "segments": 0.0
+      }
+    }
+  },
+  "silence_only_transcripts": {
+    "en|-100": ".S. Sometimes it's a long way, sometimes it's a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a",
+    "en|-45": ". The first person to be able to help her, but wouldn't have to recover the burger that she had and would have gone back to the stairs of the other day or so, I would have to go back to the world when I was around.",
+    "ja|-100": "心の声。",
+    "ja|-45": "うん。"
+  },
+  "trail_silence_s": 5.0
+}

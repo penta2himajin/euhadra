@@ -15,6 +15,7 @@ pub mod processor;
 pub mod router;
 pub mod traits;
 pub mod types;
+pub mod vad;
 pub mod whisper_local;
 
 // Internal machinery. `PipelineState` — the part a caller might observe —

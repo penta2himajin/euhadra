@@ -404,6 +404,98 @@ NER あり: "cooper nets" がエンティティ → ここだけ辞書マッチ 
 固有名詞の誤認識に対して NER のクラス判定が正しい保証はなく、そこに依存すると
 絞り込みが落ちる。必要なのは「この範囲は固有表現らしい」という一段弱い信号である。
 
+### 3.7 Voice Activity Detection（無音の除去と発話分割）
+
+音声から発話区間を検出し、無音を ASR に渡さない。**ASR アダプタの前段**に置かれた独立ステージであり、`mic` feature の中ではない。WAV 入力にも同じ問題があるためで、キャプチャ側に埋めるとファイル利用者が同じ穴に落ちる（#133 の配置案 B）。
+
+```
+trait VadBackend {
+    fn frame_size() -> usize
+    fn required_sample_rate() -> Option<u32>
+    fn start() -> Box<dyn VadStream>       // 検出パス1回分
+}
+
+trait VadStream {
+    fn speech_probability(frame: &[f32]) -> f32   // 0.0 - 1.0
+}
+
+struct SpeechSegment { start: usize, end: usize }  // サンプル索引、半開区間
+```
+
+**「どのフレームが音声か」と「どこで発話を切るか」を分離する。** 前者が `VadBackend`、後者が `Segmenter`。リスクは後者に集中しており、バックエンドを良いものに替えても `Segmenter` の設定が悪ければ品質は改善しない。
+
+**実装**:
+
+| 実装 | 方式 | 依存 | サンプルレート |
+|---|---|---|---|
+| `EarshotVad` [`vad`] | 組込み NN 40 KiB（`earshot` クレート） | 純 Rust 1 クレート、`no_std`、モデルファイル無し | 16 kHz 固定 |
+| `EnergyVad` | RMS レベル vs 適応ノイズフロア | ゼロ | 任意 |
+
+`EarshotVad` を推奨とする。`EnergyVad` は「部屋より大きいか」を判定しているのであって「音声か」ではなく、キーボード・ドア・音楽が通過し、静かな話者はノイズフロアの上昇に飲まれる。doc コメントに stopgap である旨を明記している。
+
+**クレート選定の根拠**（2026-08 時点、crates.io 実測）: `earshot` 1.2.1 は直近 DL 97,941、MIT OR Apache-2.0、依存は optional な `libm` のみ。ONNX ランタイムもモデル取得も不要なため `docs/model-licenses.md` の同梱モデル審査が発生しない唯一の候補である。作者は euhadra が `onnx` feature で使う `ort` の作者（pykeio）。対抗馬は `voice_activity_detector`（Silero via `ort`、DL 58,376）と `webrtc-vad`（DL 193,955 だが 2019 年から更新なし・C FFI）。#133 に挙げた `silero-vad-rs` / `zuoer` / `ryu-vad` / `ten_vad` / `flexaudio-vad` はいずれも DL 2〜3 桁で、**候補リスト自体が不完全だった**。
+
+#### 分割ポリシー（`Segmenter`）
+
+| 設定 | 既定値 | 役割 |
+|---|---|---|
+| `threshold` | 0.5 | 音声とみなす確率 |
+| `min_speech` | 120 ms | 発話を開くのに必要な連続音声。ドアの音などで開かないための下限 |
+| `min_silence` | **700 ms** | 発話を閉じるのに必要な連続無音。**ヒステリシスの要** |
+| `speech_pad` | 200 ms | 境界の前後に残す音声。語頭・語尾の欠けは無音より高くつく |
+| `max_speech` | 30 s | 一切休まない話者への安全弁。唯一意図的に過分割する設定 |
+
+**既定値は非対称に倒してある。** 過分割は破壊的で復旧不能——#134 の実測では、英語発話の 3.0 秒 prefix が「However, due to the slow communication.」という流暢で完結して見える誤答を生み、1〜2 秒では "Yeah." / 「あっ。」という幻覚が出た。一方の過小分割はレイテンシしか損なわない。Silero 自身の既定 `min_silence` 100 ms は endpointing レイテンシ向けのチューニングであり、文中のポーズを切るため採用しない。
+
+#### 逐次出力（`Session::partials`）
+
+閉じた発話単位で transcript を返す。**これは streaming ASR ではない。** 同梱アダプタに streaming API は無く、伸びていく prefix の再転写は #134 で実測のうえ棄却した（churn 182% (en) / 350% (ja)、warm RTF 1.54 で実時間より遅い）。dictation の用途では発話単位が実用的な粒度でもある。
+
+チャネルは lossy（§4.3 と同じ方針）で、受信側が読まなくてもセッションは詰まらない。receiver を drop すると発話単位の転写自体が省かれる。
+
+#### `FinalPass` — 最終 transcript の出所
+
+| ポリシー | 最終 transcript | ASR パス数 |
+|---|---|---|
+| `SpeechOnly`（既定） | 検出された音声を連結し、**1 発話として**転写 | 2 |
+| `WholeUtterance` | 録音そのまま（無音込み） | 2 |
+| `JoinSegments` | 発話ごとの transcript を連結 | 1 |
+
+**2 つの失敗モードは分離できる。** 無音を ASR に渡すと幻覚が出る／発話を途中で切ると断片の誤答が出る——この 2 つは独立しており、**無音を落とすのに発話を切る必要はない**。既定の `SpeechOnly` は前者だけを行う。`WholeUtterance` は最終テキストを一切変えないため、ポリシー間の ΔWER 測定の基準線に使う。`JoinSegments` は最も安く、かつ分割誤りをそのまま被る唯一のポリシーである。
+
+#### 測定（実施済み）
+
+全結果は [`benchmarks/vad_delta_wer.md`](./benchmarks/vad_delta_wer.md)。FLEURS の en / ja 各 30 発話に前後 5 秒の無音を付加し、euhadra が実際に出荷しているモデル（en = canary-180m-flash INT8、ja = parakeet-tdt_ctc-0.6b-ja）で測った。clean 値は `ci_baseline.json` と完全一致する。
+
+| 条件 | en (WER) | Δ | ja (CER) | Δ |
+|---|---|---|---|---|
+| clean・検出器なし | 0.0762 | — | 0.0724 | — |
+| 無音付加・**検出器なし** | **0.1875** | **+0.1114** | 0.1211 | +0.0487 |
+| 無音付加・`SpeechOnly` | 0.0762 | **+0.0000** | 0.0759 | +0.0035 |
+| 無音付加・`JoinSegments`（−45 dBFS） | **0.3940** | **+0.3178** | 0.1376 | +0.0652 |
+
+**3 点が確定した。**
+
+1. **無音は実害を出す。** en で WER が 2.5 倍。30 発話中 7 件が肥大した
+2. **既定構成がそれを消す。** `SpeechOnly` で Δ+0.0000〜+0.0150
+3. **`SpeechOnly` と `JoinSegments` の差は分割の質ではなくポリシーだけで生じる。** 同一の segmentation（過分割 2.20）から en −45 で 0.0855 対 0.3940。「無音を落とすのに発話を切る必要はない」が実測で裏打ちされた
+
+無音単独を転写させたときの出力がアーキテクチャの違いを直接示す:
+
+| モデル | 出力 |
+|---|---|
+| canary (en, AED) | `".S. Sometimes it's a long way, …"`（約 50 回反復）/ 流暢な作話パラグラフ |
+| parakeet (ja, TDT-CTC) | `"心の声。"` / `"うん。"` |
+
+**上限を測る指標である点は変わらない。** 合成無音は実録音の環境音とスペクトルが違い、この条件は energy VAD に有利に働く。zh / ko / es は未測定。
+
+#### 判断ゲート: テキスト側の除去は不要
+
+#133 の分岐は「VAD 導入後も幻覚が残るか」だった。**残らない。** よって言語別ブラックリストには踏み込まない——§11.4 帰結 3 でいう「中央で広げられない」領域に落ちる対処を避けられた。
+
+ただし AED 特有の残課題がある。`src/canary/decoder.rs` の `min_token_to_frame_ratio` は出力長が `0.2 × T_sub` に達するまで EOS を `-inf` にするが、この `T_sub` は**録音全体**のエンコーダフレーム数である。無音込みの録音では発話が正当化する量を超えてトークン生成が強制される。clean な FLEURS-es で truncation を潰すために調整された値であり、無音が入る運用では向きが逆になる。`SpeechOnly` は無音をエンコーダに渡さないため実害を回避しているが、ガード自体は発話フレーム基準に直すべきで、上限側のノブも無い（#136）。
+
+
 ---
 
 ## 4. Pipeline Runtime
@@ -414,7 +506,8 @@ NER あり: "cooper nets" がエンティティ → ここだけ辞書マッチ 
 [Activation Signal]
        │
        ▼
-[Mic Capture] ─── Stream<AudioChunk> ───►[ASR Adapter]
+[Mic Capture] ─── Stream<AudioChunk> ───►[VAD / Segmenter] ───►[ASR Adapter]
+                                       (発話単位に分割・無音を除去)
                                               │
                                         Stream<AsrResult>
                                               │
@@ -448,6 +541,8 @@ NER あり: "cooper nets" がエンティティ → ここだけ辞書マッチ 
 ```
 
 TextFilter と TextProcessor は LLM なしで動作し、LLM Refiner はオプション。TextFilter + TextProcessor だけでも実用的な dictation 品質が得られる。
+
+VAD ステージは省略可能で、設定しない場合は録音がそのまま ASR に渡る（0.2.0 までの挙動）。配置が `mic` feature の中ではなく ASR アダプタの前段なのは、WAV 入力にも同じ問題があるためである（§3.7）。
 
 ### 4.2 Streaming Strategy
 
@@ -846,7 +941,7 @@ Tier 3:   LlmRefiner          — LLM 3B+、~700ms、オプション（意味理
 |--------|-------------|---------------|
 | Hotkey | グローバルキーバインド（押下で開始、離すと終了） | OS 固有のグローバルキー監視 |
 | Push-to-Talk | 明示的な開始 / 終了操作 | ボタン押下 / 離し |
-| VAD | Voice Activity Detection による自動開始 / 終了 | WebRTC VAD or Silero VAD |
+| VAD | Voice Activity Detection による自動開始 / 終了 | **`vad` モジュールとして Rust 側に実装済み**（§3.7）。ネイティブ不要 |
 
 ### 7.2 Text Insertion Strategy
 
@@ -960,6 +1055,18 @@ MIT / Apache ライセンスのため、コード自体による参入障壁は�
 - [x] StdoutEmitter
 - [x] ClipboardEmitter（arboard）
 
+**Voice Activity Detection**:
+- [x] VadBackend / VadStream trait 定義
+- [x] Segmenter（ヒステリシス付き発話分割、依存ゼロ）
+- [x] EnergyVad（レベル判定、依存ゼロ、stopgap）
+- [x] EarshotVad（組込み NN 40 KiB、`earshot`）[vad]
+- [x] 逐次出力（`Session::partials`）と `FinalPass` ポリシー
+- [x] **ΔWER の実測**（en / ja）— [`benchmarks/vad_delta_wer.md`](../docs/benchmarks/vad_delta_wer.md)
+- [x] **判断ゲート**: 幻覚は VAD で消える。テキスト側の除去は不要
+- [x] CI 配線 — `test (vad feature)` ジョブ + `onnx-check` の `Check (onnx + vad)` ステップ
+- [ ] zh / ko / es の ΔWER — モデルバンドル未取得
+- [ ] ΔWER 測定の CI 配線 — モデル取得が要るため `evaluate (ASR live smoke)` と同じ扱いになる
+
 **CLI / 入力**:
 - [x] CLI ツール（dictate / transcribe / record）
 - [x] マイク入力（cpal）
@@ -976,7 +1083,7 @@ MIT / Apache ライセンスのため、コード自体による参入障壁は�
 - OS Shell 対応全般（macOS 含む）— euhadra の出荷物ではない。§2.2 / #123
 - LlmRefiner 具象実装と `llm` feature — #122
 - Command / StructuredInput 出力モード
-- Streaming（speculative）戦略
+- Streaming（speculative）戦略 — **partial result を投機的に流す形は引き続き Non-Goal**。同梱アダプタに streaming API が無いことを #134 で確認済み。逐次出力は §3.7 の発話単位（VAD 経由）に一本化した
 - IME 統合
 - 商用 API サーバー
 
@@ -984,6 +1091,7 @@ MIT / Apache ライセンスのため、コード自体による参入障壁は�
 - オンデバイス ASR 統合 → WhisperLocal + ParakeetAdapter（ONNX）で実現
 - Tier 2 テキスト処理 → 自己訂正検出、句読点挿入（ルール+ONNX）、固有名詞補正（音素距離）、段落分割（埋め込み距離）
 - オンデバイス LLM → 一度 Phase 1 残タスクとしたが、#122 で再び Phase 1 スコープ外に戻した（責務の線引き自体が未決のため）
+- VAD → §7.1 でネイティブ層の責務としていたが、`vad` モジュールとして Rust 側で実装（§3.7 / #133）。mic・clipboard と同じく「ネイティブ前提と決めつけない」（§2.2）が正しかった例
 
 ### 9.4 Target User Experience
 
@@ -1064,6 +1172,7 @@ Tier 3（LlmRefiner）と `MacAccessibilityProvider` は未実装のため、上
 | `serde` / `serde_json` | 構造化データのシリアライズ（IPA 辞書、設定） | — |
 | `cpal` | クロスプラットフォームオーディオキャプチャ | — |
 | `arboard` | クリップボード操作（ClipboardEmitter） | — |
+| `earshot` | Voice Activity Detection（`EarshotVad`、組込み NN 40 KiB） | `vad` |
 | `tracing` | 構造化ログ / メトリクス | — |
 | `clap` | CLI 引数パーサ | — |
 | `ort` | ONNX Runtime バインディング（Parakeet ASR, BERT 句読点, bge-small 埋め込み, G2P） | `onnx` |

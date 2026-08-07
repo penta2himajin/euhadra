@@ -11,8 +11,9 @@ keywords = ["speech-recognition", "asr", "dictation", "voice", "pipeline"]
 categories = ["multimedia::audio", "text-processing", "api-bindings"]
 # Verified by building the library on this toolchain, not inferred. It
 # covers the default feature set only; the optional features raise the
-# floor through their own dependencies (`cli` needs 1.85 for clap, `onnx`
-# needs 1.88 for ort), and those crates report that themselves.
+# floor through their own dependencies (`cli` needs 1.85 for clap, `vad`
+# needs 1.87 for earshot, `onnx` needs 1.88 for ort), and those crates
+# report that themselves.
 rust-version = "1.78"
 # The evaluation corpora, model-fetch scripts and design docs are how the
 # crate is developed, not how it is consumed; none of them are reachable
@@ -71,6 +72,13 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 # ClipboardEmitter only ever moves text.
 arboard = { version = "3", default-features = false, optional = true }
 cpal = { version = "0.15", optional = true }
+# Voice activity detection. Pure Rust, `no_std`, and the 40 KiB network is
+# embedded in the crate — no ONNX runtime, no model download, nothing to
+# add to docs/model-licenses.md. That is why it is this one and not
+# `voice_activity_detector` (Silero via ort) or the several
+# two-digit-download Silero wrappers: everything else drags in an
+# inference runtime to answer a yes/no question.
+earshot = { version = "1.2", optional = true }
 
 # ONNX inference (opt-in)
 # rc.13 is stated rather than inherited. parakeet-rs-featsize requires
@@ -108,6 +116,11 @@ mic = ["dep:cpal"]
 
 # ClipboardEmitter via arboard.
 clipboard = ["dep:arboard"]
+
+# `EarshotVad`, the neural voice activity detector. Adds one pure-Rust
+# dependency and no system libraries; the `vad` module's trait, segmenter
+# and `EnergyVad` fallback are in the default build regardless.
+vad = ["dep:earshot"]
 
 # Mock adapters and the evaluation harness. Off by default: they are how
 # euhadra is tested and measured, not how it is used, and leaving them on
@@ -181,3 +194,10 @@ required-features = ["onnx"]
 [[example]]
 name = "eval_paragraph"
 required-features = ["onnx"]
+
+# ΔWER of voice activity detection against a whole-utterance batch run —
+# #133's acceptance criterion. Needs a real ASR adapter (onnx) and both
+# detectors (vad).
+[[example]]
+name = "eval_vad"
+required-features = ["onnx", "vad"]
