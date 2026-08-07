@@ -131,6 +131,26 @@ system dependencies, and that is deliberate.
 - Open as ready for review, not draft.
 - Tests passing and zero warnings before you push.
 - Do not change CI configuration without saying why in the PR.
+- Add a [`CHANGELOG.md`](CHANGELOG.md) entry under `## [Unreleased]` for
+  anything a dependent would notice — new surface, changed behaviour,
+  removals. This is `0.x` and minor versions may break, so the changelog
+  is how anyone finds out what broke.
+
+## Releasing
+
+Publishing runs from a tag, not from a laptop. `.github/workflows/release.yml`
+authenticates to crates.io with Trusted Publishing (OIDC), so no long-lived
+token exists to leak.
+
+1. Bump `Cargo.toml#package.version` and move `## [Unreleased]` to the new
+   version heading in `CHANGELOG.md`. Merge that PR.
+2. From a clean `master`: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+3. The workflow verifies the tag matches the manifest, runs
+   `cargo publish --dry-run --all-features`, then publishes.
+
+A tag whose version does not match the manifest fails before anything is
+uploaded. Do not tag `v0.1.0` — it is already on crates.io, and the publish
+step would fail.
 
 ## Scope
 

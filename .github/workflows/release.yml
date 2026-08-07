@@ -1,0 +1,141 @@
+# Release workflow — publishes `euhadra` to crates.io.
+#
+# Trigger: a `v*.*.*` tag pushed to the repository. The tag's numeric
+# portion must match `Cargo.toml#package.version`; a mismatch fails the
+# preflight step below before any side effects run.
+#
+# Authentication: crates.io Trusted Publishing (OIDC). The
+# `rust-lang/crates-io-auth-action@v1` step exchanges this workflow's
+# GitHub-issued OIDC ID token for a short-lived (~15 min) crates.io
+# access token, scoped to a single publish. The token is auto-revoked
+# when the job ends, so no long-lived API token is stored as a GitHub
+# secret. This mirrors the release workflows in tympan-apo,
+# tympan-aspl and tympan-ladspa.
+#
+# One-time setup:
+#
+# crates.io cannot attach a Trusted Publisher to a crate that does not
+# exist yet (RFC 3691: "A Trusted Publisher Configuration can only be
+# created after an initial manual publishing of a crate"). euhadra
+# 0.1.0 was published manually with a short-lived API token, which has
+# since been revoked, so that precondition is already met. What remains:
+#
+#     https://crates.io/crates/euhadra/settings
+#     → Trusted Publishers → Add
+#
+#       Repository owner    penta2himajin
+#       Repository name     euhadra
+#       Workflow filename   release.yml
+#       Environment         (leave blank)
+#
+# Only direct crate owners can reach that page.
+#
+# Note: do not push a `v0.1.0` tag. Preflight and the dry-run would both
+# pass and the real publish would fail with `crate version 0.1.0 already
+# uploaded`. Tagging starts at v0.2.0; 0.1.0's record lives on crates.io.
+#
+# Release procedure:
+#
+#   1. Update `Cargo.toml#package.version` and CHANGELOG.md on a branch.
+#   2. Merge the bump PR to master.
+#   3. From a clean master checkout:
+#        git tag vX.Y.Z
+#        git push origin vX.Y.Z
+#   4. This workflow fires; on success the new version is live.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+  # Required for the OIDC token exchange with crates.io. Scoped to this
+  # workflow only; no other workflow in this repo requests an ID token.
+  id-token: write
+
+concurrency:
+  # Serialise releases — two simultaneous `cargo publish` runs from the
+  # same crate would race and the loser would fail with `crate already
+  # uploaded`. The release tag is the natural lock key.
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: short
+
+jobs:
+  publish:
+    name: Publish euhadra to crates.io
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release
+
+      # Needed by the `mic` / `cli` features, which `--all-features`
+      # turns on for the dry-run below. The default feature set does not
+      # need this, and the `test (default features)` job deliberately
+      # runs without it to keep that guarantee honest.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
+
+      - name: Verify tag matches Cargo.toml version
+        # The release tag's numeric portion (`v0.2.0` → `0.2.0`) must
+        # equal the manifest version. A mismatch is almost always either
+        # a missing version bump or a typo in the tag, and either way the
+        # release should not proceed.
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/v}"
+          VERSION=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name=="euhadra") | .version')
+          if [ "$TAG" != "$VERSION" ]; then
+            echo "::error::tag v$TAG does not match Cargo.toml version $VERSION"
+            exit 1
+          fi
+          echo "Releasing euhadra $VERSION"
+
+      - name: cargo publish --dry-run (all features)
+        # `--all-features` where the tympan workflows use a bare
+        # dry-run, because euhadra's risk is per-feature rather than
+        # per-platform. Those repos pick a runner so the dry-run compiles
+        # the OS-specific code that matters; the equivalent here is
+        # compiling the feature that matters.
+        #
+        # This is the only check that builds the *packaged* crate with
+        # `onnx` on. CI builds the working tree, so it cannot catch a
+        # file dropped by `Cargo.toml#exclude` that only an onnx build
+        # needs — exactly the failure the `/tests/fixtures/` note in
+        # Cargo.toml exists to prevent, where `fbank.rs` pulls golden
+        # vectors in via `include_str!`. Publishing is irreversible, so
+        # the ~75s this costs buys back a version that cannot be unshipped.
+        run: cargo publish --dry-run --all-features
+
+      - name: Obtain crates.io access token via Trusted Publishing
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: cargo publish
+        env:
+          # The action's output is a short-lived crates.io token; cargo
+          # reads it from this environment variable. The token is
+          # automatically revoked at end-of-job by the action's post step.
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        # No `--all-features`: the flag above is a verification concern.
+        # What gets uploaded is the same `.crate` either way.
+        run: cargo publish
