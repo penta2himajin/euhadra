@@ -194,3 +194,10 @@ required-features = ["onnx"]
 [[example]]
 name = "eval_paragraph"
 required-features = ["onnx"]
+
+# ΔWER of voice activity detection against a whole-utterance batch run —
+# #133's acceptance criterion. Needs a real ASR adapter (onnx) and both
+# detectors (vad).
+[[example]]
+name = "eval_vad"
+required-features = ["onnx", "vad"]
