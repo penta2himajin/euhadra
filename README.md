@@ -213,7 +213,7 @@ only claims a language it can measure.
 | Japanese | ✅ | ✅ | ✅ in tree |
 | Chinese  | ✅ | ✅ | ✅ in tree |
 | Korean   | ✅ | ✅ | ✅ in tree |
-| Spanish  | ✅ | ✅ | ⚠️ generated on demand |
+| Spanish  | ✅ | ✅ | ⚠️ generated in CI |
 
 The gold sets themselves are provisional. Most were drafted by Claude and have
 **not yet been reviewed by native speakers** — this covers the filler sets for

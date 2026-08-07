@@ -483,3 +483,84 @@ jobs:
             --embedder-dir vendor/embedder_granite_97m \
             --alpha 0.70 \
             --min-f1 1.0
+
+  # Spanish Tier 1, the one language whose gold cannot be committed.
+  #
+  # CIEMPIESS Test is CC-BY-SA-4.0, so derived annotations would carry
+  # ShareAlike into this MIT/Apache tree. The generator therefore runs
+  # here against a streamed copy of the transcripts (no audio is
+  # fetched), writes to a gitignored cache, and only the score leaves
+  # the job. docs/evaluation.md §2.5 has the full posture; docs/spec.md
+  # §11.4 explains why that makes this job the only safeguard Spanish
+  # has — no committed gold means no regression check without it.
+  #
+  # Be clear about what the gate is worth. The lexicons in
+  # build_es_filler_annotations.py are byte-identical to
+  # SpanishFillerFilter's, so F1 1.0 means the Rust filter agrees with
+  # the Python generator. It catches drift between the two and
+  # regressions in tokenisation or span arithmetic. It is not a quality
+  # measurement, because the gold derives from the same rules rather
+  # than from human judgement.
+  #
+  # It also cannot catch the class of bug fixed in #121: CIEMPIESS
+  # transcripts carry no punctuation at all (0 of 3558 utterances), so a
+  # filter that fails on "eh, ..." scores perfectly here. Covering that
+  # needs a punctuated variant of this corpus, which does not exist yet.
+  #
+  # Coverage is narrower than the lexicon suggests. Of the 15 pure-filler
+  # entries, only "e" occurs in this corpus (1365 spans); the other 14 —
+  # eh, ehm, mm, hmm, ah, oh and variants — never appear, so drift in any
+  # of them is invisible here. What the gate really exercises is "e",
+  # "o sea" (199), the repetition detector (rep 1218 / rep2 263) and
+  # partial words (66), over 3558 real utterances.
+  #
+  # Verified by deletion: removing "e" from SpanishFillerFilter drops
+  # span F1 to 0.719 and the job fails. Removing "eh" changes nothing.
+  evaluate-es-filler:
+    name: evaluate (es filler F1)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: eval-es-filler
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
+
+      - name: Install huggingface_hub
+        run: pip install --no-cache-dir huggingface_hub
+
+      - name: Generator self-test
+        run: python3 scripts/build_es_filler_annotations.py --self-test
+
+      # Fetches corpus/files/metadata_{split}.tsv (585 KB) and nothing
+      # else. The audio lives in a separate tarball that is never touched,
+      # and nothing derived from the corpus is committed.
+      - name: Build annotations from CIEMPIESS Test (download-only)
+        run: |
+          mkdir -p data/cache
+          python3 scripts/build_es_filler_annotations.py \
+            --out data/cache/es_filler_annotations.jsonl
+
+      - name: Build eval binary
+        run: |
+          cargo build --release --features testing --locked --example eval_l3
+
+      # 1.0 because generator and filter share their lexicons: anything
+      # below it means the two have diverged, which is exactly the
+      # regression this job exists to catch.
+      - name: Spanish filler direct F1
+        run: |
+          ./target/release/examples/eval_l3 \
+            --task filler --lang es \
+            --input data/cache/es_filler_annotations.jsonl \
+            --min-f1 1.0

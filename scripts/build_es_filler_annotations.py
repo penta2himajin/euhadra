@@ -15,16 +15,25 @@ be measured against an F1 ground truth.
 License posture (see `docs/evaluation.md`):
 
   CIEMPIESS Test is CC-BY-SA-4.0. To avoid SA propagation into the
-  euhadra source tree, this script is intended to be run in CI against
-  a *cached* copy of the dataset, with the resulting JSONL kept under
-  `data/cache/` (gitignored) and consumed only as transient input to
-  `cargo eval-l3`. We do NOT commit the structured annotations, the
-  raw transcripts, or any audio. F1 *scores* derived from the run are
-  factual data and are not subject to SA.
+  euhadra source tree, this script runs in CI against a freshly fetched
+  copy, with the resulting JSONL kept under `data/cache/` (gitignored)
+  and consumed only as transient input to `eval_l3`. We do NOT commit
+  the structured annotations, the raw transcripts, or any audio. F1
+  *scores* derived from the run are factual data and not subject to SA.
+
+  Only `corpus/files/metadata_{split}.tsv` (585 KB) is fetched. The
+  audio tarball is never touched.
 
 Usage:
   scripts/build_es_filler_annotations.py \\
       --out data/cache/es_filler_annotations.jsonl
+
+Note on what the resulting F1 measures: the lexicons here are byte-identical
+to `SpanishFillerFilter`\'s, so a perfect score means the Rust filter agrees
+with this generator, not that either matches human judgement. CIEMPIESS
+transcripts also carry no punctuation, so this corpus cannot exercise the
+punctuated-filler path. See the CI job comment for what the gate does and
+does not catch.
 
 Run unit tests (no external deps required):
   scripts/build_es_filler_annotations.py --self-test
@@ -256,17 +265,17 @@ def detect_fillers(text: str) -> List[FillerSpan]:
 # -------------------------------------------------------------------
 
 
-def _import_datasets():
+def _import_hub():
     try:
-        from datasets import load_dataset  # type: ignore
+        from huggingface_hub import hf_hub_download  # type: ignore
     except ImportError as e:
         print(
             f"missing dependency: {e}\n"
-            "install with: pip install 'datasets>=2.21.0'",
+            "install with: pip install huggingface_hub",
             file=sys.stderr,
         )
         sys.exit(2)
-    return load_dataset
+    return hf_hub_download
 
 
 def stream_ciempiess_test(
@@ -274,21 +283,49 @@ def stream_ciempiess_test(
     split: str,
     limit: Optional[int],
 ) -> Iterable[Tuple[str, str]]:
-    """Yield (utterance_id, normalized_text) tuples from a CIEMPIESS HF
-    dataset. Uses streaming so we never download audio (we only need the
-    transcript field). HF caches the metadata in ~/.cache/huggingface/."""
-    load_dataset = _import_datasets()
-    print(f"[ciempiess] loading {name} split={split} (streaming)", file=sys.stderr)
-    ds = load_dataset(name, split=split, streaming=True)
+    """Yield (utterance_id, normalized_text) tuples from CIEMPIESS.
+
+    Reads `corpus/files/metadata_{split}.tsv` directly rather than going
+    through `datasets`. The repo keeps transcripts in that TSV (585 KB)
+    and audio in a separate tarball, so this fetches only what we need.
+
+    Going through `datasets` did the opposite: its streaming reader
+    applies every declared feature per sample, so the Audio column was
+    decoded for all 3558 utterances — pulling ~8h of audio and requiring
+    `soundfile`. It also meant depending on a loading script, which
+    datasets 3.0 dropped support for. Neither applies here.
+    """
+    hf_hub_download = _import_hub()
+    rel = f"corpus/files/metadata_{split}.tsv"
+    print(f"[ciempiess] fetching {name}:{rel}", file=sys.stderr)
+    path = hf_hub_download(name, rel, repo_type="dataset")
+
+    with open(path, encoding="utf-8") as fh:
+        header = fh.readline().rstrip("\n").split("\t")
+        try:
+            id_col = header.index("audio_id")
+            text_col = header.index("normalized_text")
+        except ValueError:
+            print(
+                f"error: {rel} lacks audio_id / normalized_text; got {header}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        rows = []
+        for line in fh:
+            fields = line.rstrip("\n").split("\t")
+            if len(fields) <= max(id_col, text_col):
+                continue
+            rows.append((fields[id_col], fields[text_col]))
+
     n_emitted = 0
-    for sample in ds:
+    for uid, text in rows:
         if limit is not None and n_emitted >= limit:
             break
-        uid = str(sample.get("audio_id") or sample.get("id") or n_emitted)
-        text = sample.get("normalized_text")
-        if not isinstance(text, str) or not text.strip():
+        if not text.strip():
             continue
-        yield uid, text
+        yield str(uid), text
         n_emitted += 1
     print(f"[ciempiess] emitted {n_emitted} utterances", file=sys.stderr)
 
@@ -482,8 +519,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     p.add_argument(
         "--split",
-        default="train",
-        help="dataset split (default: train; ciempiess_test only ships one split)",
+        default="test",
+        help="dataset split (default: test; ciempiess_test only ships this one)",
     )
     p.add_argument(
         "--limit",
