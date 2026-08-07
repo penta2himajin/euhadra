@@ -351,7 +351,7 @@ enum CorrectionKind {
   - **話題転換の検出は 5 言語すべてで機能する**。合成連結タスクで WD 0.122 (en) / 0.154 (ja) / 0.178 (zh) / 0.194 (ko) / 0.244 (es)、対して「分割なし」0.43–0.47、等間隔分割 0.45–0.51。既定の深さ比 0.5 が全言語で最良
   - **著者の段落構成は再現できない**。実記事タスクでは en が 0.499 で「分割なし」の 0.515 と誤差の範囲。記事内の段落分けは文体・長さの都合が支配的で話題がほとんど動かないため。**この層は「話者が話題を変えた位置」を切るものであって、書き手の段落感覚を再現するものではない**
   - 測定は granite のみ。Wikipedia の散文は dictation より整っているため §6.1 は楽観側。`min_similarity_range` は未検証。CI には入れていない（third-party のネットワーク取得のため）
-- `EntityRecognizer` — NER トークン分類モデル（DistilBERT-NER ONNX, ~65MB INT8）による固有表現検出（PER / LOC / ORG / MISC）
+- `OnnxEntityRecognizer` — NER トークン分類モデルによる固有表現検出（PER / LOC / ORG / MISC）。`dslim/distilbert-NER` が参照実装。**upstream は量子化グラフを配布しておらず、実サイズは fp32 で 249MB**（本節が挙げていた ~65MB INT8 は upstream に存在しない。量子化は利用側の作業）
 - `RuleBasedProcessor` — ルールベースの整形（リスト検出、数値フォーマット等、依存ゼロ）
 
 **設計根拠: LLM を使わない構造的補正**
@@ -366,7 +366,7 @@ enum CorrectionKind {
 | 自己訂正検出 | 不要 | ACNN / BERT-tiny による sequence labeling | ~50MB |
 | 固有名詞補正 | 不要 | 音素距離 + テキスト埋め込み + CMUdict + G2P ONNX | ~250MB |
 | 段落分割 | 不要 | 隣接文の埋め込みコサイン類似度 | bge-small 共用 |
-| エンティティ検出 (NER) | 不要 | DistilBERT-NER トークン分類（全プラットフォーム共通） | ~65MB |
+| エンティティ検出 (NER) | 不要 | DistilBERT-NER トークン分類（全プラットフォーム共通） | 249MB (fp32) |
 | フォーマット整形 | 一部不要 | リスト検出はルールベースで可能 | 0MB |
 | 数詞正規化 (ITN) | 不要 | WFST / 規則ベース（`text-processing-rs`、en/ja/zh 稼働。es/ko は upstream 対応待ち） | ~0MB |
 | 口語縮約展開 | 不要 | 規則ベース辞書（`SpokenFormNormalizer`、en 稼働。他言語は拡張余地あり） | 0MB |
@@ -396,8 +396,13 @@ NER の検出結果は PhonemeCorrector の候補範囲絞り込みに使用し�
 ASR 出力: "I deployed the app to cooper nets yesterday"
 
 NER なし: 全単語 × カスタム辞書 → "the" や "yesterday" も比較対象
-NER あり: "cooper nets" が ORG/MISC → ここだけ辞書マッチ → "Kubernetes"
+NER あり: "cooper nets" がエンティティ → ここだけ辞書マッチ → "Kubernetes"
 ```
+
+**絞り込みに使うのは「エンティティか否か」であって、クラスではない。** 実測では
+`dslim/distilbert-NER` は "Kubernetes" を LOC と分類する（ORG でも MISC でもない）。
+固有名詞の誤認識に対して NER のクラス判定が正しい保証はなく、そこに依存すると
+絞り込みが落ちる。必要なのは「この範囲は固有表現らしい」という一段弱い信号である。
 
 ---
 
@@ -643,7 +648,7 @@ ASR Output (raw text)
     │  - CMUdict IPA 辞書（124K 語）による音素引き
     │  - G2P ONNX（DeepPhonemizer）による OOV 音素生成
     │  - 音素 Levenshtein 距離 + bge-small 埋め込み複合スコア
-    │  エンティティ検出 NER（DistilBERT-NER ONNX）   ☐ 未実装 [onnx]
+    │  エンティティ検出 NER（DistilBERT-NER ONNX）   ✅ 実装済み [onnx]
     │  - PER / LOC / ORG / MISC のトークン分類
     │  - PhonemeCorrector の候補範囲絞り込みに使用
     │  段落分割（意味的距離 + 最大文数制約）           ✅ 実装済み [onnx]
@@ -933,7 +938,8 @@ MIT / Apache ライセンスのため、コード自体による参入障壁は�
 - [x] OnnxPunctuationRestorer（BERT ONNX、句読点+大文字化）[onnx]
 - [x] PhonemeCorrector（音素距離辞書補正、CMUdict 124K 語 + G2P ONNX + bge-small 複合スコア）[onnx]
 - [x] ParagraphSplitter（意味的距離 + 最大文数制約）[onnx]
-- [ ] OnnxEntityRecognizer（DistilBERT-NER ONNX、PER/LOC/ORG/MISC 検出 → PhonemeCorrector 候補絞り込み）[onnx]
+- [x] OnnxEntityRecognizer（DistilBERT-NER ONNX、PER/LOC/ORG/MISC 検出）[onnx]
+- [ ] NER による PhonemeCorrector の候補絞り込み配線 — 未実装。processor 間でメタ情報を渡す経路が無いため、`PhonemeCorrector` 側に recognizer を注入する形（`with_g2p` / `with_embedder` と同じ合成）で行う
 
 **Tier 3: LlmRefiner**:
 - [x] LlmRefiner trait 定義

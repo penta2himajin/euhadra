@@ -50,6 +50,17 @@ treats the declaration on the consumed distribution as authoritative,
 but the divergence is worth flagging if you rely on stricter compliance
 with the FunASR project's umbrella statement.
 
+## NER model weights
+
+Used by `OnnxEntityRecognizer`. `scripts/setup_ner.sh` downloads it.
+
+| Model | Licence | Declaration |
+|---|---|---|
+| `dslim/distilbert-NER` | MIT | model-card YAML `license: mit` at <https://huggingface.co/dslim/distilbert-NER> |
+
+Trained on CoNLL-2003, whose own terms apply to the corpus rather than
+to these weights.
+
 ## Text-embedding model weights
 
 Used by `OnnxTextEmbedder` (`PhonemeCorrector` / `ParagraphSplitter`).

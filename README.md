@@ -36,7 +36,7 @@ libraries. Opt into the rest:
 | Feature | Adds | Cost |
 |---------|------|------|
 | *(default)* | Pipeline runtime, filler filters, self-correction, punctuation, ITN | pure Rust |
-| `onnx` | ONNX ASR adapters, BERT punctuation, embeddings, G2P | ONNX Runtime; needs Rust 1.88 |
+| `onnx` | ONNX ASR adapters, BERT punctuation, NER, embeddings, G2P | ONNX Runtime; needs Rust 1.88 |
 | `mic` | Microphone capture (`cpal`) | ALSA headers on Linux (`libasound2-dev`) |
 | `clipboard` | `ClipboardEmitter` (`arboard`) | — |
 | `cli` | The `euhadra` binary; implies `mic` + `clipboard` | needs Rust 1.85 |
@@ -195,8 +195,8 @@ euhadra processes ASR output through three independent layers, each optional:
 
 | Tier | Component | What it does | LLM? | Size |
 |------|-----------|-------------|------|------|
-| 1 | **TextFilter** | Filler removal (um, uh, えーと) | No | 0 MB (rules) or 33 MB (embeddings) |
-| 2 | **TextProcessor** | Punctuation, capitalization, self-correction | No | 0 MB (rules) or 5-50 MB (ONNX) |
+| 1 | **TextFilter** | Filler removal (um, uh, えーと) | No | 0 MB (rules) |
+| 2 | **TextProcessor** | Punctuation, capitalization, self-correction, NER | No | 0 MB (rules) or 5-250 MB (ONNX) |
 | 3 | **LlmRefiner** | Tone adjustment, context-adaptive rewriting | Yes | Trait only — nothing ships |
 
 Tier 1 + 2 alone produce clean, punctuated text without any LLM or network calls.

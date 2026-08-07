@@ -8,6 +8,25 @@ stated in the README's Stability section.
 
 ## [Unreleased]
 
+### Added
+
+- **`OnnxEntityRecognizer`** (`onnx`) — named-entity recognition via ONNX
+  token classification, on the same inference path as the punctuation
+  restorer. Detects PER / LOC / ORG / MISC with codepoint offsets.
+  `scripts/setup_ner.sh` fetches `dslim/distilbert-NER`. As a
+  `TextProcessor` it leaves the text untouched and reports findings as
+  the new `CorrectionKind::EntityDetected`; `detect()` returns the
+  structured form. Narrowing `PhonemeCorrector`'s candidates with it is
+  not wired yet.
+
+### Removed
+
+- **`OnnxEmbeddingFilter`, and with it `Segmenter`, `Segment`,
+  `segment()` and `FillerLexicon`.** Deprecated and unwired since the
+  rule-based filters measured better in every language. The calibration
+  bench (`examples/bench_embedder.rs`) went too. Use
+  `FillerFilter::for_language`.
+
 ### Fixed
 
 - **docs.rs builds again.** `feature(doc_auto_cfg)` was removed in Rust

@@ -51,6 +51,12 @@ pub enum CorrectionKind {
     DictionaryMatch,
     NumeralNormalized,
     SpokenFormNormalized,
+    /// A named entity was recognised. Metadata only — the processor
+    /// that reports this leaves the text unchanged. `original` holds the
+    /// entity surface and `replacement` repeats it, since nothing was
+    /// replaced. The structured form, with offsets and a typed label,
+    /// is `onnx_processing::Entity` (`onnx` feature).
+    EntityDetected,
 }
 
 /// Why a [`TextProcessor`] could not process its input.
