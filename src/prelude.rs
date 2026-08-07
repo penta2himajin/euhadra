@@ -15,8 +15,8 @@ pub use crate::filter::{
     SimpleFillerFilter, SpanishFillerFilter, TextFilter,
 };
 pub use crate::pipeline::{
-    Diagnostics, Pipeline, PipelineBuilder, PipelineError, Session, SessionResult, Stage,
-    StageFailure,
+    Diagnostics, FinalPass, Partial, Pipeline, PipelineBuilder, PipelineError, Session,
+    SessionResult, Stage, StageFailure,
 };
 pub use crate::processor::{
     BasicPunctuationRestorer, ProcessResult, SelfCorrectionDetector, TextProcessor,
@@ -28,7 +28,7 @@ pub use crate::types::*;
 pub use crate::emitters::StdoutEmitter;
 
 #[cfg(any(test, feature = "testing"))]
-pub use crate::mock::{MockAsr, MockContextProvider, MockEmitter, MockRefiner};
+pub use crate::mock::{MockAsr, MockContextProvider, MockEmitter, MockRefiner, RecordingAsr};
 
 #[cfg(feature = "clipboard")]
 pub use crate::emitters::ClipboardEmitter;

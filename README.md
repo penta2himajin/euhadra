@@ -38,6 +38,7 @@ libraries. Opt into the rest:
 | *(default)* | Pipeline runtime, filler filters, self-correction, punctuation, ITN | pure Rust |
 | `onnx` | ONNX ASR adapters, BERT punctuation, NER, embeddings, G2P | ONNX Runtime; needs Rust 1.88 |
 | `mic` | Microphone capture (`cpal`) | ALSA headers on Linux (`libasound2-dev`) |
+| `vad` | `EarshotVad`, the neural voice activity detector | one pure-Rust crate; needs Rust 1.87 |
 | `clipboard` | `ClipboardEmitter` (`arboard`) | — |
 | `cli` | The `euhadra` binary; implies `mic` + `clipboard` | needs Rust 1.85 |
 | `testing` | Mock adapters and the WER/CER evaluation harness | — |
@@ -237,6 +238,78 @@ that would run it never landed, so in practice Spanish went unverified, and a
 defect that silently disabled filler removal for punctuated input survived until
 every language was run by hand.
 
+## Voice activity detection
+
+Without it, euhadra hands the ASR adapter whatever it was given. Record for 30
+seconds and speak for 5, and 25 seconds of silence reach the model — which is
+where "Thanks for watching" and 「ご視聴ありがとうございました」 come from. Add a
+detector and the silence is dropped before the adapter sees it:
+
+```rust
+use euhadra::prelude::*;
+use euhadra::vad::EarshotVad;          // feature = "vad"
+
+let pipeline = PipelineBuilder::new()
+    .asr(/* ... */)
+    .vad(EarshotVad::new())
+    .build()?;
+```
+
+It sits ahead of the ASR adapter rather than inside microphone capture, so WAV
+input gets the same treatment.
+
+Two backends. `EarshotVad` (feature `vad`) runs a 40 KiB neural network embedded
+in the [`earshot`](https://crates.io/crates/earshot) crate — pure Rust, no ONNX
+runtime, no model file to fetch, 16 kHz only. `EnergyVad` needs no dependency at
+all and works at any rate, but it decides on loudness, so a keyboard opens an
+utterance and a quiet speaker eventually stops being heard. Prefer the former.
+
+Where the boundaries fall is a separate decision from which frames are speech,
+and it lives in `Segmenter` for both backends. Its defaults deliberately lean
+towards waiting: a 700 ms minimum silence, so a mid-sentence pause is a breath
+rather than a boundary. The asymmetry is the point — under-segmenting costs
+latency, while over-segmenting hands the model a fragment, and a model given a
+fragment answers fluently and wrongly rather than failing.
+
+### Incremental output
+
+A detector also gives you utterances, and an utterance is something you can show
+the speaker before they stop talking:
+
+```rust
+let mut session = pipeline.session();
+let mut partials = std::mem::replace(&mut session.partials, tokio::sync::mpsc::channel(1).1);
+tokio::spawn(async move {
+    while let Some(p) = partials.recv().await {
+        println!("[{:?}] {}", p.start, p.text);
+    }
+});
+let result = session.finish().await?;
+```
+
+This is not streaming ASR. No bundled adapter exposes a streaming API, and
+re-transcribing a growing prefix was measured and rejected — the text churned
+182% (en) / 350% (ja) and warm RTF went to 1.54, slower than real time. What you
+get instead is one transcript per utterance, which for dictation is the useful
+granularity anyway.
+
+Partials are advisory by default. `FinalPass` decides what the returned
+transcript is actually computed from:
+
+| Policy | Final transcript | ASR passes |
+|--------|------------------|------------|
+| `SpeechOnly` *(default)* | The detected speech, joined, transcribed as one utterance | 2 |
+| `WholeUtterance` | The recording exactly as captured | 2 |
+| `JoinSegments` | The concatenated partials | 1 |
+
+`SpeechOnly` separates the two failure modes: the silence is gone, but the model
+still sees each utterance whole, so a boundary placed slightly wrong costs a
+little padding rather than a fragment. `WholeUtterance` changes the final text by
+nothing at all — useful for measuring one policy against another.
+`JoinSegments` is the cheap one and the only one that inherits segmentation
+errors in full. Dropping `session.partials` skips the per-utterance pass
+entirely, which saves the second ASR run under the first two policies.
+
 ## CLI reference
 
 ```
@@ -313,6 +386,8 @@ let asr = WhisperOnnxAdapter::load("vendor/whisper_onnx_turbo")?
     ├── LlmRefiner trait          → no implementation (see below)
     ├── ContextProvider trait     → no implementation (see below)
     ├── OutputEmitter trait       → StdoutEmitter, ClipboardEmitter [clipboard]
+    ├── VadBackend trait          → EnergyVad, EarshotVad [vad]; Segmenter holds the
+    │                                utterance-boundary policy for both
     ├── [mic] Microphone capture  → cpal, cross-platform
     └── [onnx] ONNX backends      → OnnxPunctuationRestorer, and the embedder / G2P
                                     that PhonemeCorrector and ParagraphSplitter

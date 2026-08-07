@@ -27,6 +27,72 @@ impl AsrAdapter for MockAsr {
 }
 
 // ---------------------------------------------------------------------------
+// RecordingAsr — records what it was given, answers differently each call
+// ---------------------------------------------------------------------------
+
+/// What one call to [`RecordingAsr::transcribe`] was handed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AsrCall {
+    /// Total samples across every chunk in the call.
+    pub samples: usize,
+    /// The rate the chunks declared, or 0 when there were none.
+    pub sample_rate: u32,
+}
+
+/// An ASR adapter that remembers the audio it received.
+///
+/// [`MockAsr`] answers the same way whatever it is given, which is enough
+/// for text-stage tests but cannot distinguish "the adapter saw the
+/// silence" from "the adapter saw only the speech" — the thing voice
+/// activity detection exists to change. This one records each call and
+/// answers with the next transcript in its list, so both the audio
+/// reaching the model and the number of passes over it are observable.
+pub struct RecordingAsr {
+    calls: std::sync::Arc<std::sync::Mutex<Vec<AsrCall>>>,
+    transcripts: Vec<String>,
+}
+
+impl RecordingAsr {
+    /// Answers with `transcripts` in order, repeating the last one once
+    /// they run out.
+    pub fn new<S: Into<String>>(transcripts: impl IntoIterator<Item = S>) -> Self {
+        let transcripts: Vec<String> = transcripts.into_iter().map(Into::into).collect();
+        assert!(
+            !transcripts.is_empty(),
+            "RecordingAsr needs at least one transcript"
+        );
+        Self {
+            calls: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            transcripts,
+        }
+    }
+
+    /// A handle to the call log, cloneable before the adapter is moved
+    /// into a pipeline.
+    pub fn calls(&self) -> std::sync::Arc<std::sync::Mutex<Vec<AsrCall>>> {
+        std::sync::Arc::clone(&self.calls)
+    }
+}
+
+#[async_trait]
+impl AsrAdapter for RecordingAsr {
+    async fn transcribe(&self, audio: &[AudioChunk]) -> Result<Transcript, AsrError> {
+        let mut calls = self.calls.lock().expect("call log poisoned");
+        let index = calls.len();
+        calls.push(AsrCall {
+            samples: audio.iter().map(|c| c.samples.len()).sum(),
+            sample_rate: AudioChunk::sample_rate_of(audio).unwrap_or(0),
+        });
+        let text = self
+            .transcripts
+            .get(index)
+            .or_else(|| self.transcripts.last())
+            .expect("checked non-empty in new");
+        Ok(Transcript::new(text.clone()))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // MockContextProvider — returns a fixed context
 // ---------------------------------------------------------------------------
 
