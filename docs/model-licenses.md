@@ -52,8 +52,8 @@ with the FunASR project's umbrella statement.
 
 ## Text-embedding model weights
 
-Used by the Tier 1 `OnnxEmbeddingFilter` and the Tier 2
-`OnnxTextEmbedder` (`PhonemeCorrector` / `ParagraphSplitter`).
+Used by `OnnxTextEmbedder` (`PhonemeCorrector` / `ParagraphSplitter`).
+Tier 1 used these too until v0.2.0 removed the embedding filler filter.
 `scripts/setup_embedders.sh` downloads these; the comparison behind
 the shortlist is in
 [`model-upgrade-candidates.md`](./model-upgrade-candidates.md) §3 and

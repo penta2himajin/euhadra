@@ -257,7 +257,7 @@ L1 で es を評価する際の ASR は **NVIDIA Canary-180M-Flash via [`istupak
 
 ### 3.2 Tier 1 — TextFilter (filler removal)
 
-**評価対象**: SimpleFillerFilter、JapaneseFillerFilter、ChineseFillerFilter、SpanishFillerFilter、OnnxEmbeddingFilter
+**評価対象**: SimpleFillerFilter、JapaneseFillerFilter、ChineseFillerFilter、SpanishFillerFilter（`FillerFilter::for_language` 経由）。埋め込みベースの `OnnxEmbeddingFilter` は v0.2.0 で削除した（§3.2 の実測でルールベースが全言語で上回ったため）
 
 #### 直接評価 (F1)
 

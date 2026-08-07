@@ -286,7 +286,7 @@ struct FilterResult {
 **想定実装**:
 - `FillerFilter::for_language(Language)` — **推奨エントリポイント**。言語から分かち書き方式（空白 / `、` / `，`）を型で選び、以下の具象フィルタへ委譲する。空白区切りの `SimpleFillerFilter` を日本語・中国語に手で組み合わせると、フィラーで始まる発話が丸ごと 1 トークンとして削除され、出力が空になる（エラーは出ない）。この組み合わせ事故を型で防ぐのが目的
 - `SimpleFillerFilter` — 辞書照合ベースのフィラー除去（階層化: pure / contextual / multi-word）。空白区切り言語（en / es / ko）専用
-- ~~`EmbeddingFillerFilter` / `OnnxEmbeddingFilter`~~ — 埋め込みコサイン類似度によるフィラー検出。**非推奨・未配線**。実測でルールベース実装が全言語で上回ったため（[`model-upgrade-candidates.md`](./model-upgrade-candidates.md) §3.2）、Tier 1 のフィラー除去はルールベースのみとする。なお `OnnxEmbeddingFilter` 自体は `src/onnx_processing.rs` に `onnx` feature 配下で**残っている**（本節は以前「撤去済み」と記述していたが誤り。§6.1 / §9.2 の記述が正）。実削除は公開 API の破壊変更となるため別途判断する
+- ~~`EmbeddingFillerFilter` / `OnnxEmbeddingFilter`~~ — 埋め込みコサイン類似度によるフィラー検出。**v0.2.0 で削除済み**。実測でルールベース実装が全言語で上回ったため（[`model-upgrade-candidates.md`](./model-upgrade-candidates.md) §3.2）、Tier 1 のフィラー除去はルールベースのみとする。較正用の `bench_embedder` も併せて削除した（被写体が無くなったため）。測定値そのものは同ドキュメントに記録として残る
 - `JapaneseFillerFilter` — 読点区切り3パス検出 + ASR アーティファクト対応
 - `ChineseFillerFilter` — 中文 `，` 区切り 3 パス (pure: 嗯 / 呃 / 哦, contextual: 那个 / 这个 / 就是 / 然后 / 怎么说)
 
@@ -301,7 +301,7 @@ struct FilterResult {
 - マルチワードフィラー（you know, I mean）: バイグラム照合で事前除去
 - 日本語フィラー: 読点区切りセグメントの独立性を判定基準とし、ASR アーティファクト（えーと→映像）も辞書に含める
 
-**コサイン閾値はモデル固有の値であり、バックエンド間で移植できない。** 実測 (`examples/bench_embedder.rs`) では最適値が bge-small-en-v1.5 = 0.80、granite-embedding-97m-multilingual-r2 = 0.90、potion-multilingual-128M = 0.38 と大きく散る。bge-small 由来の 0.82 を granite に流用すると英語の非フィラー 143 語のうち 131 語が false positive になる。較正手順と全測定値は [`model-upgrade-candidates.md`](./model-upgrade-candidates.md) §3 を参照。同 §3.1 に、この分岐が当初 AND 条件で書かれていたため閾値が全レンジで無効化されていた件の記録がある。
+**コサイン閾値はモデル固有の値であり、バックエンド間で移植できない。** 実測（`bench_embedder`、v0.2.0 で削除）では最適値が bge-small-en-v1.5 = 0.80、granite-embedding-97m-multilingual-r2 = 0.90、potion-multilingual-128M = 0.38 と大きく散る。bge-small 由来の 0.82 を granite に流用すると英語の非フィラー 143 語のうち 131 語が false positive になる。較正手順と全測定値は [`model-upgrade-candidates.md`](./model-upgrade-candidates.md) §3 を参照。同 §3.1 に、この分岐が当初 AND 条件で書かれていたため閾値が全レンジで無効化されていた件の記録がある。
 
 この手法は LLM 呼び出しに対して以下の利点を持つ:
 - レイテンシ: ミリ秒単位（LLM は数百ミリ秒〜数秒）
@@ -633,7 +633,6 @@ ASR Output (raw text)
     │  - SimpleFillerFilter: ルールベース（en/es/ko） ✅ 実装済み
     │  - JapaneseFillerFilter: ルールベース（日本語） ✅ 実装済み
     │  - ChineseFillerFilter: ルールベース（中国語）  ✅ 実装済み
-    │  - OnnxEmbeddingFilter: bge-small 埋め込み     ❌ 非推奨・未配線
     │
     ▼
 [Tier 2: TextProcessor]  ← LLM 不要、数十ミリ秒、5〜250MB ONNX
@@ -925,7 +924,7 @@ MIT / Apache ライセンスのため、コード自体による参入障壁は�
 - [x] SimpleFillerFilter（英語、ルールベース）
 - [x] JapaneseFillerFilter（日本語、ルールベース）
 - [x] ChineseFillerFilter（中国語、ルールベース）
-- [x] ~~OnnxEmbeddingFilter（bge-small 埋め込み距離）[onnx]~~ — 非推奨・未配線（§3.5 参照）
+- [x] ~~OnnxEmbeddingFilter（bge-small 埋め込み距離）[onnx]~~ — **v0.2.0 で削除**（§3.5 参照）
 
 **Tier 2: TextProcessor**:
 - [x] TextProcessor trait 定義

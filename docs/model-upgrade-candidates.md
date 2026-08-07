@@ -111,7 +111,11 @@ are all GGUF/llama.cpp-ready, which is what §5.2 assumes.
 
 Three backends, four languages, scored against the gold filler
 annotations in `tests/evaluation/annotations/<lang>_filler.jsonl`.
-Reproduce with:
+
+**These numbers are a historical record and can no longer be
+reproduced from the tree.** `bench_embedder` measured
+`OnnxEmbeddingFilter`, and v0.2.0 removed both — the measurements below
+are what justified that removal. The invocation is kept for provenance:
 
 ```bash
 EMBEDDER_MODEL=all scripts/setup_embedders.sh
@@ -267,7 +271,7 @@ In priority order, each small enough to be its own PR:
    their own thresholds swept the same way; neither is covered by
    this bench.
 2. ~~**Decide what `OnnxEmbeddingFilter` is actually for.**~~
-   Retired: deprecated and unwired, along with the Python
+   Settled in v0.2.0: removed outright, along with the Python
    `EmbeddingFillerFilter` path, which turned out to carry the same
    inert-AND-gate as §3.1 and to be a rule-based filter in all but
    cost. Filler removal is rule-based only now. On these
@@ -289,11 +293,11 @@ In priority order, each small enough to be its own PR:
    figure in the file that is unusable for dictation.
 
 If `potion-multilingual-128M` is ever adopted for Tier 1, note the
-secondary prize: it needs no transformer pass, so
-`OnnxEmbeddingFilter` could leave the `onnx` feature gate entirely and
-give the default build multilingual embedding at zero ML dependency,
-in line with `docs/spec.md` §10.2. That is contingent on step 2
-concluding the filter is worth keeping.
+secondary prize: it needs no transformer pass, so such a filter could
+sit outside the `onnx` feature gate entirely and give the default build
+multilingual embedding at zero ML dependency, in line with
+`docs/spec.md` §10.2. Moot for now — step 2 concluded the embedding
+filter was not worth keeping, and v0.2.0 removed it.
 
 ---
 
