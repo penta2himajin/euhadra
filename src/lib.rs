@@ -1,4 +1,9 @@
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+// `doc_auto_cfg` was removed in Rust 1.92.0 and merged into `doc_cfg`
+// (rust-lang/rust#138907). docs.rs builds on nightly, so the old name is a
+// hard error there — 0.1.0 has no rendered documentation because of this
+// single line. The attribute only applies under `--cfg docsrs`, which
+// docs.rs passes and an ordinary build does not.
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub mod emitters;
 pub mod filter;
