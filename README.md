@@ -272,7 +272,6 @@ cargo build --features onnx
 ```
 
 This enables:
-- `OnnxEmbeddingFilter` — embedding-based filler detection (replaces Python script)
 - `OnnxPunctuationRestorer` — CNN-BiLSTM punctuation + capitalization model
 - `WhisperOnnxAdapter` — Whisper-large-v3-turbo ASR via ONNX Runtime (encoder + KV-cached decoder loop). Best CER+RTF for Korean on CPU per the [#83 backend bench](docs/korean-asr-alternatives.md): 1.09% / 0.484 on FLEURS-ko with the `q4` quantisation.
 

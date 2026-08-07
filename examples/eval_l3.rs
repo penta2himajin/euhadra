@@ -8,8 +8,8 @@
 //!   `zh` / `es` / `ko`. Rule-based only: the embedding filler filter
 //!   was unwired after `docs/model-upgrade-candidates.md` §3.2 measured
 //!   the rule-based filters beating every embedding backend in every
-//!   language. `examples/bench_embedder.rs` remains the way to re-open
-//!   that comparison.
+//!   language. The embedding filter and its calibration bench were
+//!   removed in v0.2.0; the measurements stand in that document.
 //! - **`self-correction`** (Phase C-1): runs `SelfCorrectionDetector`
 //!   against an annotated JSONL file and reports utterance-level +
 //!   span-level F1. Used to measure how well the detector finds

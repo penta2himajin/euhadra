@@ -1,10 +1,11 @@
 //! Shared ONNX sentence-embedding backend (feature-gated behind `onnx`).
 //!
-//! Tier 1 (`OnnxEmbeddingFilter`) and Tier 2 (`OnnxTextEmbedder` for
-//! `PhonemeCorrector`, `ParagraphSplitter`) both need "encode a short
-//! string into an L2-normalised vector". They used to carry a private
-//! copy of that code, and both copies hard-coded the input signature
-//! of `BAAI/bge-small-en-v1.5` (`input_ids` + `attention_mask` +
+//! `OnnxTextEmbedder` (`PhonemeCorrector`, `ParagraphSplitter`) needs
+//! "encode a short string into an L2-normalised vector". Tier 1 used to
+//! need it as well, via an embedding filler filter that was removed once
+//! the rule-based filters measured better in every language. Both call
+//! sites used to carry a private copy of that code, hard-coding the
+//! input signature of `BAAI/bge-small-en-v1.5` (`input_ids` + `attention_mask` +
 //! `token_type_ids`, 3-D `last_hidden_state` output, CLS pooling).
 //!
 //! That assumption is not portable. Comparing embedding backends —
