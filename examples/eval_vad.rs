@@ -23,6 +23,8 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use clap::Parser;
+use euhadra::canary::decoder::PrefixFormat;
+use euhadra::canary::{CanaryAdapter, CanaryConfig};
 use euhadra::eval::metrics::{cer_lenient, wer_lenient};
 use euhadra::parakeet::ParakeetAdapter;
 use euhadra::prelude::*;
@@ -36,7 +38,16 @@ struct Cli {
     #[arg(long, default_value = "data/fleurs_subset")]
     data_dir: PathBuf,
 
-    /// `parakeet-tdt-0.6b-v3` bundle, used for `en`.
+    /// `canary-180m-flash` bundle. **This is what euhadra actually uses
+    /// for `en`** (`docs/benchmarks/ci_baseline.json`), and it is an
+    /// attention encoder-decoder — the architecture whose decoder decides
+    /// its own output length, and so the one where silence can run away.
+    /// Prefer it over `--parakeet-en-dir` when measuring hallucination.
+    #[arg(long)]
+    canary_en_dir: Option<PathBuf>,
+
+    /// `parakeet-tdt-0.6b-v3` bundle, an alternative for `en`. A
+    /// transducer, so output length is bounded by acoustic frames.
     #[arg(long)]
     parakeet_en_dir: Option<PathBuf>,
 
@@ -210,7 +221,12 @@ fn main() {
     let mut probes: BTreeMap<String, String> = BTreeMap::new();
 
     for lang in &cli.langs {
+        // Canary wins for `en` when both are supplied: it is the model
+        // euhadra ships for that language, so it is the one whose
+        // behaviour on silence matters.
+        let use_canary = lang == "en" && cli.canary_en_dir.is_some();
         let model_dir = match lang.as_str() {
+            "en" if use_canary => cli.canary_en_dir.clone(),
             "en" => cli.parakeet_en_dir.clone(),
             "ja" => cli.parakeet_ja_dir.clone(),
             other => {
@@ -228,12 +244,14 @@ fn main() {
         if cli.limit > 0 {
             rows.truncate(cli.limit);
         }
-        eprintln!("[{lang}] {} utterances, model {}", rows.len(), model_dir.display());
-
-        let asr = std::sync::Arc::new(
-            ParakeetAdapter::load(&model_dir)
-                .unwrap_or_else(|e| panic!("load {}: {e}", model_dir.display())),
+        eprintln!(
+            "[{lang}] {} utterances, {} at {}",
+            rows.len(),
+            if use_canary { "canary" } else { "parakeet" },
+            model_dir.display()
         );
+
+        let asr: std::sync::Arc<dyn AsrAdapter> = load_adapter(&model_dir, lang, use_canary);
         let by_chars = matches!(lang.as_str(), "ja" | "zh");
 
         let audio: Vec<(Row, AudioChunk)> = rows
@@ -296,13 +314,15 @@ fn main() {
                 }
                 // The threshold only exists for a detector, and only one
                 // policy is defined without one.
-                let thresholds: Vec<Option<f32>> = if detector == Detector::None {
-                    vec![None]
-                } else if cli.thresholds.is_empty() {
-                    vec![None]
-                } else {
-                    cli.thresholds.iter().copied().map(Some).collect()
-                };
+                // No threshold applies without a detector, and an empty
+                // sweep list means "leave each backend on its own
+                // calibration" — which is what a library caller gets.
+                let thresholds: Vec<Option<f32>> =
+                    if detector == Detector::None || cli.thresholds.is_empty() {
+                        vec![None]
+                    } else {
+                        cli.thresholds.iter().copied().map(Some).collect()
+                    };
                 let policies: Vec<FinalPass> = if detector == Detector::None {
                     vec![FinalPass::WholeUtterance]
                 } else {
@@ -361,6 +381,30 @@ fn main() {
     }
 }
 
+/// Build the ASR adapter for one language.
+///
+/// Canary needs its config assembled the same way `eval_l1_smoke.rs`
+/// does — INT8 weights and the NeMo prefix layout — or the numbers are
+/// not comparable with `docs/benchmarks/ci_baseline.json`.
+fn load_adapter(dir: &Path, lang: &str, canary: bool) -> std::sync::Arc<dyn AsrAdapter> {
+    if canary {
+        let cfg = CanaryConfig::istupakov_default().with_int8_weights();
+        let cfg = CanaryConfig {
+            prefix_format: PrefixFormat::NemoCanary2,
+            ..cfg
+        };
+        let adapter = CanaryAdapter::load_with_config(dir, cfg)
+            .unwrap_or_else(|e| panic!("load canary from {}: {e}", dir.display()))
+            .with_language(lang);
+        std::sync::Arc::new(adapter)
+    } else {
+        std::sync::Arc::new(
+            ParakeetAdapter::load(dir)
+                .unwrap_or_else(|e| panic!("load parakeet from {}: {e}", dir.display())),
+        )
+    }
+}
+
 fn policy_label(policy: FinalPass) -> &'static str {
     match policy {
         FinalPass::SpeechOnly => "speech-only",
@@ -371,8 +415,9 @@ fn policy_label(policy: FinalPass) -> &'static str {
 }
 
 /// Run every utterance through one configuration and average the result.
+#[allow(clippy::too_many_arguments)]
 async fn measure<F>(
-    asr: &std::sync::Arc<ParakeetAdapter>,
+    asr: &std::sync::Arc<dyn AsrAdapter>,
     audio: &[(Row, AudioChunk)],
     prepare: F,
     detector: Detector,
@@ -384,10 +429,10 @@ async fn measure<F>(
 where
     F: Fn(usize, &AudioChunk) -> AudioChunk,
 {
-    // `Pipeline` needs to own its adapter, so the shared `ParakeetAdapter`
-    // is wrapped rather than cloned — loading the 2.4 GB bundle once per
+    // `Pipeline` needs to own its adapter, so the shared one is wrapped
+    // rather than reloaded — loading a 2.4 GB bundle once per
     // configuration would dominate the runtime.
-    struct Shared(std::sync::Arc<ParakeetAdapter>);
+    struct Shared(std::sync::Arc<dyn AsrAdapter>);
     #[async_trait::async_trait]
     impl AsrAdapter for Shared {
         async fn transcribe(&self, chunks: &[AudioChunk]) -> Result<Transcript, AsrError> {
@@ -408,7 +453,7 @@ where
             config
         });
     if let Some(backend) = detector.backend() {
-        builder = builder.vad(BoxedVad(backend));
+        builder = builder.vad(backend);
     }
     let pipeline = builder.build().expect("pipeline");
 
@@ -453,21 +498,5 @@ where
         segments: segments / n,
         inflated,
         seconds: started.elapsed().as_secs_f64(),
-    }
-}
-
-/// `PipelineBuilder::vad` takes an owned backend; the runner picks one at
-/// runtime and so holds a `Box<dyn VadBackend>`.
-struct BoxedVad(Box<dyn VadBackend>);
-
-impl VadBackend for BoxedVad {
-    fn frame_size(&self) -> usize {
-        self.0.frame_size()
-    }
-    fn required_sample_rate(&self) -> Option<u32> {
-        self.0.required_sample_rate()
-    }
-    fn start(&self) -> Box<dyn euhadra::vad::VadStream> {
-        self.0.start()
     }
 }

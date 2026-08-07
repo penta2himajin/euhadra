@@ -109,6 +109,35 @@ pub trait VadBackend: Send + Sync {
     }
 }
 
+/// Forwarding for a boxed backend, so a caller that picks one at runtime
+/// does not have to hand-roll it.
+///
+/// Hand-rolling it is a trap: [`VadBackend::default_threshold`] has a
+/// default body, so a forwarder that omits it still compiles, still runs,
+/// and silently substitutes 0.5 for whatever the wrapped backend
+/// calibrated to. That happened — `examples/eval_vad.rs` wrapped
+/// `EarshotVad` and measured it at 0.5 while reporting it as the
+/// backend's own value, which matched the numbers from before the
+/// calibration fix exactly. Owning the forwarding here removes the
+/// opportunity.
+impl VadBackend for Box<dyn VadBackend> {
+    fn frame_size(&self) -> usize {
+        (**self).frame_size()
+    }
+
+    fn required_sample_rate(&self) -> Option<u32> {
+        (**self).required_sample_rate()
+    }
+
+    fn start(&self) -> Box<dyn VadStream> {
+        (**self).start()
+    }
+
+    fn default_threshold(&self) -> f32 {
+        (**self).default_threshold()
+    }
+}
+
 /// One detection pass over consecutive frames of a single recording.
 pub trait VadStream: Send {
     /// Probability in `0.0..=1.0` that `frame` contains speech.
@@ -224,6 +253,38 @@ pub fn segment_buffer(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every method must reach the wrapped backend — including the ones
+    /// with a default body, which are the only ones that can be dropped
+    /// without the compiler noticing.
+    #[test]
+    fn a_boxed_backend_forwards_every_method() {
+        struct Odd;
+        impl VadBackend for Odd {
+            fn frame_size(&self) -> usize {
+                333
+            }
+            fn required_sample_rate(&self) -> Option<u32> {
+                Some(8_000)
+            }
+            fn default_threshold(&self) -> f32 {
+                0.17
+            }
+            fn start(&self) -> Box<dyn VadStream> {
+                unreachable!("not needed to compare the declarations")
+            }
+        }
+
+        let boxed: Box<dyn VadBackend> = Box::new(Odd);
+        assert_eq!(boxed.frame_size(), 333);
+        assert_eq!(boxed.required_sample_rate(), Some(8_000));
+        assert_eq!(
+            boxed.default_threshold(),
+            0.17,
+            "the boxed forwarder dropped default_threshold and fell back \
+             to the trait's 0.5"
+        );
+    }
 
     /// `sr` seconds of alternating silence and tone, in `(silence, tone)`
     /// pairs given in seconds.
