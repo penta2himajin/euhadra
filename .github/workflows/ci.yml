@@ -182,6 +182,18 @@ jobs:
   # Only `en` and `ja`: those are the two languages with measurements
   # in docs/benchmarks/vad_delta_wer.md. zh / ko / es were never run and
   # gating them would assert a number nobody has checked.
+  #
+  # `ja` reproduces bit-for-bit between a developer machine and this
+  # runner; `en` does not, drifting ~0.008 in Δ because Canary's
+  # autoregressive greedy decode turns a float reduction-order
+  # difference into a different token and diverges from there. Parakeet
+  # is frame-synchronous and cannot. `--max-segments` is unaffected in
+  # both — `earshot` is pure Rust and the segmenter is integer logic.
+  #
+  # So 0.03 is not slack, it is the room the AED's non-determinism
+  # needs: measured worst case +0.0150 plus ~0.008 of drift that
+  # happened to fall favourably this time. If CI starts brushing the
+  # limit, measure `en` with `--parakeet-en-dir` rather than raising it.
   evaluate-vad:
     name: evaluate (VAD ΔWER)
     runs-on: ubuntu-latest
