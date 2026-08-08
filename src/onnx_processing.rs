@@ -231,6 +231,7 @@ impl TextProcessor for OnnxPunctuationRestorer {
                         kind: CorrectionKind::Capitalized,
                         original: w[..first_len].to_string(),
                         replacement: first.clone(),
+                        span: None,
                     });
                 }
                 w = format!("{}{}", first, &w[first_len..]);
@@ -243,6 +244,7 @@ impl TextProcessor for OnnxPunctuationRestorer {
                     kind: CorrectionKind::PunctuationInserted,
                     original: String::new(),
                     replacement: ps.clone(),
+                    span: None,
                 });
                 result.push_str(&ps);
             }
@@ -558,6 +560,7 @@ impl TextProcessor for OnnxEntityRecognizer {
                     kind: CorrectionKind::EntityDetected,
                     original: e.text.clone(),
                     replacement: e.text,
+                    span: None,
                 })
                 .collect(),
         })

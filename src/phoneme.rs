@@ -438,6 +438,7 @@ impl TextProcessor for PhonemeCorrector {
                 kind: CorrectionKind::DictionaryMatch,
                 original: original_str,
                 replacement: self.custom_entries[cand.entry_idx].word.clone(),
+                span: None,
             });
 
             result_words[cand.start] = self.custom_entries[cand.entry_idx].word.clone();

@@ -10,6 +10,59 @@ stated in the README's Stability section.
 
 ### Added
 
+- **User term substitution** (`euhadra::dictionary`). ASR gets
+  「タイプライター」 right — it is what was said — but the speaker wanted
+  `typwrtr`, and no acoustic model produces a coined spelling nobody
+  trained on. That is terminology substitution, not error correction,
+  and only the speaker can resolve it.
+
+  ```rust
+  let dictionary = TermDictionary::new(
+      [TermEntry { term: "typwrtr".into(),
+                   aliases: vec!["タイプライター".into(), "typewriter".into()] }],
+      MatchPolicy::for_language(Language::Japanese),
+  )?;
+  ```
+
+  euhadra owns the behaviour; it does not own the dictionary. **No
+  bundled term list, no file format, no `load(path)`** — `TermEntry`
+  derives `Deserialize` and the application reads its own settings in
+  its own format. A dictionary euhadra shipped would be an editorial
+  opinion about what a speaker meant; one the speaker supplies is a
+  fact about their vocabulary.
+
+  It is a pipeline stage rather than the caller's own find-replace
+  because *ordering* is the part a caller cannot control: run after
+  `BasicPunctuationRestorer` and the text has already been capitalised,
+  after `InverseTextNormalizer` and the numerals have already been
+  rewritten.
+
+  - `MatchPolicy::for_language` picks scope and folding, the same
+    typed-dispatch reasoning as `FillerFilter::for_language`. Word
+    boundaries for en/es/ko, substring for ja/zh; ASCII full-width,
+    case and whitespace everywhere, kana for ja only. **A fold that
+    loses information is not included** — hiragana and katakana are the
+    same word, but `タイプライタ` and `タイプライター` need not be, and
+    Spanish accent stripping would merge `año` with `ano`. Anything
+    left out is one more alias.
+  - `MatchPolicy::none()` for languages with no `Language` variant.
+    Explicit rather than a silent fallback, for the reason
+    `Language::from_bcp47` returns `None`.
+  - One pass, leftmost-longest, replaced text never rescanned. A match
+    always replaces — no confidence score that might silently decline.
+  - `TermDictionary::new` reports **every** problem at once (empty term
+    or alias, alias equal to its term, alias under two characters after
+    folding, two terms claiming one alias), located by entry and alias
+    index so a registration UI can highlight the row.
+
+- **`Correction::span`** — `Option<Span>`, in codepoints, matching
+  `Span` everywhere else in the crate. Existing processors report
+  `None`; `TermDictionary` reports where it substituted, which is what
+  a caller needs to offer undo. Also closes a divergence: `docs/spec.md`
+  §3.6 has declared a position field since v0.1 and the struct never
+  had one.
+
+
 - **Voice activity detection** (`euhadra::vad`). Until now the recording
   reached the ASR adapter exactly as captured, so 30 seconds of audio
   with 5 seconds of speech in it fed 25 seconds of silence to the model —
@@ -67,6 +120,14 @@ stated in the README's Stability section.
 - `RecordingAsr` (feature `testing`) — a mock that records the audio it
   was handed, so a test can tell "the adapter saw the silence" from "the
   adapter saw only the speech".
+
+### Known limits
+
+- A two-character alias is allowed, so registering `IT` rewrites every
+  `it`. **Length is a proxy for the real hazard, which is frequency** —
+  `Qz` is two characters and harmless. Warning on frequency needs a
+  per-language word list, the kind of data `docs/spec.md` §11.4 puts
+  outside what scales centrally.
 
 ### Measured
 

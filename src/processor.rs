@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use crate::types::ContextSnapshot;
+use crate::types::{ContextSnapshot, Span};
 
 // ---------------------------------------------------------------------------
 // TextProcessor trait
@@ -38,6 +38,20 @@ pub struct Correction {
     pub kind: CorrectionKind,
     pub original: String,
     pub replacement: String,
+    /// Where in the *input* text the correction applied, in codepoints.
+    ///
+    /// `None` when the processor does not track position. Most of them
+    /// currently do not — the field exists so the ones that can report
+    /// it are not forced to wait for the ones that cannot, and so a
+    /// caller offering undo can tell "I know where this was" from "I
+    /// only know it happened".
+    ///
+    /// Codepoints, matching [`Span`] everywhere else in the crate
+    /// (`FillerFilter::detect_spans`, the L3 evaluator, the gold
+    /// annotations). A consumer needing UTF-16 offsets or byte offsets
+    /// converts them itself; euhadra does not carry a second
+    /// representation for one platform's string type.
+    pub span: Option<Span>,
 }
 
 /// The kind of change a [`Correction`] represents.
@@ -259,6 +273,7 @@ impl SelfCorrectionDetector {
                             kind: CorrectionKind::SelfCorrectionRemoved,
                             original: format!("{} {}", original_rm, cue),
                             replacement: String::new(),
+                            span: None,
                         },
                     ));
                 }
@@ -308,6 +323,7 @@ impl SelfCorrectionDetector {
                         kind: CorrectionKind::SelfCorrectionRemoved,
                         original: format!("{}{}", reparandum, cue),
                         replacement: String::new(),
+                        span: None,
                     },
                 ));
             }
@@ -398,6 +414,7 @@ impl SelfCorrectionDetector {
                             kind: CorrectionKind::SelfCorrectionRemoved,
                             original: format!("{} {}", original_rm, cue),
                             replacement: String::new(),
+                            span: None,
                         },
                     ));
                 }
@@ -453,6 +470,7 @@ impl SelfCorrectionDetector {
                         kind: CorrectionKind::SelfCorrectionRemoved,
                         original: format!("{}{}", reparandum, cue),
                         replacement: String::new(),
+                        span: None,
                     },
                 ));
             }
@@ -543,6 +561,7 @@ impl SelfCorrectionDetector {
                         kind: CorrectionKind::SelfCorrectionRemoved,
                         original: format!("{} {}", reparandum, cue),
                         replacement: String::new(),
+                        span: None,
                     },
                 ));
             }
@@ -739,6 +758,7 @@ impl TextProcessor for BasicPunctuationRestorer {
                         kind: CorrectionKind::Capitalized,
                         original: ch.to_string(),
                         replacement: upper.clone(),
+                        span: None,
                     });
                 }
                 result.push_str(&upper);
@@ -778,6 +798,7 @@ impl TextProcessor for BasicPunctuationRestorer {
                         kind: CorrectionKind::PunctuationInserted,
                         original: String::new(),
                         replacement: terminal.to_string(),
+                        span: None,
                     });
                 }
             }
@@ -857,6 +878,7 @@ impl TextProcessor for InverseTextNormalizer {
                 kind: CorrectionKind::NumeralNormalized,
                 original: text.to_string(),
                 replacement: normalized.clone(),
+                span: None,
             }]
         } else {
             vec![]
@@ -980,6 +1002,7 @@ impl TextProcessor for SpokenFormNormalizer {
                         kind: CorrectionKind::SpokenFormNormalized,
                         original: core.to_string(),
                         replacement: cased.clone(),
+                        span: None,
                     });
                     out.push(format!("{}{}", cased, trailing));
                 }

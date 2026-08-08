@@ -197,7 +197,7 @@ euhadra processes ASR output through three independent layers, each optional:
 | Tier | Component | What it does | LLM? | Size |
 |------|-----------|-------------|------|------|
 | 1 | **TextFilter** | Filler removal (um, uh, えーと) | No | 0 MB (rules) |
-| 2 | **TextProcessor** | Punctuation, capitalization, self-correction, NER | No | 0 MB (rules) or 5-250 MB (ONNX) |
+| 2 | **TextProcessor** | Punctuation, capitalization, self-correction, term dictionary, NER | No | 0 MB (rules) or 5-250 MB (ONNX) |
 | 3 | **LlmRefiner** | Tone adjustment, context-adaptive rewriting | Yes | Trait only — nothing ships |
 
 Tier 1 + 2 alone produce clean, punctuated text without any LLM or network calls.
@@ -237,6 +237,74 @@ resulting scores are committed. That posture is deliberate — but the CI wiring
 that would run it never landed, so in practice Spanish went unverified, and a
 defect that silently disabled filler removal for punctuated input survived until
 every language was run by hand.
+
+## Term dictionary
+
+Some words come out wrong no matter how good the model is. Say "typwrtr" and a
+Japanese ASR returns 「タイプライター」 — which is *correct*, it is what you said.
+It is just not what you wanted written. No acoustic model will produce a coined
+spelling nobody trained on; only you can say what you meant.
+
+```rust
+use euhadra::prelude::*;
+
+let dictionary = TermDictionary::new(
+    [TermEntry {
+        term: "typwrtr".into(),
+        aliases: vec!["タイプライター".into(), "typewriter".into()],
+    }],
+    MatchPolicy::for_language(Language::Japanese),
+)?;
+
+let pipeline = PipelineBuilder::new()
+    .asr(/* ... */)
+    .processor(dictionary)
+    .build()?;
+```
+
+**euhadra owns the behaviour, not the dictionary.** No bundled term list, no
+file format, no `load(path)` — `TermEntry` derives `Deserialize`, so your app
+reads its own settings in its own format and hands over the entries. A term
+list shipped by euhadra would be an opinion about what you meant; one you
+supply is a fact about your vocabulary.
+
+It runs as a pipeline stage rather than your own find-and-replace for one
+reason: *ordering*. Run it after `BasicPunctuationRestorer` and it meets text
+whose sentence starts are already capitalised; after `InverseTextNormalizer`
+and the numerals are already rewritten. Only something inside the pipeline can
+pick where it sits.
+
+`MatchPolicy::for_language` chooses scope and normalisation together, because
+both are language knowledge and both fail silently when guessed:
+
+| Language | Scope | case | full-width | kana |
+|---|---|---|---|---|
+| English / Spanish / Korean | word boundary | ✓ | ✓ | — |
+| Japanese | substring | ✓ | ✓ | ✓ |
+| Chinese | substring | ✓ | ✓ | — |
+| `MatchPolicy::none()` | substring | — | — | — |
+
+The rule: **a fold that loses information is not included.** Hiragana and
+katakana spell the same word, so those fold together. 「タイプライタ」 and
+「タイプライター」 need not be the same word — a product name and a common noun
+can differ by exactly that mark — so the long vowel is left alone. Spanish
+accent stripping would merge `año` (year) with `ano`, so it is not offered.
+Anything missing is covered by writing one more alias; normalisation here saves
+typing, it does not decide correctness.
+
+Matching is one pass, longest alias first, and replaced text is never
+rescanned. A match always replaces — there is no confidence score that might
+quietly decline, and every substitution is reported as a `Correction` with a
+codepoint `span` so you can show it or undo it.
+
+`TermDictionary::new` reports everything wrong with a dictionary at once, keyed
+by entry and alias index, so a settings UI can highlight the offending rows
+rather than making the user fix one error per save.
+
+One known hazard: a two-character alias is allowed, so registering `IT` will
+rewrite every `it`. Length is a poor proxy — `Qz` is two characters and
+harmless — and the real predictor is word frequency, which needs per-language
+data euhadra does not carry.
 
 ## Voice activity detection
 
@@ -407,7 +475,7 @@ let asr = WhisperOnnxAdapter::load("vendor/whisper_onnx_turbo")?
     ├── TextFilter trait          → FillerFilter::for_language → Simple / Japanese / Chinese / Spanish
     ├── TextProcessor trait       → SelfCorrectionDetector, BasicPunctuationRestorer,
     │                                SpokenFormNormalizer, InverseTextNormalizer,
-    │                                PhonemeCorrector, ParagraphSplitter
+    │                                TermDictionary, PhonemeCorrector, ParagraphSplitter
     ├── LlmRefiner trait          → no implementation (see below)
     ├── ContextProvider trait     → no implementation (see below)
     ├── OutputEmitter trait       → StdoutEmitter, ClipboardEmitter [clipboard]

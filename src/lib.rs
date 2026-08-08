@@ -5,6 +5,7 @@
 // docs.rs passes and an ordinary build does not.
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+pub mod dictionary;
 pub mod emitters;
 pub mod filter;
 pub mod paragraph;

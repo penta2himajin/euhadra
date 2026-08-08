@@ -182,6 +182,22 @@ pub struct ContextSnapshot {
     pub app_bundle_id: Option<String>,
     pub field_content: Option<String>,
     pub field_type: Option<FieldType>,
+    /// Preferred terms to hand an LLM refiner as context — the
+    /// `preferred_terms` block of `docs/spec.md` §6.4. A list of words,
+    /// not a mapping, because a prompt takes hints rather than rules.
+    ///
+    /// **Not the term-substitution dictionary.** That is
+    /// [`TermDictionary`](crate::dictionary::TermDictionary), which
+    /// takes term→alias entries at construction, replaces
+    /// deterministically, and needs no model. The names are close
+    /// enough to confuse; the mechanisms share nothing.
+    ///
+    /// Currently unread — Tier 3 has no concrete implementation
+    /// (#122). **Worth unifying with `TermDictionary` when it does**:
+    /// the same user vocabulary that drives deterministic substitution
+    /// is exactly what a context-sensitive refiner would want as a
+    /// hint, and maintaining two lists of the same terms would be a
+    /// defect in the API rather than in the user's data.
     pub custom_dictionary: Vec<String>,
     pub instructions: Option<String>,
     pub locale: Option<String>,
