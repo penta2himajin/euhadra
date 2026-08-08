@@ -413,7 +413,7 @@ impl TermDictionary {
 
         // Longest first: with a linear scan per position, that makes the
         // first hit the longest hit.
-        aliases.sort_by(|a, b| b.folded.len().cmp(&a.folded.len()));
+        aliases.sort_by_key(|alias| std::cmp::Reverse(alias.folded.len()));
         Ok(Self { aliases, policy })
     }
 
