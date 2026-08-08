@@ -8,7 +8,7 @@
 #     model.int8.onnx   ← the CTC graph
 #     tokens.txt        ← symbol<space>id, one per line
 #
-# Idempotent: skips an existing, complete bundle. Pass `DOLPHIN_KO_DIR`
+# Idempotent: skips files that already exist. Pass `DOLPHIN_KO_DIR`
 # to override the location and `DOLPHIN_KO_SIZE` to choose `small`
 # (default) or `base`.
 #
@@ -16,6 +16,20 @@
 #   scripts/setup_dolphin_ko.sh
 #   DOLPHIN_KO_SIZE=base scripts/setup_dolphin_ko.sh
 #   DOLPHIN_KO_DIR=/path scripts/setup_dolphin_ko.sh
+#
+# Why HuggingFace and not the sherpa-onnx GitHub release: the release
+# ships a `.tar.bz2` that has to be fetched, decompressed and flattened
+# locally, so the two files we keep cost ~680 MB of peak disk (archive +
+# extraction + copy) and a bzip2 pass. The upstream maintainer publishes
+# the same export on HuggingFace with both files already at the repo
+# root, which makes this two `curl`s and ~250 MB, and matches every
+# other model script here.
+#
+# The artefacts are the same bytes, not merely the same build. Verified
+# 2026-08-08 by fetching both sources and comparing SHA-256:
+#
+#   model.int8.onnx  c1afcb9265de0ebd853eb8f570b371f399a6f9b2b9af9a3cb17c2e509171e697
+#   tokens.txt       c3788261a51df1899ea4b210b552cd42139204de72c0ad60f6cebb199078872e
 #
 # Why `small` and not `base`: measured on the same FLEURS-ko 30-utt set
 # in the same container at one intra-op thread, small scores CER 0.0655
@@ -44,8 +58,12 @@
 #   - DataoceanAI/Dolphin (code and weights): Apache-2.0
 #     Declaration: https://github.com/DataoceanAI/Dolphin
 #   - k2-fsa/sherpa-onnx CTC conversion (what this script downloads):
-#     redistribution of the above
-#     Declaration: https://github.com/k2-fsa/sherpa-onnx
+#     redistribution of the above, Apache-2.0
+#     Declaration: https://huggingface.co/csukuangfj/sherpa-onnx-dolphin-small-ctc-multi-lang-int8-2025-04-02
+#       (model-card YAML: `license: apache-2.0`). The repo owner is the
+#       sherpa-onnx maintainer, so this is the same publisher as the
+#       GitHub release — a per-artefact licence declaration rather than
+#       one buried in an archive.
 #   - Canonical Apache-2.0 text: https://www.apache.org/licenses/LICENSE-2.0.txt
 
 set -euo pipefail
@@ -61,7 +79,7 @@ esac
 
 DIR="${DOLPHIN_KO_DIR:-vendor/dolphin_ko}"
 NAME="sherpa-onnx-dolphin-${SIZE}-ctc-multi-lang-int8-2025-04-02"
-URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/${NAME}.tar.bz2"
+HF_REPO="https://huggingface.co/csukuangfj/${NAME}/resolve/main"
 
 require() {
     if ! command -v "$1" >/dev/null 2>&1; then
@@ -70,31 +88,30 @@ require() {
     fi
 }
 require curl
-require tar
-
-if [[ -s "$DIR/model.int8.onnx" && -s "$DIR/tokens.txt" ]]; then
-    echo "[skip] $DIR already populated"
-    echo "DOLPHIN_KO_DIR=$DIR"
-    exit 0
-fi
 
 mkdir -p "$DIR"
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
 
-echo "[get] $NAME"
-curl -fL --retry 3 --retry-delay 2 --max-time 1800 -o "$TMP/model.tar.bz2" "$URL"
-tar xf "$TMP/model.tar.bz2" -C "$TMP"
+# Order: the small file first, so a broken link or a proxy serving HTML
+# surfaces before 250 MB of bandwidth is spent on it.
+for f in tokens.txt model.int8.onnx; do
+    target="$DIR/$f"
+    if [[ -s "$target" ]]; then
+        echo "[skip] $f already present"
+        continue
+    fi
+    echo "[get] $f"
+    curl -fL --retry 3 --retry-delay 2 --max-time 1800 \
+        -o "$target" "$HF_REPO/$f"
+done
 
-# The archive unpacks into a directory named after the release; flatten
-# the two files the adapter needs so the layout does not encode a date.
-for f in model.int8.onnx tokens.txt; do
-    src="$TMP/$NAME/$f"
-    if [[ ! -s "$src" ]]; then
-        echo "[error] $f missing from the archive" >&2
+# Both files must be non-empty before the adapter is pointed at this
+# directory: an interrupted `curl` leaves a zero-byte file behind, and
+# the skip above would then read it as already fetched.
+for f in tokens.txt model.int8.onnx; do
+    if [[ ! -s "$DIR/$f" ]]; then
+        echo "[error] $DIR/$f is missing or empty" >&2
         exit 4
     fi
-    cp "$src" "$DIR/$f"
 done
 
 echo "DOLPHIN_KO_DIR=$DIR"
