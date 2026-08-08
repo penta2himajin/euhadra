@@ -8,6 +8,15 @@ stated in the README's Stability section.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-08-08
+
+Additive. Nothing was removed and no signature changed, so `0.2` code
+compiles unmodified — `Correction` gained a field, `Stage` a variant and
+`Diagnostics` a field, and all three are `#[non_exhaustive]`, so neither
+struct literals nor exhaustive matches were possible from outside the
+crate to begin with. A minor bump rather than a patch because two
+modules are new.
+
 ### Added
 
 - **User term substitution** (`euhadra::dictionary`). ASR gets
@@ -248,6 +257,7 @@ with `crate version 0.1.0 already uploaded`.
   capture behind `mic`; the `euhadra` binary behind `cli`.
 - Evaluation harness and mock adapters behind `testing`.
 
-[Unreleased]: https://github.com/penta2himajin/euhadra/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/penta2himajin/euhadra/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/penta2himajin/euhadra/releases/tag/v0.3.0
 [0.2.0]: https://github.com/penta2himajin/euhadra/releases/tag/v0.2.0
 [0.1.0]: https://crates.io/crates/euhadra/0.1.0
