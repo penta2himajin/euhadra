@@ -1122,7 +1122,7 @@ MIT / Apache ライセンスのため、コード自体による参入障壁は�
 - [x] **判断ゲート**: 幻覚は VAD で消える。テキスト側の除去は不要
 - [x] CI 配線 — `test (vad feature)` ジョブ + `onnx-check` の `Check (onnx + vad)` ステップ
 - [ ] zh / ko / es の ΔWER — モデルバンドル未取得
-- [ ] ΔWER 測定の CI 配線 — モデル取得が要るため `evaluate (ASR live smoke)` と同じ扱いになる
+- [x] ΔWER 測定の CI 配線 — `evaluate (VAD ΔWER)` ジョブ。既定構成のみを Δ 固定閾値でゲート（#137）
 
 **CLI / 入力**:
 - [x] CLI ツール（dictate / transcribe / record）

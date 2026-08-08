@@ -155,9 +155,12 @@ exactly.
   alone**, off identical segmentation. Dropping the silence does not
   require cutting anything, and now that is measured rather than argued.
 
-Still unmeasured: zh / ko / es (no model bundles), and the ΔWER run is
-not wired into CI — it needs model downloads, so it would belong with
-`evaluate (ASR live smoke)` rather than the new `vad` job.
+Gated in CI by `evaluate (VAD ΔWER)`, on the default configuration only
+— en / ja at −45 dBFS with `EarshotVad` and `SpeechOnly`, against fixed
+Δ and segment-count limits. A separate job from `evaluate (ASR live
+smoke)` so the two run in parallel while sharing its model caches.
+
+Still unmeasured: zh / ko / es, which have no bundles.
 
 ### Resolved by the measurement
 

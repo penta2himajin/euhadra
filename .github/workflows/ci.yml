@@ -151,6 +151,131 @@ jobs:
       - name: Check (onnx + vad)
         run: cargo check --features onnx,vad --all-targets --locked
 
+  # Voice activity detection ΔWER (#133 / #137). Guards the one thing
+  # `test (vad feature)` cannot: that a detector in front of the ASR
+  # adapter still *helps*. That job proves the feature compiles and its
+  # unit tests pass, and would stay green through a changed
+  # `SegmenterConfig` default or a changed
+  # `EarshotVad::default_threshold` — both of which silently move the
+  # error rate. Getting `EarshotVad`'s threshold wrong once cost
+  # +0.05 WER (en) while every test passed.
+  #
+  # A separate job rather than a step inside `evaluate (ASR live smoke)`
+  # so the two run in parallel. Canary decodes autoregressively and the
+  # `en` half alone takes ~3 minutes; appended in series it would roughly
+  # double that job. The cache keys are copied verbatim from it, so
+  # nothing is downloaded twice — GitHub Actions shares caches by key
+  # across jobs in a repository.
+  #
+  # Δ against the clean recording, not the absolute error rate: the
+  # absolute number tracks the ASR model and `ci_baseline.json` already
+  # watches it. Thresholds are fixed rather than a committed baseline,
+  # which would need an update flow to stay honest and would catch
+  # nothing more. Measured values at the time of writing were Δ+0.0022
+  # (en) / +0.0019 (ja) at −100 dBFS and Δ+0.0150 / −0.0226 at −45.
+  #
+  # `--max-segments 3.0` exists because `FinalPass::SpeechOnly` absorbs
+  # over-segmentation: the measured runs sat at 2.0–2.2 utterances per
+  # recording with Δ still near zero, so segmentation can break without
+  # the error rate showing it.
+  #
+  # Only `en` and `ja`: those are the two languages with measurements
+  # in docs/benchmarks/vad_delta_wer.md. zh / ko / es were never run and
+  # gating them would assert a number nobody has checked.
+  #
+  # `ja` reproduces bit-for-bit between a developer machine and this
+  # runner; `en` does not, drifting ~0.008 in Δ because Canary's
+  # autoregressive greedy decode turns a float reduction-order
+  # difference into a different token and diverges from there. Parakeet
+  # is frame-synchronous and cannot. `--max-segments` is unaffected in
+  # both — `earshot` is pure Rust and the segmenter is integer logic.
+  #
+  # So 0.03 is not slack, it is the room the AED's non-determinism
+  # needs: measured worst case +0.0150 plus ~0.008 of drift that
+  # happened to fall favourably this time. If CI starts brushing the
+  # limit, measure `en` with `--parakeet-en-dir` rather than raising it.
+  evaluate-vad:
+    name: evaluate (VAD ΔWER)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: vad-delta
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
+
+      - name: Install Python deps for FLEURS download
+        run: pip3 install --quiet 'datasets==2.21.0' soundfile librosa
+
+      # Same keys as `evaluate (ASR live smoke)`; a cache hit there is a
+      # cache hit here.
+      - name: Cache FLEURS subset
+        id: fleurs-cache
+        uses: actions/cache@v4
+        with:
+          path: data/fleurs_subset
+          key: fleurs-subset-v3-en-ja-zh-es-ko-n30
+
+      - name: Download FLEURS subset (cache miss only)
+        if: steps.fleurs-cache.outputs.cache-hit != 'true'
+        run: python3 scripts/download_fleurs_subset.py --lang en --lang ja --lang zh --lang es --lang ko --n 30
+
+      - name: Cache canary-en ONNX bundle (~213 MB INT8)
+        id: canary-en-cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/canary_en
+          key: canary-180m-flash-istupakov-int8-v1
+
+      - name: Download canary-en model (cache miss only)
+        if: steps.canary-en-cache.outputs.cache-hit != 'true'
+        run: bash scripts/setup_canary.sh
+        env:
+          CANARY_DIR: vendor/canary_en
+
+      - name: Cache parakeet-ja ONNX bundle (~2.4 GB)
+        id: parakeet-ja-cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/parakeet_ja
+          key: parakeet-tdt-ctc-0.6b-ja-sunilmahendrakar-v1
+
+      - name: Download parakeet-ja model (cache miss only)
+        if: steps.parakeet-ja-cache.outputs.cache-hit != 'true'
+        run: bash scripts/setup_parakeet_ja.sh
+        env:
+          PARAKEET_JA_DIR: vendor/parakeet_ja
+
+      - name: Build eval binary (onnx + vad)
+        run: cargo build --release --features onnx,vad --example eval_vad --locked
+
+      # One noise level, one detector, one policy — the configuration a
+      # caller actually gets. The full sweep in
+      # docs/benchmarks/vad_delta_wer.md is how the defaults were chosen;
+      # re-running it here would spend ~30 minutes protecting numbers
+      # that are not what anyone ships. −45 dBFS is the realistic side:
+      # digital silence flatters a level detector.
+      - name: VAD ΔWER gate (en / ja)
+        run: |
+          cargo run --release --features onnx,vad --example eval_vad --locked -- \
+            --canary-en-dir vendor/canary_en \
+            --parakeet-ja-dir vendor/parakeet_ja \
+            --langs en,ja \
+            --noise-db=-45 \
+            --detectors none,earshot \
+            --policies speech-only \
+            --max-delta 0.03 \
+            --max-segments 3.0
+
   # L1 ASR live smoke (§1.1 / §3.8): runs Canary-180M-Flash (en + es),
   # Parakeet (ja), Paraformer-large (zh), Whisper-large-v3-turbo ONNX
   # (ko), and whisper-tiny (fallback) on a 10-utterance FLEURS subset
