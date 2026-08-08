@@ -98,6 +98,37 @@ struct Cli {
     /// Where to write the results as JSON.
     #[arg(long)]
     out: Option<PathBuf>,
+
+    /// Fail if the default configuration's Δ against the clean run
+    /// exceeds this, in any language.
+    ///
+    /// **Δ rather than the absolute error rate.** The absolute number
+    /// moves whenever the ASR model does, and
+    /// `docs/benchmarks/ci_baseline.json` already watches that. What
+    /// this gate protects is narrower and not covered anywhere else:
+    /// that putting a detector in front of the adapter still helps.
+    ///
+    /// A fixed number rather than a committed baseline for the same
+    /// reason — a baseline file would need an update flow to stay
+    /// honest, and would catch nothing this does not.
+    #[arg(long)]
+    max_delta: Option<f64>,
+
+    /// Fail if the default configuration finds more than this many
+    /// utterances per recording, on average.
+    ///
+    /// FLEURS clips are one utterance each, so anything above 1.0 is
+    /// over-segmentation. It needs its own check because
+    /// `FinalPass::SpeechOnly` absorbs over-segmentation — the
+    /// measured runs sat at 2.0–2.2 segments with Δ still near zero, so
+    /// segmentation can break without the error rate noticing.
+    #[arg(long)]
+    max_segments: Option<f64>,
+
+    /// Which detector the `--max-delta` / `--max-segments` gates apply
+    /// to. Defaults to `earshot`, the recommended backend.
+    #[arg(long, default_value = "earshot")]
+    gate_detector: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -379,6 +410,76 @@ fn main() {
     } else {
         println!("{rendered}");
     }
+
+    let failures = gate(&cli, &report);
+    if !failures.is_empty() {
+        for line in &failures {
+            eprintln!("[FAIL] {line}");
+        }
+        std::process::exit(1);
+    }
+}
+
+/// Check the gated rows and return one line per breach.
+///
+/// Only the default configuration is judged: the detector named by
+/// `--gate-detector`, under `FinalPass::SpeechOnly`, on its own
+/// calibration. `JoinSegments` is measured to show what it costs, not
+/// to be protected, and a threshold sweep is how a default gets chosen
+/// rather than something to hold steady.
+fn gate(cli: &Cli, report: &BTreeMap<String, BTreeMap<String, Cell>>) -> Vec<String> {
+    if cli.max_delta.is_none() && cli.max_segments.is_none() {
+        return Vec::new();
+    }
+
+    let mut failures = Vec::new();
+    let mut judged = 0usize;
+
+    for (lang, rows) in report {
+        for (key, cell) in rows {
+            let mut parts = key.split('|');
+            let (Some(_noise), Some(detector), Some(threshold), Some(policy)) =
+                (parts.next(), parts.next(), parts.next(), parts.next())
+            else {
+                continue;
+            };
+            if detector != cli.gate_detector || threshold != "tdefault" || policy != "speech-only" {
+                continue;
+            }
+            judged += 1;
+
+            if let Some(limit) = cli.max_delta {
+                if cell.delta > limit {
+                    failures.push(format!(
+                        "{lang} {key}: Δ {:+.4} exceeds {limit:+.4}",
+                        cell.delta
+                    ));
+                }
+            }
+            if let Some(limit) = cli.max_segments {
+                if cell.segments > limit {
+                    failures.push(format!(
+                        "{lang} {key}: {:.2} utterances per recording exceeds {limit:.2}",
+                        cell.segments
+                    ));
+                }
+            }
+        }
+    }
+
+    // A gate that judged nothing is a gate that passed for the wrong
+    // reason — a renamed key or a detector that never ran would
+    // otherwise look like success.
+    if judged == 0 {
+        failures.push(format!(
+            "no rows matched detector {:?} under speech-only at its own \
+             calibration; the gate examined nothing",
+            cli.gate_detector
+        ));
+    } else {
+        eprintln!("[gate] {judged} row(s) judged, {} breach(es)", failures.len());
+    }
+    failures
 }
 
 /// Build the ASR adapter for one language.
