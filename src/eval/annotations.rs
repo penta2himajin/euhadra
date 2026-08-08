@@ -36,8 +36,8 @@ pub struct Annotation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_text: Option<String>,
     /// Token-level replacement pairs the corrector is expected to
-    /// emit. Compared against `Correction { original, replacement }`
-    /// pairs returned by `PhonemeCorrector::process` as a multiset.
+    /// emit. Compared against the `original` / `replacement` pairs
+    /// `PhonemeCorrector::process` returns, as a multiset.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub corrections: Vec<CorrectionAnnotation>,
 }

@@ -10,6 +10,7 @@
 //! are not here — import those from their own modules, so that what a
 //! dependent pulls in stays visible at the use site.
 
+pub use crate::dictionary::{DictionaryError, MatchPolicy, TermDictionary, TermEntry};
 pub use crate::filter::{
     ChineseFillerFilter, FillerFilter, FilterError, FilterResult, JapaneseFillerFilter,
     SimpleFillerFilter, SpanishFillerFilter, TextFilter,
@@ -19,7 +20,8 @@ pub use crate::pipeline::{
     SessionResult, Stage, StageFailure,
 };
 pub use crate::processor::{
-    BasicPunctuationRestorer, ProcessResult, SelfCorrectionDetector, TextProcessor,
+    BasicPunctuationRestorer, Correction, CorrectionKind, ProcessResult, SelfCorrectionDetector,
+    TextProcessor,
 };
 pub use crate::router::{AdapterRequest, AsrRouter, AsrRuntimeFactory, ModelSource, RouterError};
 pub use crate::traits::*;
