@@ -1,33 +1,33 @@
 {
   "schema_version": 1,
-  "generated": "epoch:1787734143",
-  "asr_model": "en=canary-180m-flash-int8 / ja=parakeet",
+  "generated": "epoch:1787735558",
+  "asr_model": "en=canary-180m-flash-int8 / ja=parakeet (GitHub Actions ubuntu-latest)",
   "languages": {
     "en": {
       "utterances": 30,
       "segments": 32,
       "endpoint_to_partial_ms": {
-        "p50": 436.6,
-        "p95": 794.28
+        "p50": 955.4,
+        "p95": 1840.0
       },
       "endpoint_to_final_ms": {
-        "p50": 893.42,
-        "p95": 1604.92
+        "p50": 1964.5,
+        "p95": 3742.0
       },
-      "segment_rtf": 0.0508
+      "segment_rtf": 0.113
     },
     "ja": {
       "utterances": 30,
       "segments": 41,
       "endpoint_to_partial_ms": {
-        "p50": 306.39,
-        "p95": 485.07
+        "p50": 1053.5,
+        "p95": 1645.0
       },
       "endpoint_to_final_ms": {
-        "p50": 669.39,
-        "p95": 1061.44
+        "p50": 2326.9,
+        "p95": 3684.0
       },
-      "segment_rtf": 0.0356
+      "segment_rtf": 0.118
     }
   },
   "tolerances": {

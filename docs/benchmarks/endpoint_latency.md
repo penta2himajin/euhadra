@@ -24,9 +24,14 @@ This is **not** the L1 ASR/E2E p50 in `ci_baseline.json` (full-file wall clock).
 - Models: Canary-180M-Flash INT8 (en), Parakeet TDT-CTC 0.6B ja (ja)
 - Audio fed in ~100 ms chunks to exercise the live segmenter path
 
-## Seed measurement (this agent host)
+## Seed measurement
 
-See `ci_baseline_endpoint.json` `generated` field. Re-measure on CI runners when updating the baseline intentionally:
+Baseline numbers are from **GitHub Actions `ubuntu-latest`** (the gate
+runner), not a developer workstation. Agent / laptop hosts are typically
+~2× faster; do not rewrite the baseline from a fast host or CI will fail
+on relative regression.
+
+Re-measure on CI (or an equivalent runner) when updating intentionally:
 
 ```bash
 cargo run --release --features onnx,vad,testing --example eval_endpoint -- \
@@ -36,4 +41,7 @@ cargo run --release --features onnx,vad,testing --example eval_endpoint -- \
   --write-baseline docs/benchmarks/ci_baseline_endpoint.json
 ```
 
-CI gates with `--baseline docs/benchmarks/ci_baseline_endpoint.json` (relative + absolute warn floors, same idea as L1).
+CI gates with `--baseline docs/benchmarks/ci_baseline_endpoint.json`
+(relative fail bands + absolute warn floors, same idea as L1). Absolute
+warns at ≥ 1 s are expected on current GHA numbers for final (and often
+partial) — they surface user-perceived slowness without failing the job.
