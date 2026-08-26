@@ -147,6 +147,18 @@ struct AsrResult {
 - `AppleSpeechAdapter` — Apple Speech framework（iOS / macOS）
 - `GoogleSttAdapter` — Google Cloud Speech-to-Text
 
+#### ロード状態（`AsrLifecycle`、#145）
+
+`AsrAdapter` 自体は「転写できる」ことだけを表す。ONNX セッションなど重い常駐状態の操作は拡張トレイト `AsrLifecycle` に分離する（`AsrRouter` はファクトリ登録のまま、常駐キャッシュや LRU はコアに入れない）。
+
+| API | 役割 |
+|---|---|
+| `load_state` | `Loaded` / `Unloaded` / `Ephemeral` |
+| `unload` | 重み／セッションを解放（冪等） |
+| `reload` | 構築時と同じバンドルから再ロード |
+
+`unload` 後の `transcribe` は **`AsrError::NotLoaded`**（自動再ロードなし）。`WhisperLocal` はプロセス外実行のため常に `Ephemeral` で、unload/reload は no-op。ONNX の初期実装は `SenseVoiceAdapter`；他アダプタは同トレイトを順次実装する。
+
 ### 3.2 Context Provider
 
 現在のアプリケーションコンテキストを構造化データとして提供する。
@@ -1103,6 +1115,7 @@ MIT / Apache ライセンスのため、コード自体による参入障壁は�
 
 **ASR Adapter**:
 - [x] ASR adapter trait 定義
+- [x] ロード状態 API（`AsrLifecycle` / `AdapterLoadState` / `AsrError::NotLoaded`）— SenseVoice + WhisperLocal(Ephemeral) + MockAsr（#145）。他 ONNX は追従
 - [x] WhisperLocal（whisper.cpp subprocess、現状の zh デフォルト)
 - [x] ParakeetAdapter（Parakeet TDT 0.6B、Rust-native ONNX 推論）[onnx]
    - **en: `parakeet-tdt-0.6b-v3` (FastConformer-TDT、128-mel)** — `load(dir)` で読む。L1 の en で whisper-tiny.en を置き換え、WER 8.4% → 7.5%、warm RTF 0.10 → 0.05 (PR #12)

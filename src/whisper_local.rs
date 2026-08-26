@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::router::{AdapterRequest, AsrRuntimeFactory, ModelSource, RouterError};
-use crate::traits::{AsrAdapter, AsrError};
+use crate::traits::{AdapterLoadState, AsrAdapter, AsrError, AsrLifecycle};
 use crate::types::{AudioChunk, Transcript};
 
 /// Local ASR adapter backed by whisper.cpp.
@@ -81,6 +81,23 @@ impl AsrAdapter for WhisperLocal {
         let _ = std::fs::remove_file(&tmp_path);
 
         Ok(Transcript::new(text?))
+    }
+}
+
+/// Subprocess backends have no resident in-process weights: each
+/// `transcribe` starts a child. `unload` / `reload` are therefore
+/// no-ops — there is nothing to free between calls (#145).
+impl AsrLifecycle for WhisperLocal {
+    fn load_state(&self) -> AdapterLoadState {
+        AdapterLoadState::Ephemeral
+    }
+
+    fn unload(&self) -> Result<(), AsrError> {
+        Ok(())
+    }
+
+    fn reload(&self) -> Result<(), AsrError> {
+        Ok(())
     }
 }
 
@@ -306,5 +323,21 @@ mod factory_tests {
             .dispatch(req("", json!({ "cli_path": "/usr/bin/whisper-cli" })))
             .await;
         assert!(result.is_ok());
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+    use crate::traits::{AdapterLoadState, AsrLifecycle};
+
+    #[test]
+    fn whisper_local_is_ephemeral_and_unload_is_noop() {
+        let w = WhisperLocal::new("/usr/bin/whisper-cli", "/tmp/model.bin");
+        assert_eq!(w.load_state(), AdapterLoadState::Ephemeral);
+        w.unload().unwrap();
+        assert_eq!(w.load_state(), AdapterLoadState::Ephemeral);
+        w.reload().unwrap();
+        assert_eq!(w.load_state(), AdapterLoadState::Ephemeral);
     }
 }

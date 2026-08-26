@@ -9,12 +9,16 @@ use crate::types::*;
 
 pub struct MockAsr {
     pub transcript: String,
+    /// Stand-in for in-process weights so lifecycle tests do not need
+    /// an ONNX bundle (#145).
+    loaded: std::sync::Mutex<bool>,
 }
 
 impl MockAsr {
     pub fn new(transcript: impl Into<String>) -> Self {
         Self {
             transcript: transcript.into(),
+            loaded: std::sync::Mutex::new(true),
         }
     }
 }
@@ -22,7 +26,57 @@ impl MockAsr {
 #[async_trait]
 impl AsrAdapter for MockAsr {
     async fn transcribe(&self, _audio: &[AudioChunk]) -> Result<Transcript, AsrError> {
+        if !*self.loaded.lock().expect("loaded flag poisoned") {
+            return Err(AsrError::NotLoaded);
+        }
         Ok(Transcript::new(self.transcript.clone()))
+    }
+}
+
+impl AsrLifecycle for MockAsr {
+    fn load_state(&self) -> AdapterLoadState {
+        if *self.loaded.lock().expect("loaded flag poisoned") {
+            AdapterLoadState::Loaded
+        } else {
+            AdapterLoadState::Unloaded
+        }
+    }
+
+    fn unload(&self) -> Result<(), AsrError> {
+        *self.loaded.lock().expect("loaded flag poisoned") = false;
+        Ok(())
+    }
+
+    fn reload(&self) -> Result<(), AsrError> {
+        *self.loaded.lock().expect("loaded flag poisoned") = true;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn mock_asr_unload_blocks_transcribe_until_reload() {
+        let asr = MockAsr::new("hello");
+        assert_eq!(asr.load_state(), AdapterLoadState::Loaded);
+        asr.unload().unwrap();
+        assert_eq!(asr.load_state(), AdapterLoadState::Unloaded);
+        let err = asr.transcribe(&[]).await.unwrap_err();
+        assert!(matches!(err, AsrError::NotLoaded), "got {err:?}");
+        asr.reload().unwrap();
+        assert_eq!(asr.load_state(), AdapterLoadState::Loaded);
+        let out = asr.transcribe(&[]).await.unwrap();
+        assert_eq!(out.text, "hello");
+    }
+
+    #[test]
+    fn mock_asr_unload_is_idempotent() {
+        let asr = MockAsr::new("x");
+        asr.unload().unwrap();
+        asr.unload().unwrap();
+        assert_eq!(asr.load_state(), AdapterLoadState::Unloaded);
     }
 }
 

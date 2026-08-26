@@ -55,10 +55,65 @@ pub enum AsrError {
     #[error("inference failed: {0}")]
     Inference(String),
 
+    /// Weights / runtime session were released via [`AsrLifecycle::unload`]
+    /// and have not been [`reload`](AsrLifecycle::reload)ed. Callers
+    /// own the lifetime; the pipeline does not auto-reload (#145).
+    #[error("ASR model is not loaded")]
+    NotLoaded,
+
     /// Aborted before completion, usually via the session's
     /// `CancellationToken`.
     #[error("cancelled")]
     Cancelled,
+}
+
+// ---------------------------------------------------------------------------
+// Adapter load lifecycle (#145)
+// ---------------------------------------------------------------------------
+
+/// Whether an adapter currently holds heavy runtime state in-process.
+///
+/// Orthogonal to [`AsrAdapter`]: every backend can transcribe, but only
+/// some own a resident ONNX session (or equivalent). Marked
+/// `#[non_exhaustive]` so finer states (e.g. loading) can be added later.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum AdapterLoadState {
+    /// In-process weights / session are resident and ready to run.
+    Loaded,
+    /// Previously loaded state was released; [`AsrLifecycle::reload`]
+    /// (or a fresh construct) is required before `transcribe`.
+    Unloaded,
+    /// No durable in-process weights — e.g. a subprocess CLI invoked
+    /// per call. `unload` / `reload` are no-ops; there is nothing to
+    /// free between utterances.
+    Ephemeral,
+}
+
+/// Optional load / unload / status hooks for adapters that own heavy
+/// runtime state.
+///
+/// Kept off [`AsrAdapter`] so the pipeline's `Arc<dyn AsrAdapter>` path
+/// stays unchanged and callers who do not care never see it. Auto-LRU
+/// and resident budgets are **not** part of this trait — those belong
+/// in an optional helper on top (#145).
+///
+/// Policy after [`unload`](Self::unload): `transcribe` returns
+/// [`AsrError::NotLoaded`] until [`reload`](Self::reload) succeeds.
+/// There is no silent auto-reload.
+pub trait AsrLifecycle: Send + Sync {
+    /// Current residency of heavy runtime state.
+    fn load_state(&self) -> AdapterLoadState;
+
+    /// Release weights / sessions so memory can be reclaimed.
+    ///
+    /// Idempotent: unloading when already [`Unloaded`](AdapterLoadState::Unloaded)
+    /// or [`Ephemeral`](AdapterLoadState::Ephemeral) is `Ok(())`.
+    fn unload(&self) -> Result<(), AsrError>;
+
+    /// Rebuild previously unloaded state (same bundle / paths as
+    /// construction). No-op success when already loaded or ephemeral.
+    fn reload(&self) -> Result<(), AsrError>;
 }
 
 // ---------------------------------------------------------------------------
