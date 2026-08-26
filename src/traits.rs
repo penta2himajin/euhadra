@@ -79,7 +79,14 @@ pub trait ContextProvider: Send + Sync {
 // LLM Refiner
 // ---------------------------------------------------------------------------
 
-/// Takes raw ASR text + application context and produces refined output.
+/// Takes processed ASR text + application context and produces refined
+/// output (Tier 3).
+///
+/// This is **text-stage** refinement only: it does not re-run ASR.
+/// Do not confuse it with [`crate::pipeline::FinalPass`] (which picks
+/// the audio/text source for the session-end transcript) or with a
+/// delayed second-pass decode over grouped audio (#146). Concrete
+/// implementations are gated behind the reserved `llm` feature (#122).
 ///
 /// Implementors may call cloud LLMs (Cerebras, Groq, OpenAI) or on-device
 /// models (Apple Foundation Models, Gemini Nano, Ollama).

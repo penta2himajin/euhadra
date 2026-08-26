@@ -144,6 +144,9 @@ impl PipelineBuilder {
     /// Choose what the final transcript is computed from. Defaults to
     /// [`FinalPass::SpeechOnly`]. Has no effect without
     /// [`vad`](Self::vad).
+    ///
+    /// Source selection only — not delayed second-pass ASR and not
+    /// [`LlmRefiner`]. See [`FinalPass`].
     pub fn final_pass(mut self, policy: FinalPass) -> Self {
         self.final_pass = policy;
         self
@@ -186,6 +189,16 @@ impl PipelineBuilder {
 /// What the final transcript is computed from once voice activity
 /// detection has found the utterances.
 ///
+/// This is a **source-selection** policy for the session-end result,
+/// not a delayed re-decode and not Tier 3 text refinement (#146):
+///
+/// - Not **second-pass / delayed ASR** — that would re-run ASR later
+///   on grouped audio without blocking the hot path (unimplemented).
+/// - Not [`LlmRefiner`] — that rewrites text and never re-runs ASR.
+///
+/// `SpeechOnly` does call ASR once more at session end, but only to
+/// build the final from joined speech; that is still this enum's job.
+///
 /// The two failure modes of segmentation are separable, and these
 /// variants separate them. Feeding silence to the model produces
 /// hallucinated text; cutting an utterance in half produces a fluent,
@@ -202,6 +215,9 @@ pub enum FinalPass {
     /// them, but the ASR still sees each utterance whole and in context —
     /// a boundary placed slightly wrong costs a little padding rather
     /// than a fragment. The default.
+    ///
+    /// The extra ASR call at session end is still [`FinalPass`] source
+    /// selection, not a delayed second-pass decode (#146).
     #[default]
     SpeechOnly,
 
@@ -617,9 +633,12 @@ enum AsrSource<'a> {
 /// running.
 ///
 /// Advisory unless the pipeline is set to [`FinalPass::JoinSegments`]:
-/// the value in [`SessionResult`] is computed separately and is what the
-/// session actually produced. Use these to show the speaker what has been
-/// heard so far, not to build the final text.
+/// the value in [`SessionResult`] is computed separately (by the
+/// [`FinalPass`] source policy) and is what the session actually
+/// produced. These partials are not a delayed second-pass decode and
+/// are not Tier 3 refinement (#146). Use them to show the speaker what
+/// has been heard so far, not to build the final text — except under
+/// `JoinSegments`, where they *are* the final text.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct Partial {
