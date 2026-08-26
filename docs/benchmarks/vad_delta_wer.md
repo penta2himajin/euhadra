@@ -122,7 +122,7 @@ ASR パスが 1 回で済む唯一のポリシーだが、**分割誤りを緩�
 
 ## 派生した別件
 
-**Canary の EOS ガードは発話フレーム基準（#136）。** `min_token_to_frame_ratio` は `0.2 × T_speech` まで EOS を抑え、`max_token_to_frame_ratio`（既定 0.8）で上限を切る。`T_speech` はアダプタがエネルギー推定した発話分のエンコーダフレーム数。既定の `SpeechOnly` は無音をエンコーダに渡さないため実害をさらに小さくする。
+**Canary の EOS ガードは発話フレーム基準（#136）。** `min_token_to_frame_ratio` は `0.2 × T_speech` まで EOS を抑え、`max_token_to_frame_ratio`（既定 1.5）で上限を切る。`T_speech` はアダプタがエネルギー推定した発話分のエンコーダフレーム数（発話が大半ならフル長）。既定の `SpeechOnly` は無音をエンコーダに渡さないため実害をさらに小さくする。
 
 ## 限界
 

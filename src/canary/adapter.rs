@@ -232,11 +232,15 @@ impl CanaryAdapter {
 /// decoder's min/max token gates (#136).
 ///
 /// Runs [`EnergyVad`](crate::vad::EnergyVad) over 10 ms frames and
-/// scales `n_encoder_frames` by the speech-frame fraction. Pure
-/// silence yields 0 so the min-length gate stays off and the max-
-/// length gate forbids content tokens. Clean speech yields ≈ the
-/// full encoder length, preserving the existing clean-path
-/// calibration.
+/// scales `n_encoder_frames` by the speech-frame fraction when the
+/// clip is mostly silence. Pure silence yields 0 so the min-length
+/// gate stays off and the max-length gate forbids content tokens.
+///
+/// When most of the clip scores as speech (`≥ 85%`), the estimate
+/// is discarded in favour of the full encoder length. EnergyVad
+/// under-counts quiet onsets on clean FLEURS enough to shrink
+/// `T_speech` and reintroduce the mid-utterance truncations the
+/// min-ratio gate was calibrated to kill (L1 en smoke WER jump).
 fn estimate_speech_encoder_frames(
     samples: &[f32],
     _sample_rate: u32,
@@ -265,7 +269,13 @@ fn estimate_speech_encoder_frames(
     if total == 0 {
         return 0;
     }
-    ((speech as f32 / total as f32) * n_encoder_frames as f32).round() as usize
+    let speech_frac = speech as f32 / total as f32;
+    // Mostly-speech clips: keep the encoder mask length so the
+    // clean-path calibration of min_token_to_frame_ratio is unchanged.
+    if speech_frac >= 0.85 {
+        return n_encoder_frames;
+    }
+    (speech_frac * n_encoder_frames as f32).round() as usize
 }
 
 #[async_trait]
@@ -348,7 +358,8 @@ mod tests {
 
     #[test]
     fn estimate_speech_frames_scales_with_voiced_fraction() {
-        // 0.5 s silence + 0.5 s loud tone at 16 kHz.
+        // 0.5 s silence + 0.5 s loud tone — well below the 85%
+        // "mostly speech" cutoff, so the fraction is applied.
         let mut samples = vec![0.0_f32; 8_000];
         for i in 0..8_000 {
             samples.push((i as f32 * 0.3).sin() * 0.5);
@@ -357,6 +368,22 @@ mod tests {
         assert!(
             (40..=70).contains(&n),
             "≈half the recording is voiced → speech frames near 50, got {n}"
+        );
+    }
+
+    /// Clean / mostly-voiced audio must keep the full encoder length.
+    /// Shrinking `T_speech` on FLEURS-en reintroduced mid-utterance
+    /// truncations and blew the L1 smoke WER gate.
+    #[test]
+    fn estimate_speech_frames_keeps_full_length_when_mostly_voiced() {
+        let mut samples = Vec::with_capacity(16_000);
+        for i in 0..16_000 {
+            samples.push((i as f32 * 0.3).sin() * 0.5);
+        }
+        assert_eq!(
+            estimate_speech_encoder_frames(&samples, 16_000, 100),
+            100,
+            "fully voiced clip must not shrink the gate basis"
         );
     }
 

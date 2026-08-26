@@ -187,11 +187,11 @@ pub const DEFAULT_MIN_TOKEN_TO_FRAME_RATIO: f32 = 0.2;
 /// if EOS has not won.
 ///
 /// Human speech tops out around 2–4 tokens/s. Canary's encoder emits
-/// ≈6.25 frames/s, so 4 tok/s ≈ 0.64 tokens/frame; **0.8** leaves
-/// headroom for dense speech without letting a silence-fed AED run
-/// for dozens of repetition loops (the −100 dBFS case in
-/// `docs/benchmarks/vad_delta_wer.md`). Set to `0.0` to disable.
-pub const DEFAULT_MAX_TOKEN_TO_FRAME_RATIO: f32 = 0.8;
+/// ≈6.25 frames/s, so 4 tok/s ≈ 0.64 tokens/frame. **1.5** leaves
+/// comfortable headroom for dense English (the L1 smoke path) while
+/// still cutting the dozens-of-repeats silence loops in
+/// `docs/benchmarks/vad_delta_wer.md`. Set to `0.0` to disable.
+pub const DEFAULT_MAX_TOKEN_TO_FRAME_RATIO: f32 = 1.5;
 
 /// Default required margin (in raw logit units) by which
 /// `<|endoftext|>` must lead the next-best non-EOS token before
@@ -1912,7 +1912,7 @@ mod tests {
     fn decode_options_default_max_token_ratio() {
         let o = DecodeOptions::for_asr("es");
         assert_eq!(o.max_token_to_frame_ratio, DEFAULT_MAX_TOKEN_TO_FRAME_RATIO);
-        assert_eq!(o.max_token_to_frame_ratio, 0.8);
+        assert_eq!(o.max_token_to_frame_ratio, 1.5);
         assert!(o.speech_encoder_frames.is_none());
     }
 
@@ -1958,20 +1958,20 @@ mod tests {
 
     #[test]
     fn max_suffix_tokens_is_zero_for_silence() {
-        assert_eq!(max_suffix_tokens(0, 0.8), Some(0));
+        assert_eq!(max_suffix_tokens(0, 1.5), Some(0));
         assert!(
-            should_stop_at_max_length(0, 0, 0.8),
+            should_stop_at_max_length(0, 0, 1.5),
             "pure silence must stop before emitting any content token"
         );
     }
 
     #[test]
     fn max_suffix_tokens_caps_repetition_loops() {
-        // 10 speech frames × 0.8 → max 8 tokens. A 50-repeat loop
+        // 10 speech frames × 1.5 → max 15 tokens. A 50-repeat loop
         // would be stopped here.
-        assert_eq!(max_suffix_tokens(10, 0.8), Some(8));
-        assert!(!should_stop_at_max_length(7, 10, 0.8));
-        assert!(should_stop_at_max_length(8, 10, 0.8));
+        assert_eq!(max_suffix_tokens(10, 1.5), Some(15));
+        assert!(!should_stop_at_max_length(14, 10, 1.5));
+        assert!(should_stop_at_max_length(15, 10, 1.5));
     }
 
     // --- enforce_eos_confidence_margin ---
