@@ -55,6 +55,12 @@ struct Cli {
     #[arg(long)]
     parakeet_ja_dir: Option<PathBuf>,
 
+    /// `canary-180m-flash` bundle for `es`. Same multilingual checkpoint
+    /// as `--canary-en-dir` (en / de / fr / es); a separate flag so CI can
+    /// point at `vendor/canary_es` or reuse the en cache.
+    #[arg(long)]
+    canary_es_dir: Option<PathBuf>,
+
     #[arg(long, value_delimiter = ',', default_value = "en,ja")]
     langs: Vec<String>,
 
@@ -254,12 +260,21 @@ fn main() {
     for lang in &cli.langs {
         // Canary wins for `en` when both are supplied: it is the model
         // euhadra ships for that language, so it is the one whose
-        // behaviour on silence matters.
-        let use_canary = lang == "en" && cli.canary_en_dir.is_some();
+        // behaviour on silence matters. `es` is the same multilingual
+        // Canary checkpoint (#150).
+        let use_canary = match lang.as_str() {
+            "en" => cli.canary_en_dir.is_some(),
+            "es" => cli.canary_es_dir.is_some() || cli.canary_en_dir.is_some(),
+            _ => false,
+        };
         let model_dir = match lang.as_str() {
             "en" if use_canary => cli.canary_en_dir.clone(),
             "en" => cli.parakeet_en_dir.clone(),
             "ja" => cli.parakeet_ja_dir.clone(),
+            "es" => cli
+                .canary_es_dir
+                .clone()
+                .or_else(|| cli.canary_en_dir.clone()),
             other => {
                 eprintln!("[skip] {other}: no model directory wired for this language");
                 continue;

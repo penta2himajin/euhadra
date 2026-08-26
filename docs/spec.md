@@ -592,7 +592,7 @@ L1 の ASR / E2E p50 は **ファイル全文を渡してから結果が返る�
 | canary (en, AED) | `".S. Sometimes it's a long way, …"`（約 50 回反復）/ 流暢な作話パラグラフ |
 | parakeet (ja, TDT-CTC) | `"心の声。"` / `"うん。"` |
 
-**上限を測る指標である点は変わらない。** 合成無音は実録音の環境音とスペクトルが違い、この条件は energy VAD に有利に働く。zh / ko / es は未測定。
+**上限を測る指標である点は変わらない。** 合成無音は実録音の環境音とスペクトルが違い、この条件は energy VAD に有利に働く。`es` は #150 で測定・CI ゲート済み。zh / ko は未測定（#150 子 issue）。
 
 #### 判断ゲート: テキスト側の除去は不要
 
@@ -1174,8 +1174,8 @@ MIT / Apache ライセンスのため、コード自体による参入障壁は�
 - [x] **ΔWER の実測**（en / ja）— [`benchmarks/vad_delta_wer.md`](../docs/benchmarks/vad_delta_wer.md)
 - [x] **判断ゲート**: 幻覚は VAD で消える。テキスト側の除去は不要
 - [x] CI 配線 — `test (vad feature)` ジョブ + `onnx-check` の `Check (onnx + vad)` ステップ
-- [ ] zh / ko / es の ΔWER — モデルバンドル未取得
-- [x] ΔWER 測定の CI 配線 — `evaluate (VAD ΔWER)` ジョブ。既定構成のみを Δ 固定閾値でゲート（#137）
+- [x] ΔWER 測定の CI 配線 — `evaluate (VAD ΔWER)` ジョブ。既定構成のみを Δ 固定閾値でゲート（#137）。`es` 追加は #150
+- [ ] zh / ko の ΔWER — Paraformer / Dolphin（#156 / #157）
 
 **CLI / 入力**:
 - [x] CLI ツール（dictate / transcribe / record）

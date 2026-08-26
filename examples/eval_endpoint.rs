@@ -48,6 +48,11 @@ struct Cli {
     #[arg(long)]
     parakeet_ja_dir: Option<PathBuf>,
 
+    /// `canary-180m-flash` for `es` (same multilingual checkpoint as en).
+    /// Falls back to `--canary-en-dir` when omitted.
+    #[arg(long)]
+    canary_es_dir: Option<PathBuf>,
+
     #[arg(long, value_delimiter = ',', default_value = "en,ja")]
     langs: Vec<String>,
 
@@ -127,11 +132,19 @@ fn main() {
     let mut model_labels: Vec<String> = Vec::new();
 
     for lang in &cli.langs {
-        let use_canary = lang == "en" && cli.canary_en_dir.is_some();
+        let use_canary = match lang.as_str() {
+            "en" => cli.canary_en_dir.is_some(),
+            "es" => cli.canary_es_dir.is_some() || cli.canary_en_dir.is_some(),
+            _ => false,
+        };
         let model_dir = match lang.as_str() {
             "en" if use_canary => cli.canary_en_dir.clone(),
             "en" => cli.parakeet_en_dir.clone(),
             "ja" => cli.parakeet_ja_dir.clone(),
+            "es" => cli
+                .canary_es_dir
+                .clone()
+                .or_else(|| cli.canary_en_dir.clone()),
             other => {
                 eprintln!("[skip] {other}: no model directory wired");
                 continue;
