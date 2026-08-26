@@ -535,6 +535,8 @@ L1 の ASR / E2E p50 は **ファイル全文を渡してから結果が返る�
 
 `min_silence` 待ちは分子に含めない（endpointing の設定であり処理遅延ではない）。CI は L1 と同様に baseline 相対でゲートする。
 
+用途別の候補値（品質既定 vs 低遅延候補、および短く切ると #134 / `JoinSegments` で壊れやすい理由）は [`docs/benchmarks/endpointing_profiles.md`](../benchmarks/endpointing_profiles.md) を参照。CLI の `record` は VAD + partials を既定で有効にする（`--no-vad` / `--min-silence-ms` で上書き可）。
+
 #### `FinalPass` — 最終 transcript の出所
 
 セッション終了時に **final をどの音声／テキストから作るか**（ソース選択）を決める。ASR パス数はポリシーで変わるが、いずれも「確定後に時間差で清書し直す」経路ではない。
