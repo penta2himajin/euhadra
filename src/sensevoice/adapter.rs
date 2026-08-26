@@ -45,7 +45,7 @@ use ort::value::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use crate::traits::{AsrAdapter, AsrError};
+use crate::traits::{AdapterLoadState, AsrAdapter, AsrError, AsrLifecycle};
 use crate::types::{AudioChunk, Transcript};
 
 use crate::paraformer::fbank::{Fbank, FbankOpts};
@@ -107,7 +107,11 @@ impl Default for SenseVoiceConfig {
 /// decoder isn't applicable; chunking would be done by the caller
 /// before feeding audio in.
 pub struct SenseVoiceAdapter {
-    session: Mutex<Session>,
+    /// ONNX session; `None` after [`AsrLifecycle::unload`](#145).
+    session: Mutex<Option<Session>>,
+    /// Bundle directory kept so [`AsrLifecycle::reload`] can rebuild
+    /// the session without re-reading CMVN / vocab from the caller.
+    model_dir: PathBuf,
     fbank: Fbank,
     cmvn: Cmvn,
     vocab: Vec<String>,
@@ -151,12 +155,7 @@ impl SenseVoiceAdapter {
         let tokens_path = dir.join(&cfg.tokens_filename);
         let metadata_path = dir.join(&cfg.metadata_filename);
 
-        let session = Session::builder()
-            .and_then(|mut b| b.commit_from_file(&model_path))
-            .map_err(|e| AsrError::ModelLoad(format!(
-                    "failed to load SenseVoice ONNX {}: {e}",
-                    model_path.display()
-                )))?;
+        let session = Self::open_session(&dir, &cfg)?;
 
         let cmvn = load_cmvn(&mvn_path)?;
         let vocab = load_tokens_txt(&tokens_path)?;
@@ -186,7 +185,8 @@ impl SenseVoiceAdapter {
         let language = cfg.default_language.clone();
 
         Ok(Self {
-            session: Mutex::new(session),
+            session: Mutex::new(Some(session)),
+            model_dir: dir,
             fbank,
             cmvn,
             vocab,
@@ -195,6 +195,18 @@ impl SenseVoiceAdapter {
             language,
             input_names,
         })
+    }
+
+    fn open_session(model_dir: &Path, cfg: &SenseVoiceConfig) -> Result<Session, AsrError> {
+        let model_path = model_dir.join(&cfg.model_filename);
+        Session::builder()
+            .and_then(|mut b| b.commit_from_file(&model_path))
+            .map_err(|e| {
+                AsrError::ModelLoad(format!(
+                    "failed to load SenseVoice ONNX {}: {e}",
+                    model_path.display()
+                ))
+            })
     }
 
     /// Builder-style language override. Accepts ISO 639-1 (`"ko"`,
@@ -263,7 +275,11 @@ impl SenseVoiceAdapter {
 
         // Hold the session lock for the duration of decoding so the
         // borrowed output tensor stays live while we argmax over [T, V].
-        let mut session = self.session.lock().map_err(|e| AsrError::Inference(format!("session lock poisoned: {e}")))?;
+        let mut guard = self
+            .session
+            .lock()
+            .map_err(|e| AsrError::Inference(format!("session lock poisoned: {e}")))?;
+        let session = guard.as_mut().ok_or(AsrError::NotLoaded)?;
         let outputs = session
             .run(vec![
                 (self.input_names.x.as_str(), speech_val.into_dyn()),
@@ -354,6 +370,37 @@ impl AsrAdapter for SenseVoiceAdapter {
 
         let text = self.transcribe_samples(&all_samples)?;
         Ok(Transcript::new(text))
+    }
+}
+
+impl AsrLifecycle for SenseVoiceAdapter {
+    fn load_state(&self) -> AdapterLoadState {
+        match self.session.lock() {
+            Ok(guard) if guard.is_some() => AdapterLoadState::Loaded,
+            Ok(_) => AdapterLoadState::Unloaded,
+            Err(_) => AdapterLoadState::Unloaded,
+        }
+    }
+
+    fn unload(&self) -> Result<(), AsrError> {
+        let mut guard = self
+            .session
+            .lock()
+            .map_err(|e| AsrError::Inference(format!("session lock poisoned: {e}")))?;
+        *guard = None;
+        Ok(())
+    }
+
+    fn reload(&self) -> Result<(), AsrError> {
+        let mut guard = self
+            .session
+            .lock()
+            .map_err(|e| AsrError::Inference(format!("session lock poisoned: {e}")))?;
+        if guard.is_some() {
+            return Ok(());
+        }
+        *guard = Some(Self::open_session(&self.model_dir, &self.cfg)?);
+        Ok(())
     }
 }
 
