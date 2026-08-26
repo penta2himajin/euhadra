@@ -173,7 +173,25 @@ pub const DEFAULT_REPETITION_PENALTY: f32 = 2.0;
 /// short clips. Higher ratios overshoot, forcing the decoder to
 /// run past natural end-of-speech and triggering repetition loops
 /// the penalty alone can't catch. Set to `0.0` to disable.
+///
+/// **Frame basis (#136):** the ratio multiplies *speech* encoder
+/// frames when the caller supplies them (see
+/// [`DecodeOptions::speech_encoder_frames`]). Using the full
+/// recording's `T_sub` turns trailing silence into a minimum token
+/// quota and is the AED hallucination mechanism VAD ΔWER exposed.
 pub const DEFAULT_MIN_TOKEN_TO_FRAME_RATIO: f32 = 0.2;
+
+/// Default maximum output-token-to-encoder-frame ratio. Symmetric
+/// ceiling for [`DEFAULT_MIN_TOKEN_TO_FRAME_RATIO`]: once the suffix
+/// reaches `ceil(ratio × T_speech)` tokens the decoder stops, even
+/// if EOS has not won.
+///
+/// Human speech tops out around 2–4 tokens/s. Canary's encoder emits
+/// ≈6.25 frames/s, so 4 tok/s ≈ 0.64 tokens/frame; **0.8** leaves
+/// headroom for dense speech without letting a silence-fed AED run
+/// for dozens of repetition loops (the −100 dBFS case in
+/// `docs/benchmarks/vad_delta_wer.md`). Set to `0.0` to disable.
+pub const DEFAULT_MAX_TOKEN_TO_FRAME_RATIO: f32 = 0.8;
 
 /// Default required margin (in raw logit units) by which
 /// `<|endoftext|>` must lead the next-best non-EOS token before
@@ -244,11 +262,27 @@ pub struct DecodeOptions {
     /// utterance. See `DEFAULT_REPETITION_PENALTY`.
     pub repetition_penalty: f32,
     /// Minimum number of generated tokens, expressed as a fraction
-    /// of the encoder's output frame count. The greedy step
-    /// suppresses `<|endoftext|>` (sets its logit to `-inf`) until
-    /// the suffix has emitted at least `ceil(ratio × T_sub)` tokens.
+    /// of the *speech* encoder frame count (see
+    /// [`Self::speech_encoder_frames`]). The greedy step suppresses
+    /// `<|endoftext|>` (sets its logit to `-inf`) until the suffix
+    /// has emitted at least `ceil(ratio × T_speech)` tokens.
     /// `0.0` disables. See `DEFAULT_MIN_TOKEN_TO_FRAME_RATIO`.
     pub min_token_to_frame_ratio: f32,
+    /// Maximum number of generated tokens as a fraction of the same
+    /// speech-frame basis. When the suffix reaches
+    /// `ceil(ratio × T_speech)` the decoder stops as if EOS had won.
+    /// Caps silence-fed repetition loops that the min-length gate
+    /// alone cannot. `0.0` disables. See
+    /// `DEFAULT_MAX_TOKEN_TO_FRAME_RATIO`.
+    pub max_token_to_frame_ratio: f32,
+    /// Encoder frames that correspond to detected speech, used as
+    /// `T_speech` for the min/max token-to-frame gates.
+    ///
+    /// `None` falls back to [`valid_frame_count`] on the encoder mask
+    /// (recording length). Prefer `Some` from a VAD or energy
+    /// estimate so trailing silence does not inflate the minimum
+    /// token quota (#136).
+    pub speech_encoder_frames: Option<usize>,
     /// Required logit-margin by which `<|endoftext|>` must lead the
     /// next-best non-EOS token before the greedy step accepts it.
     /// Demotes EOS to `-inf` when its logit doesn't lead by at
@@ -279,6 +313,8 @@ impl DecodeOptions {
             max_sequence_length: DEFAULT_MAX_SEQUENCE_LENGTH,
             repetition_penalty: DEFAULT_REPETITION_PENALTY,
             min_token_to_frame_ratio: DEFAULT_MIN_TOKEN_TO_FRAME_RATIO,
+            max_token_to_frame_ratio: DEFAULT_MAX_TOKEN_TO_FRAME_RATIO,
+            speech_encoder_frames: None,
             eos_confidence_margin: DEFAULT_EOS_CONFIDENCE_MARGIN,
             beam_size: DEFAULT_BEAM_SIZE,
             length_penalty: DEFAULT_LENGTH_PENALTY,
@@ -386,14 +422,16 @@ pub fn argmax_last_position(logits: &Array3<f32>) -> Vec<u32> {
 /// never pick) when `suffix_len < ceil(ratio × n_encoder_frames)`,
 /// otherwise leaves logits untouched.
 ///
-/// `ratio == 0.0` is a no-op.
+/// `ratio == 0.0` is a no-op. Prefer passing *speech* frames
+/// ([`DecodeOptions::speech_encoder_frames`]) rather than the full
+/// recording's `T_sub` — see #136.
 ///
 /// This gate addresses the chunk-dropout / hard-fail failure mode
 /// observed on FLEURS-es where the greedy decoder picks `<|eos|>`
 /// before consuming the full audio (`docs/canary-integration.md`
-/// "Failure-mode inventory"). It does not address the inverse
-/// failure (decoder runs past the natural end), which is bounded
-/// by `max_sequence_length` and the repetition penalty.
+/// "Failure-mode inventory"). The inverse failure (decoder runs
+/// past the natural end) is bounded by
+/// [`should_stop_at_max_length`] and `max_sequence_length`.
 pub fn suppress_eos_until_min_length(
     logits: &mut Array3<f32>,
     eos_token_id: u32,
@@ -432,6 +470,39 @@ pub fn valid_frame_count(mask: &Array2<i64>, batch_idx: usize) -> usize {
         return 0;
     }
     mask.row(batch_idx).iter().filter(|&&v| v != 0).count()
+}
+
+/// Frames that drive the min/max token-to-frame gates.
+///
+/// Prefers [`DecodeOptions::speech_encoder_frames`] when set; otherwise
+/// the encoder mask's valid-frame count (recording length).
+pub fn gate_frame_count(opts: &DecodeOptions, encoder_mask: &Array2<i64>) -> usize {
+    opts.speech_encoder_frames
+        .unwrap_or_else(|| valid_frame_count(encoder_mask, 0))
+}
+
+/// Maximum suffix length allowed by `max_token_to_frame_ratio`.
+///
+/// `None` when the gate is off (`ratio <= 0`). `Some(0)` when there
+/// are no speech frames — the decoder must not emit content tokens
+/// into pure silence.
+pub fn max_suffix_tokens(n_gate_frames: usize, ratio: f32) -> Option<usize> {
+    if ratio <= 0.0 {
+        return None;
+    }
+    if n_gate_frames == 0 {
+        return Some(0);
+    }
+    Some((ratio * n_gate_frames as f32).ceil() as usize)
+}
+
+/// Whether the decoder should stop because the suffix has hit the
+/// max token-to-frame budget (#136).
+pub fn should_stop_at_max_length(suffix_len: usize, n_gate_frames: usize, ratio: f32) -> bool {
+    match max_suffix_tokens(n_gate_frames, ratio) {
+        Some(max) => suffix_len >= max,
+        None => false,
+    }
 }
 
 /// Demote `<|endoftext|>` to `-inf` at the last time-position if
@@ -634,6 +705,13 @@ impl CanaryDecoder {
         let mut session = self.session.lock().map_err(|e| AsrError::Inference(format!("decoder session lock poisoned: {e}")))?;
 
         while batch_tokens.len() < max_len {
+            let suffix_len = batch_tokens.len().saturating_sub(prefix_len);
+            let n_gate_frames = gate_frame_count(opts, encoder_mask);
+            if should_stop_at_max_length(suffix_len, n_gate_frames, opts.max_token_to_frame_ratio)
+            {
+                break;
+            }
+
             // input_ids: full prefix on call 0 (decoder_mems empty),
             // just the latest token thereafter.
             let input_ids: Array2<i64> = if decoder_mems.shape()[2] == 0 {
@@ -684,24 +762,20 @@ impl CanaryDecoder {
             // language / pnc / nodiarize / etc.) would suppress
             // legitimate emissions whose surface forms also appear
             // in the prefix region. Use only the post-prefix slice.
-            let suffix_len = batch_tokens.len().saturating_sub(prefix_len);
             if opts.repetition_penalty != 1.0 && suffix_len > 0 {
                 let suffix = &batch_tokens[prefix_len..];
                 apply_repetition_penalty(&mut logits, suffix, opts.repetition_penalty);
             }
 
             // Min-length gate: forbid `<|endoftext|>` until the
-            // suffix has consumed `ratio × n_valid_frames` tokens.
-            // Use the encoder mask (not the padded `T_sub`) so the
-            // gate measures against real audio length — see
-            // `valid_frame_count`.
+            // suffix has consumed `ratio × T_speech` tokens. Prefer
+            // speech frames over the full recording mask (#136).
             if opts.min_token_to_frame_ratio > 0.0 {
-                let n_enc_frames = valid_frame_count(encoder_mask, 0);
                 suppress_eos_until_min_length(
                     &mut logits,
                     eos,
                     suffix_len,
-                    n_enc_frames,
+                    n_gate_frames,
                     opts.min_token_to_frame_ratio,
                 );
             }
@@ -886,16 +960,25 @@ impl CanaryDecoder {
             initial_mems,
         )?;
 
-        // Apply min-length / eos-margin gates once at step 0 (no
-        // suffix yet, so repetition penalty has nothing to do).
+        // Apply min-length / eos-margin / max-length gates once at
+        // step 0 (no suffix yet, so repetition penalty has nothing
+        // to do).
         let mut step0_logits = init_logits;
+        let n_gate_frames = gate_frame_count(opts, encoder_mask);
+        if should_stop_at_max_length(0, n_gate_frames, opts.max_token_to_frame_ratio) {
+            // Pure silence (T_speech = 0): do not seed any content
+            // beams — return an empty transcript.
+            return Ok(DecodeOutput {
+                tokens: Vec::new(),
+                logprobs: Vec::new(),
+            });
+        }
         if opts.min_token_to_frame_ratio > 0.0 {
-            let n_enc_frames = valid_frame_count(encoder_mask, 0);
             suppress_eos_until_min_length(
                 &mut step0_logits,
                 eos,
                 0,
-                n_enc_frames,
+                n_gate_frames,
                 opts.min_token_to_frame_ratio,
             );
         }
@@ -953,10 +1036,12 @@ impl CanaryDecoder {
             // prefix_len + step count, but suffix == step count is
             // identical across beams at this point).
             let suffix_len = active[0].tokens.len() - prefix_len;
-            // Mask is `[1, T_sub]` (input batch == 1); each beam
-            // shares the same encoder output, so all beams use the
-            // same valid-frame count.
-            let n_enc_frames = valid_frame_count(encoder_mask, 0);
+            // Speech-frame basis shared across beams (#136).
+            let n_gate_frames = gate_frame_count(opts, encoder_mask);
+            if should_stop_at_max_length(suffix_len, n_gate_frames, opts.max_token_to_frame_ratio)
+            {
+                break;
+            }
             for (bi, beam) in active.iter().enumerate() {
                 if opts.repetition_penalty != 1.0 {
                     apply_repetition_penalty_one_batch(
@@ -972,7 +1057,7 @@ impl CanaryDecoder {
                         bi,
                         eos,
                         suffix_len,
-                        n_enc_frames,
+                        n_gate_frames,
                         opts.min_token_to_frame_ratio,
                     );
                 }
@@ -1499,6 +1584,8 @@ mod tests {
             max_sequence_length: 1024,
             repetition_penalty: 1.0,
             min_token_to_frame_ratio: 0.0,
+            max_token_to_frame_ratio: 0.0,
+            speech_encoder_frames: None,
             eos_confidence_margin: 0.0,
             beam_size: 1,
             length_penalty: 0.0,
@@ -1819,6 +1906,72 @@ mod tests {
         let o = DecodeOptions::for_asr("es");
         assert_eq!(o.min_token_to_frame_ratio, DEFAULT_MIN_TOKEN_TO_FRAME_RATIO);
         assert_eq!(o.min_token_to_frame_ratio, 0.2);
+    }
+
+    #[test]
+    fn decode_options_default_max_token_ratio() {
+        let o = DecodeOptions::for_asr("es");
+        assert_eq!(o.max_token_to_frame_ratio, DEFAULT_MAX_TOKEN_TO_FRAME_RATIO);
+        assert_eq!(o.max_token_to_frame_ratio, 0.8);
+        assert!(o.speech_encoder_frames.is_none());
+    }
+
+    // --- gate_frame_count / max length (#136) ---
+
+    #[test]
+    fn gate_frame_count_prefers_speech_frames_over_mask() {
+        let mask = Array2::from_shape_vec((1, 10), vec![1_i64; 10]).unwrap();
+        let mut opts = DecodeOptions::for_asr("en");
+        opts.speech_encoder_frames = Some(3);
+        assert_eq!(gate_frame_count(&opts, &mask), 3);
+        opts.speech_encoder_frames = None;
+        assert_eq!(gate_frame_count(&opts, &mask), 10);
+    }
+
+    /// The bug #136 records: a long padded recording must not force
+    /// `0.2 × T_full` tokens when only a short span is speech.
+    #[test]
+    fn min_length_with_speech_frames_does_not_use_full_recording() {
+        // Full recording = 100 frames; speech = 10. At ratio 0.2 the
+        // old gate demanded 20 tokens; the speech basis demands 2.
+        let mut logits = make_logits_1xv(&[1.0, 5.0, 3.0]); // EOS=1
+        suppress_eos_until_min_length(&mut logits, 1, 2, 10, 0.2);
+        assert_eq!(
+            logits[[0, 0, 1]],
+            5.0,
+            "suffix_len 2 ≥ ceil(0.2×10)=2 → EOS must stay"
+        );
+
+        let mut forced = make_logits_1xv(&[1.0, 5.0, 3.0]);
+        suppress_eos_until_min_length(&mut forced, 1, 2, 100, 0.2);
+        assert!(
+            forced[[0, 0, 1]].is_infinite() && forced[[0, 0, 1]] < 0.0,
+            "same suffix against the full 100-frame recording would still suppress EOS"
+        );
+    }
+
+    #[test]
+    fn max_suffix_tokens_is_none_when_disabled() {
+        assert_eq!(max_suffix_tokens(100, 0.0), None);
+        assert!(!should_stop_at_max_length(1_000, 100, 0.0));
+    }
+
+    #[test]
+    fn max_suffix_tokens_is_zero_for_silence() {
+        assert_eq!(max_suffix_tokens(0, 0.8), Some(0));
+        assert!(
+            should_stop_at_max_length(0, 0, 0.8),
+            "pure silence must stop before emitting any content token"
+        );
+    }
+
+    #[test]
+    fn max_suffix_tokens_caps_repetition_loops() {
+        // 10 speech frames × 0.8 → max 8 tokens. A 50-repeat loop
+        // would be stopped here.
+        assert_eq!(max_suffix_tokens(10, 0.8), Some(8));
+        assert!(!should_stop_at_max_length(7, 10, 0.8));
+        assert!(should_stop_at_max_length(8, 10, 0.8));
     }
 
     // --- enforce_eos_confidence_margin ---
