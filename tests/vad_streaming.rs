@@ -185,6 +185,15 @@ async fn one_partial_arrives_per_utterance_in_capture_order() {
         seen[0].end <= seen[1].start,
         "utterances must not overlap in time: {seen:?}"
     );
+    assert!(
+        seen[0].endpoint_latency.is_some() && seen[1].endpoint_latency.is_some(),
+        "each partial must carry endpoint latency from segment close"
+    );
+    assert_eq!(result.diagnostics.endpoint_to_partial.len(), 2);
+    assert!(
+        result.diagnostics.endpoint_to_final.is_some(),
+        "final must be timed from the last segment close"
+    );
     assert_eq!(result.diagnostics.speech_segments.len(), 2);
 }
 

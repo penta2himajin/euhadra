@@ -507,6 +507,19 @@ struct SpeechSegment { start: usize, end: usize }  // サンプル索引、半�
 
 チャネルは lossy（§4.3 と同じ方針）で、受信側が読まなくてもセッションは詰まらない。receiver を drop すると発話単位の転写自体が省かれる。
 
+#### エンドポイント遅延（#148）
+
+L1 の ASR / E2E p50 は **ファイル全文を渡してから結果が返るまでの壁時計**であり、dictation の「発話が終わってから文字が出るまで」の代理にならない。
+
+発話単位経路では次を測る（`examples/eval_endpoint.rs` → `docs/benchmarks/ci_baseline_endpoint.json`）:
+
+| 指標 | t0 | t1 |
+|---|---|---|
+| `endpoint_to_partial_ms` | Segmenter が区間を閉じ、処理可能になった瞬間 | その区間の `Partial` が利用可能 |
+| `endpoint_to_final_ms` | 最後に閉じた区間の同上 | `SessionResult`（FinalPass 後）が利用可能 |
+
+`min_silence` 待ちは分子に含めない（endpointing の設定であり処理遅延ではない）。CI は L1 と同様に baseline 相対でゲートする。
+
 #### `FinalPass` — 最終 transcript の出所
 
 | ポリシー | 最終 transcript | ASR パス数 |

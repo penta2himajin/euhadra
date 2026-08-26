@@ -359,8 +359,14 @@ impl Pipeline {
     pub fn session(&self) -> Session {
         let (audio_tx, mut audio_rx) = mpsc::channel::<AudioChunk>(self.audio_channel_size);
         let (partial_tx, partial_rx) = mpsc::channel::<Partial>(PARTIAL_CHANNEL_SIZE);
-        let (segment_tx, mut segment_rx) =
-            mpsc::channel::<(usize, SpeechSegment, AudioChunk)>(SEGMENT_CHANNEL_SIZE);
+        // `(index, segment, pcm, closed_at)` — `closed_at` is when the
+        // segmenter decided the utterance was processable (KPI t0).
+        let (segment_tx, mut segment_rx) = mpsc::channel::<(
+            usize,
+            SpeechSegment,
+            AudioChunk,
+            std::time::Instant,
+        )>(SEGMENT_CHANNEL_SIZE);
         let cancel = CancellationToken::new();
 
         let asr = Arc::clone(&self.asr);
@@ -388,10 +394,15 @@ impl Pipeline {
         let cancel_partials = cancel.clone();
         let asr_task = tokio::spawn(async move {
             let mut texts: Vec<String> = Vec::new();
-            while let Some((index, segment, chunk)) = segment_rx.recv().await {
+            let mut partial_latencies: Vec<std::time::Duration> = Vec::new();
+            let mut last_closed_at: Option<std::time::Instant> = None;
+            while let Some((index, segment, chunk, closed_at)) = segment_rx.recv().await {
                 if cancel_partials.is_cancelled() {
                     break;
                 }
+                // t0 for endpoint_to_final is the last segment that became
+                // processable, even if this utterance's ASR call fails.
+                last_closed_at = Some(closed_at);
                 let rate = chunk.sample_rate;
                 match transcribe_segment(&asr_partials, &chunk, &cancel_partials).await {
                     Ok(Some(text)) => {
@@ -400,12 +411,15 @@ impl Pipeline {
                         // partials must not be able to stall the session.
                         // Spec §4.3 makes the same choice for the ASR
                         // channel.
+                        let endpoint_latency = closed_at.elapsed();
                         let _ = partial_tx.try_send(Partial {
                             index,
                             text: text.clone(),
                             start,
                             end: start + segment.duration(rate),
+                            endpoint_latency: Some(endpoint_latency),
                         });
+                        partial_latencies.push(endpoint_latency);
                         texts.push(text);
                     }
                     Ok(None) => {}
@@ -419,7 +433,7 @@ impl Pipeline {
                     }
                 }
             }
-            texts
+            (texts, partial_latencies, last_closed_at)
         });
 
         let handle = tokio::spawn(async move {
@@ -480,10 +494,18 @@ impl Pipeline {
                                 if let Some(segmenter) = live.as_mut() {
                                     for segment in segmenter.advance(&samples) {
                                         let index = segments.len();
+                                        let closed_at = std::time::Instant::now();
                                         segments.push(segment);
                                         if wanted(&partial_probe) {
-                                            let chunk = slice_chunk(&samples, segment, sample_rate, channels);
-                                            let _ = segment_tx.send((index, segment, chunk)).await;
+                                            let chunk = slice_chunk(
+                                                &samples,
+                                                segment,
+                                                sample_rate,
+                                                channels,
+                                            );
+                                            let _ = segment_tx
+                                                .send((index, segment, chunk, closed_at))
+                                                .await;
                                         }
                                     }
                                 }
@@ -498,10 +520,14 @@ impl Pipeline {
                 if let Some(segmenter) = live.as_mut() {
                     for segment in segmenter.flush(&samples) {
                         let index = segments.len();
+                        let closed_at = std::time::Instant::now();
                         segments.push(segment);
                         if wanted(&partial_probe) {
-                            let chunk = slice_chunk(&samples, segment, sample_rate, channels);
-                            let _ = segment_tx.send((index, segment, chunk)).await;
+                            let chunk =
+                                slice_chunk(&samples, segment, sample_rate, channels);
+                            let _ = segment_tx
+                                .send((index, segment, chunk, closed_at))
+                                .await;
                         }
                     }
                 }
@@ -510,7 +536,8 @@ impl Pipeline {
             // Closing the channel is what ends the utterance task.
             drop(segment_tx);
             drop(partial_probe);
-            let segment_texts = asr_task.await.unwrap_or_default();
+            let (segment_texts, partial_latencies, last_closed_at) =
+                asr_task.await.unwrap_or_default();
 
             if cancelled {
                 return Err(PipelineError::Cancelled { during: "recording" });
@@ -541,6 +568,10 @@ impl Pipeline {
             )
             .await
             .map(|mut result| {
+                result.diagnostics.endpoint_to_partial = partial_latencies;
+                if let Some(t0) = last_closed_at {
+                    result.diagnostics.endpoint_to_final = Some(t0.elapsed());
+                }
                 if let Some(reason) = vad_failure {
                     result.diagnostics.failures.push(StageFailure {
                         stage: Stage::Vad,
@@ -600,6 +631,14 @@ pub struct Partial {
     pub start: std::time::Duration,
     /// Where it ends.
     pub end: std::time::Duration,
+    /// Wall time from when the segment became processable (the
+    /// segmenter closed it) until this partial was ready to send.
+    ///
+    /// This is the per-utterance half of the endpoint-latency KPI in
+    /// #148 — not the L1 full-file ASR wall clock. `None` only if the
+    /// timing path was skipped (should not happen on the live VAD
+    /// path that emits partials).
+    pub endpoint_latency: Option<std::time::Duration>,
 }
 
 /// Runs a [`Segmenter`] over audio that is still arriving.
@@ -834,6 +873,16 @@ pub struct Diagnostics {
     /// in a way the text does not reveal, so what it decided is reported
     /// rather than left to be inferred from the transcript.
     pub speech_segments: Vec<SpeechSegment>,
+    /// Per closed segment that produced a partial: time from segment
+    /// close until that partial was ready. Same order as successful
+    /// partials (not necessarily 1:1 with [`speech_segments`] when an
+    /// utterance ASR call fails).
+    pub endpoint_to_partial: Vec<std::time::Duration>,
+    /// Time from the **last** successful segment close until the
+    /// [`SessionResult`] was ready (FinalPass included). `None` when no
+    /// segment closed, or when partials were not requested so per-
+    /// utterance ASR never ran (timing then has no t0).
+    pub endpoint_to_final: Option<std::time::Duration>,
 }
 
 /// A stage that failed and was skipped.

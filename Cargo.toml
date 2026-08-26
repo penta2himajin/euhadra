@@ -201,3 +201,9 @@ required-features = ["onnx"]
 [[example]]
 name = "eval_vad"
 required-features = ["onnx", "vad"]
+
+# Endpoint latency on the live VAD path (#148). Needs onnx ASR adapters,
+# vad, and the `testing` feature for the eval baseline helpers.
+[[example]]
+name = "eval_endpoint"
+required-features = ["onnx", "vad", "testing"]

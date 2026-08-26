@@ -321,6 +321,143 @@ fn round2(x: f64) -> f64 {
 }
 
 // ---------------------------------------------------------------------------
+// Endpoint latency baseline (#148)
+// ---------------------------------------------------------------------------
+
+/// Schema for `docs/benchmarks/ci_baseline_endpoint.json`.
+///
+/// Distinct from [`Baseline`]: L1 measures full-file ASR wall clock;
+/// this one measures segment-close → partial / final on the live VAD
+/// path. Same relative-gate idea, different KPI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EndpointBaseline {
+    pub schema_version: u32,
+    pub generated: String,
+    pub asr_model: String,
+    pub languages: BTreeMap<String, EndpointLanguageBaseline>,
+    pub tolerances: EndpointTolerances,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EndpointLanguageBaseline {
+    /// FLEURS (or equivalent) recordings measured.
+    pub utterances: usize,
+    /// Closed segments that produced a timed partial.
+    pub segments: usize,
+    pub endpoint_to_partial_ms: LatencyRecord,
+    pub endpoint_to_final_ms: LatencyRecord,
+    /// Mean ASR processing time / speech_duration across timed segments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub segment_rtf: Option<f64>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct EndpointTolerances {
+    pub partial_p50_relative_warn: f64,
+    pub partial_p50_relative_fail: f64,
+    pub final_p50_relative_warn: f64,
+    pub final_p50_relative_fail: f64,
+    #[serde(default = "default_rtf_warn")]
+    pub rtf_relative_warn: f64,
+    #[serde(default = "default_rtf_fail")]
+    pub rtf_relative_fail: f64,
+    #[serde(default = "default_rtf_absolute_warn")]
+    pub rtf_absolute_warn: f64,
+    /// Absolute floor for endpoint→partial p50 (ms). Same 1 s idea as
+    /// L1 ASR latency absolute warn — dictation feels broken above it.
+    #[serde(default = "default_latency_absolute_warn_ms")]
+    pub partial_absolute_warn_ms: f64,
+    #[serde(default = "default_latency_absolute_warn_ms")]
+    pub final_absolute_warn_ms: f64,
+}
+
+impl Default for EndpointTolerances {
+    fn default() -> Self {
+        // Mirror L1 latency bands: partial ≈ ASR stage, final ≈ E2E.
+        Self {
+            partial_p50_relative_warn: 0.50,
+            partial_p50_relative_fail: 1.50,
+            final_p50_relative_warn: 0.30,
+            final_p50_relative_fail: 1.00,
+            rtf_relative_warn: default_rtf_warn(),
+            rtf_relative_fail: default_rtf_fail(),
+            rtf_absolute_warn: default_rtf_absolute_warn(),
+            partial_absolute_warn_ms: default_latency_absolute_warn_ms(),
+            final_absolute_warn_ms: default_latency_absolute_warn_ms(),
+        }
+    }
+}
+
+impl EndpointBaseline {
+    pub fn load(path: &Path) -> std::io::Result<Self> {
+        let bytes = std::fs::read(path)?;
+        serde_json::from_slice(&bytes)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    }
+
+    pub fn save(&self, path: &Path) -> std::io::Result<()> {
+        let bytes = serde_json::to_vec_pretty(self)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        std::fs::write(path, bytes)?;
+        Ok(())
+    }
+}
+
+/// Compare one language's endpoint measurement to its baseline entry.
+pub fn check_endpoint_language(
+    measured: &EndpointLanguageBaseline,
+    baseline: &EndpointLanguageBaseline,
+    tol: &EndpointTolerances,
+) -> Vec<(String, Verdict)> {
+    let mut out = Vec::new();
+    out.push((
+        "endpoint_to_partial_p50_ms".to_string(),
+        check_latency(
+            measured.endpoint_to_partial_ms.p50,
+            baseline.endpoint_to_partial_ms.p50,
+            tol.partial_p50_relative_warn,
+            tol.partial_p50_relative_fail,
+        ),
+    ));
+    out.push((
+        "endpoint_to_final_p50_ms".to_string(),
+        check_latency(
+            measured.endpoint_to_final_ms.p50,
+            baseline.endpoint_to_final_ms.p50,
+            tol.final_p50_relative_warn,
+            tol.final_p50_relative_fail,
+        ),
+    ));
+    if let (Some(m), Some(b)) = (measured.segment_rtf, baseline.segment_rtf) {
+        out.push((
+            "segment_rtf".to_string(),
+            check_latency(m, b, tol.rtf_relative_warn, tol.rtf_relative_fail),
+        ));
+        out.push((
+            "segment_rtf_absolute".to_string(),
+            check_absolute_max(m, tol.rtf_absolute_warn, |x| format!("{x:.3}")),
+        ));
+    }
+    out.push((
+        "endpoint_to_partial_p50_ms_absolute".to_string(),
+        check_absolute_max(
+            measured.endpoint_to_partial_ms.p50,
+            tol.partial_absolute_warn_ms,
+            |x| format!("{x:.0}ms"),
+        ),
+    ));
+    out.push((
+        "endpoint_to_final_p50_ms_absolute".to_string(),
+        check_absolute_max(
+            measured.endpoint_to_final_ms.p50,
+            tol.final_absolute_warn_ms,
+            |x| format!("{x:.0}ms"),
+        ),
+    ));
+    out
+}
+
+// ---------------------------------------------------------------------------
 // Layer baseline (Phase A-2: ablation + per-layer latency)
 // ---------------------------------------------------------------------------
 
@@ -811,5 +948,56 @@ mod tests {
         let json = serde_json::to_string(&b).unwrap();
         let parsed: LayerBaseline = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.languages.len(), 1);
+    }
+
+    #[test]
+    fn endpoint_baseline_gates_partial_and_final() {
+        let baseline = EndpointLanguageBaseline {
+            utterances: 30,
+            segments: 30,
+            endpoint_to_partial_ms: LatencyRecord {
+                p50: 400.0,
+                p95: 800.0,
+            },
+            endpoint_to_final_ms: LatencyRecord {
+                p50: 500.0,
+                p95: 900.0,
+            },
+            segment_rtf: Some(0.15),
+        };
+        let tol = EndpointTolerances::default();
+
+        let ok = EndpointLanguageBaseline {
+            endpoint_to_partial_ms: LatencyRecord {
+                p50: 450.0,
+                p95: 850.0,
+            },
+            endpoint_to_final_ms: LatencyRecord {
+                p50: 550.0,
+                p95: 950.0,
+            },
+            segment_rtf: Some(0.16),
+            ..baseline.clone()
+        };
+        let results = check_endpoint_language(&ok, &baseline, &tol);
+        assert!(
+            results.iter().all(|(_, v)| *v == Verdict::Pass),
+            "got {results:?}"
+        );
+
+        let slow = EndpointLanguageBaseline {
+            endpoint_to_partial_ms: LatencyRecord {
+                p50: 1200.0,
+                p95: 2000.0,
+            },
+            ..ok
+        };
+        let results = check_endpoint_language(&slow, &baseline, &tol);
+        let v = &results
+            .iter()
+            .find(|(k, _)| k == "endpoint_to_partial_p50_ms")
+            .unwrap()
+            .1;
+        assert!(matches!(v, Verdict::Fail(_)), "got {v:?}");
     }
 }

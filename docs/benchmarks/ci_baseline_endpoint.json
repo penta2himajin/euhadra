@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "generated": "epoch:1787734143",
+  "asr_model": "en=canary-180m-flash-int8 / ja=parakeet",
+  "languages": {
+    "en": {
+      "utterances": 30,
+      "segments": 32,
+      "endpoint_to_partial_ms": {
+        "p50": 436.6,
+        "p95": 794.28
+      },
+      "endpoint_to_final_ms": {
+        "p50": 893.42,
+        "p95": 1604.92
+      },
+      "segment_rtf": 0.0508
+    },
+    "ja": {
+      "utterances": 30,
+      "segments": 41,
+      "endpoint_to_partial_ms": {
+        "p50": 306.39,
+        "p95": 485.07
+      },
+      "endpoint_to_final_ms": {
+        "p50": 669.39,
+        "p95": 1061.44
+      },
+      "segment_rtf": 0.0356
+    }
+  },
+  "tolerances": {
+    "partial_p50_relative_warn": 0.5,
+    "partial_p50_relative_fail": 1.5,
+    "final_p50_relative_warn": 0.3,
+    "final_p50_relative_fail": 1.0,
+    "rtf_relative_warn": 0.5,
+    "rtf_relative_fail": 1.5,
+    "rtf_absolute_warn": 1.0,
+    "partial_absolute_warn_ms": 1000.0,
+    "final_absolute_warn_ms": 1000.0
+  }
+}
