@@ -36,7 +36,24 @@ pub struct SegmenterConfig {
     /// Audio kept either side of the detected boundary. A detector fires
     /// slightly late on onset and slightly early on offset, and clipped
     /// word edges cost more accuracy than a little extra silence does.
+    ///
+    /// On the **left** (onset) side this is combined with [`Self::preroll`]:
+    /// the rewind is `max(speech_pad, preroll)`, then clamped by the
+    /// previous segment's end so neighbouring utterances do not overlap.
+    /// On the **right** (offset) side only `speech_pad` applies.
     pub speech_pad: Duration,
+
+    /// How far to rewind before the detected onset when stream history
+    /// allows it.
+    ///
+    /// Soft onsets and leading consonants often score below threshold for
+    /// tens to hundreds of milliseconds; `speech_pad` alone either under-
+    /// covers them or, when raised, walks back into the previous utterance.
+    /// `preroll` is the intended left-side reach; the boundary guard
+    /// (`max(onset − N, previous end, 0)`) keeps that reach from eating
+    /// the prior segment. The effective left margin is
+    /// `max(speech_pad, preroll)` so the two knobs do not stack.
+    pub preroll: Duration,
 
     /// Force a cut after this much continuous speech, so a speaker who
     /// never pauses still gets incremental output. `None` waits for a
@@ -54,6 +71,9 @@ impl Default for SegmenterConfig {
             min_speech: Duration::from_millis(120),
             min_silence: Duration::from_millis(700),
             speech_pad: Duration::from_millis(200),
+            // Wider than speech_pad: catch late VAD onset without relying
+            // on a larger pad that would ignore the previous boundary.
+            preroll: Duration::from_millis(400),
             max_speech: Some(Duration::from_secs(30)),
         }
     }
@@ -75,6 +95,8 @@ pub struct Segmenter {
     min_speech_frames: usize,
     min_silence_frames: usize,
     pad_samples: usize,
+    /// Left-side rewind in samples: `max(speech_pad, preroll)`.
+    left_margin_samples: usize,
     max_speech_frames: Option<usize>,
 
     /// Frames pushed so far — the cursor into the recording.
@@ -87,6 +109,10 @@ pub struct Segmenter {
     silence_run: usize,
     /// The last frame that scored as speech within the open utterance.
     last_speech: usize,
+    /// Sample index of the previous segment's end (already padded). The
+    /// next onset rewind must not start before this — otherwise the
+    /// trailing pad of utterance N becomes the leading edge of N+1.
+    boundary_guard: usize,
 }
 
 impl Segmenter {
@@ -114,6 +140,11 @@ impl Segmenter {
             let samples = d.as_secs_f64() * sample_rate as f64;
             (samples / frame_size as f64).ceil() as usize
         };
+        let to_samples = |d: Duration| -> usize {
+            (d.as_secs_f64() * sample_rate as f64) as usize
+        };
+        let pad_samples = to_samples(config.speech_pad);
+        let preroll_samples = to_samples(config.preroll);
         Ok(Self {
             threshold,
             frame_size,
@@ -121,13 +152,15 @@ impl Segmenter {
             // "one frame of evidence" rather than "no evidence needed".
             min_speech_frames: frames(config.min_speech).max(1),
             min_silence_frames: frames(config.min_silence).max(1),
-            pad_samples: (config.speech_pad.as_secs_f64() * sample_rate as f64) as usize,
+            pad_samples,
+            left_margin_samples: pad_samples.max(preroll_samples),
             max_speech_frames: config.max_speech.map(|d| frames(d).max(1)),
             frame_index: 0,
             open_at: None,
             speech_run: 0,
             silence_run: 0,
             last_speech: 0,
+            boundary_guard: 0,
         })
     }
 
@@ -202,13 +235,22 @@ impl Segmenter {
 
     /// Turn a frame range into a padded sample range and reset for the
     /// next utterance.
+    ///
+    /// Left bound: rewind by `max(speech_pad, preroll)` from the detected
+    /// onset, then clamp so the previous segment's end is never
+    /// re-included. Right bound: offset plus `speech_pad` only (no
+    /// preroll on the trailing edge).
     fn close(&mut self, start_frame: usize, end_frame: usize) -> SpeechSegment {
-        let start = (start_frame * self.frame_size).saturating_sub(self.pad_samples);
+        let onset = start_frame * self.frame_size;
+        let start = onset
+            .saturating_sub(self.left_margin_samples)
+            .max(self.boundary_guard);
         let end = (end_frame + 1) * self.frame_size + self.pad_samples;
 
         self.open_at = None;
         self.speech_run = 0;
         self.silence_run = 0;
+        self.boundary_guard = end;
         SpeechSegment { start, end }
     }
 }
@@ -227,6 +269,17 @@ mod tests {
     fn no_padding() -> SegmenterConfig {
         SegmenterConfig {
             speech_pad: Duration::ZERO,
+            preroll: Duration::ZERO,
+            ..SegmenterConfig::default()
+        }
+    }
+
+    /// Pad only — no preroll — so tests that pin the legacy left margin
+    /// are not shifted by the wider default preroll.
+    fn pad_only(pad: Duration) -> SegmenterConfig {
+        SegmenterConfig {
+            speech_pad: pad,
+            preroll: Duration::ZERO,
             ..SegmenterConfig::default()
         }
     }
@@ -294,7 +347,7 @@ mod tests {
         probs.extend(frames(30, 1.0));
         probs.extend(frames(100, 0.0));
 
-        let padded = run(segmenter(SegmenterConfig::default()), &probs);
+        let padded = run(segmenter(pad_only(Duration::from_millis(200))), &probs);
         let bare = run(segmenter(no_padding()), &probs);
         assert_eq!(padded.len(), 1);
         assert!(
@@ -311,7 +364,7 @@ mod tests {
         // subtract from an offset of zero.
         let mut probs = frames(30, 1.0);
         probs.extend(frames(100, 0.0));
-        let segments = run(segmenter(SegmenterConfig::default()), &probs);
+        let segments = run(segmenter(pad_only(Duration::from_millis(200))), &probs);
         assert_eq!(segments[0].start, 0);
     }
 
@@ -320,6 +373,7 @@ mod tests {
         let config = SegmenterConfig {
             max_speech: Some(Duration::from_secs(1)),
             speech_pad: Duration::ZERO,
+            preroll: Duration::ZERO,
             ..SegmenterConfig::default()
         };
         // 3 seconds of unbroken speech at 10 ms per frame.
@@ -337,6 +391,7 @@ mod tests {
         let config = SegmenterConfig {
             max_speech: None,
             speech_pad: Duration::ZERO,
+            preroll: Duration::ZERO,
             ..SegmenterConfig::default()
         };
         let segments = run(segmenter(config), &frames(6000, 1.0));
@@ -355,6 +410,7 @@ mod tests {
             max_speech: Some(Duration::from_millis(500)),
             min_silence: Duration::from_millis(100),
             speech_pad: Duration::ZERO,
+            preroll: Duration::ZERO,
             ..SegmenterConfig::default()
         };
         let mut probs = frames(40, 1.0); // 400 ms
@@ -503,6 +559,158 @@ mod tests {
                 }
             ),
             "got {err:?}"
+        );
+    }
+
+    // ── preroll + boundary guard (#144) ─────────────────────────────────
+
+    /// With room before the onset, preroll reaches further back than
+    /// speech_pad alone. This is the gap speech_pad cannot close without
+    /// raising the pad (and then colliding with the previous utterance).
+    #[test]
+    fn preroll_rewinds_further_than_speech_pad_alone() {
+        // 1 s silence, then speech — plenty of history before onset.
+        let mut probs = frames(100, 0.0);
+        probs.extend(frames(30, 1.0));
+        probs.extend(frames(100, 0.0));
+
+        let pad = Duration::from_millis(200);
+        let with_pad = run(segmenter(pad_only(pad)), &probs);
+        let with_preroll = run(
+            segmenter(SegmenterConfig {
+                speech_pad: pad,
+                preroll: Duration::from_millis(400),
+                ..SegmenterConfig::default()
+            }),
+            &probs,
+        );
+        assert_eq!(with_pad.len(), 1);
+        assert_eq!(with_preroll.len(), 1);
+
+        let onset = 100 * 160;
+        assert_eq!(
+            with_pad[0].start,
+            onset - 3_200,
+            "200 ms pad at 16 kHz is 3200 samples"
+        );
+        assert_eq!(
+            with_preroll[0].start,
+            onset - 6_400,
+            "400 ms preroll must win over the 200 ms pad on the left"
+        );
+        assert_eq!(
+            with_pad[0].end, with_preroll[0].end,
+            "preroll must not change the trailing pad"
+        );
+    }
+
+    /// Raising speech_pad without a boundary guard walks the second
+    /// onset back into the first segment. That failure mode is what
+    /// preroll + guard exist to avoid: keep a wide left margin, but
+    /// never cross the previous end.
+    #[test]
+    fn boundary_guard_stops_preroll_at_the_previous_segment_end() {
+        let config = SegmenterConfig {
+            // Short silence so neighbours sit close; wide left margin.
+            min_silence: Duration::from_millis(100),
+            speech_pad: Duration::from_millis(200),
+            preroll: Duration::from_millis(500),
+            max_speech: None,
+            ..SegmenterConfig::default()
+        };
+
+        // 300 ms speech, 100 ms silence (closes), 300 ms speech, silence.
+        let mut probs = frames(30, 1.0);
+        probs.extend(frames(10, 0.0));
+        probs.extend(frames(30, 1.0));
+        probs.extend(frames(100, 0.0));
+
+        let segments = run(segmenter(config), &probs);
+        assert_eq!(segments.len(), 2, "got {segments:?}");
+        assert!(
+            segments[1].start >= segments[0].end,
+            "second segment must not start inside the first: {:?}",
+            segments
+        );
+        assert_eq!(
+            segments[1].start, segments[0].end,
+            "with a 500 ms preroll into a ~100 ms gap, the guard should \
+             pin the second start exactly at the first end"
+        );
+    }
+
+    /// Without a boundary guard, a large left margin on the second
+    /// utterance would start before the first utterance's end. The
+    /// segmenter must refuse that overlap even when only `speech_pad`
+    /// supplies the left margin (preroll zero).
+    #[test]
+    fn speech_pad_alone_would_overlap_neighbours_without_a_guard() {
+        let pad_ms = 300u64;
+        let speech_frames = 30;
+        let gap_frames = 40; // 400 ms — closes after min_silence (100 ms)
+
+        let end1_padded = speech_frames * 160 + (pad_ms as usize * 16);
+        let onset2 = (speech_frames + gap_frames) * 160;
+        let unguarded_start2 = onset2.saturating_sub(pad_ms as usize * 16);
+        assert!(
+            unguarded_start2 < end1_padded,
+            "fixture broken: unguarded second start {unguarded_start2}              should fall inside first padded end {end1_padded}"
+        );
+
+        let config = SegmenterConfig {
+            min_silence: Duration::from_millis(100),
+            speech_pad: Duration::from_millis(pad_ms),
+            preroll: Duration::ZERO,
+            max_speech: None,
+            ..SegmenterConfig::default()
+        };
+        let mut probs = frames(speech_frames, 1.0);
+        probs.extend(frames(gap_frames, 0.0));
+        probs.extend(frames(speech_frames, 1.0));
+        probs.extend(frames(100, 0.0));
+
+        let segments = run(segmenter(config), &probs);
+        assert_eq!(segments.len(), 2, "got {segments:?}");
+        assert!(
+            segments[1].start >= segments[0].end,
+            "even pad-only left margins must respect the boundary guard;              got {:?}",
+            segments
+        );
+    }
+
+    /// Left margin uses max(pad, preroll), not the sum — stacking would
+    /// drag half a second of silence into every short utterance.
+    #[test]
+    fn preroll_and_speech_pad_do_not_stack_on_the_left() {
+        let mut probs = frames(100, 0.0);
+        probs.extend(frames(30, 1.0));
+        probs.extend(frames(100, 0.0));
+
+        let segments = run(
+            segmenter(SegmenterConfig {
+                speech_pad: Duration::from_millis(200),
+                preroll: Duration::from_millis(400),
+                ..SegmenterConfig::default()
+            }),
+            &probs,
+        );
+        let onset = 100 * 160;
+        assert_eq!(
+            segments[0].start,
+            onset - 6_400,
+            "left margin must be max(200,400)=400 ms, not 600 ms"
+        );
+    }
+
+    #[test]
+    fn defaults_expose_preroll_wider_than_speech_pad() {
+        let d = SegmenterConfig::default();
+        assert_eq!(d.speech_pad, Duration::from_millis(200));
+        assert_eq!(d.preroll, Duration::from_millis(400));
+        assert!(
+            d.preroll > d.speech_pad,
+            "preroll should outreach speech_pad so the left edge gains \
+             from history rather than from a larger pad"
         );
     }
 }

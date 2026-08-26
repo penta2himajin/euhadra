@@ -415,3 +415,39 @@ async fn a_mid_sentence_pause_does_not_become_two_utterances() {
         result.diagnostics.speech_segments
     );
 }
+
+/// #144: a wide preroll must not pull the previous utterance's tail into
+/// the next segment — same rule on the batch (file) path the live
+/// session uses through `LiveSegmenter`.
+#[tokio::test]
+async fn preroll_does_not_let_neighbours_overlap() {
+    use std::time::Duration;
+
+    let samples = synth(&[
+        (0.2, false),
+        (0.5, true),
+        (0.8, false), // past min_silence
+        (0.5, true),
+        (0.8, false),
+    ]);
+
+    let mut config = SegmenterConfig::default();
+    config.min_silence = Duration::from_millis(400);
+    config.speech_pad = Duration::from_millis(200);
+    config.preroll = Duration::from_millis(600);
+
+    let pipeline = Pipeline::builder()
+        .asr(MockAsr::new("ok"))
+        .vad(EnergyVad::new())
+        .segmenter_config(config)
+        .build()
+        .unwrap();
+
+    let result = pipeline.transcribe(&chunks(&samples)).await.unwrap();
+    let segs = &result.diagnostics.speech_segments;
+    assert_eq!(segs.len(), 2, "got {segs:?}");
+    assert!(
+        segs[1].start >= segs[0].end,
+        "preroll must stop at the previous segment end; got {segs:?}"
+    );
+}
