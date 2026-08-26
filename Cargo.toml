@@ -11,9 +11,9 @@ keywords = ["speech-recognition", "asr", "dictation", "voice", "pipeline"]
 categories = ["multimedia::audio", "text-processing", "api-bindings"]
 # Verified by building the library on this toolchain, not inferred. It
 # covers the default feature set only; the optional features raise the
-# floor through their own dependencies (`cli` needs 1.85 for clap, `vad`
-# needs 1.87 for earshot, `onnx` needs 1.88 for ort), and those crates
-# report that themselves.
+# floor through their own dependencies (`cli` needs 1.87 because it
+# pulls in `vad` / earshot; bare `clap` would be 1.85, `onnx` needs
+# 1.88 for ort), and those crates report that themselves.
 rust-version = "1.78"
 # The evaluation corpora, model-fetch scripts and design docs are how the
 # crate is developed, not how it is consumed; none of them are reachable
@@ -130,7 +130,8 @@ testing = []
 
 # Everything the `euhadra` binary needs. Enable this for
 # `cargo install euhadra`; a library consumer normally does not.
-cli = ["dep:clap", "dep:tracing-subscriber", "mic", "clipboard"]
+# Implies `vad` so `record` ships the utterance-path defaults (#147).
+cli = ["dep:clap", "dep:tracing-subscriber", "mic", "clipboard", "vad"]
 
 onnx = [
     "dep:ort",

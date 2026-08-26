@@ -40,7 +40,7 @@ libraries. Opt into the rest:
 | `mic` | Microphone capture (`cpal`) | ALSA headers on Linux (`libasound2-dev`) |
 | `vad` | `EarshotVad`, the neural voice activity detector | one pure-Rust crate; needs Rust 1.87 |
 | `clipboard` | `ClipboardEmitter` (`arboard`) | — |
-| `cli` | The `euhadra` binary; implies `mic` + `clipboard` | needs Rust 1.85 |
+| `cli` | The `euhadra` binary; implies `mic` + `clipboard` + `vad` | needs Rust 1.87 (via `vad`) |
 | `testing` | Mock adapters and the WER/CER evaluation harness | — |
 
 Microphone capture is behind a feature because `cpal` links ALSA on Linux, and a
@@ -124,12 +124,25 @@ cargo run --features cli -- dictate \
 
 ### Record from microphone
 
+VAD and per-utterance partials are **on by default** (`cli` implies `vad`).
+Partials print on stderr as each utterance closes; Ctrl+C finishes the
+session (`FinalPass::SpeechOnly` by default). See
+[`docs/benchmarks/endpointing_profiles.md`](docs/benchmarks/endpointing_profiles.md)
+for quality vs low-latency `min_silence` candidates.
+
 ```bash
-# Record → transcribe → print to stdout
+# Record → VAD utterances → partials on stderr → final on stdout
 cargo run --features cli -- record \
   --whisper-cli /path/to/whisper-cli \
   --model /path/to/ggml-base.bin \
   --language en
+
+# Lower silence wait (candidate profile — measure before shipping)
+cargo run --features cli -- record \
+  --whisper-cli /path/to/whisper-cli \
+  --model /path/to/ggml-base.bin \
+  --language en \
+  --min-silence-ms 350
 
 # Record → transcribe → copy to clipboard
 cargo run --features cli -- record \
@@ -137,6 +150,12 @@ cargo run --features cli -- record \
   --model /path/to/ggml-base.bin \
   --language en \
   --clipboard
+
+# Whole capture, no VAD (pre-0.3 behaviour)
+cargo run --features cli -- record \
+  --whisper-cli /path/to/whisper-cli \
+  --model /path/to/ggml-base.bin \
+  --no-vad
 ```
 
 Press Ctrl+C to stop recording.
@@ -413,6 +432,9 @@ euhadra dictate     Transcribe a WAV file through the full pipeline
   --language          Language hint (en, ja, etc.)
   --no-filter         Skip filler removal
   --no-process        Skip text processing (punctuation, self-correction)
+  --vad               Use the live VAD session path (partials on stderr)
+  --min-silence-ms    Silence (ms) that closes an utterance (with --vad)
+  --final-pass        speech-only | whole | join (with --vad)
 
 euhadra record      Record from microphone through the full pipeline
   --whisper-cli       Path to whisper-cli binary
@@ -421,6 +443,9 @@ euhadra record      Record from microphone through the full pipeline
   --clipboard         Output to clipboard instead of stdout
   --no-filter         Skip filler removal
   --no-process        Skip text processing
+  --no-vad            Disable VAD (whole capture → one final)
+  --min-silence-ms    Silence (ms) that closes an utterance (default 700)
+  --final-pass        speech-only | whole | join (default speech-only)
 
 euhadra transcribe  Whisper-only transcription (no pipeline)
   --file <path>       WAV file
