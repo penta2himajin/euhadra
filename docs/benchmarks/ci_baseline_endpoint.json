@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated": "epoch:1787735558",
-  "asr_model": "en=canary-180m-flash-int8 / ja=parakeet (GitHub Actions ubuntu-latest)",
+  "asr_model": "en=canary-180m-flash-int8 / ja=parakeet / es=canary-180m-flash-int8 (GitHub Actions ubuntu-latest; es scaled from agent×en GHA/agent ratio)",
   "languages": {
     "en": {
       "utterances": 30,
@@ -28,6 +28,19 @@
         "p95": 3684.0
       },
       "segment_rtf": 0.118
+    },
+    "es": {
+      "utterances": 30,
+      "segments": 35,
+      "endpoint_to_partial_ms": {
+        "p50": 1033.5,
+        "p95": 1984.5
+      },
+      "endpoint_to_final_ms": {
+        "p50": 2263.5,
+        "p95": 4100.0
+      },
+      "segment_rtf": 0.115
     }
   },
   "tolerances": {

@@ -159,13 +159,52 @@
         "seconds": 31.894164594,
         "segments": 0.0
       }
+    },
+    "es": {
+      "-100|earshot|tdefault|speech-only": {
+        "delta": 0.007276545256261285,
+        "error_rate": 0.06629671873175357,
+        "inflated": 0,
+        "seconds": 19.040022841,
+        "segments": 1.0
+      },
+      "-100|none|tdefault|whole": {
+        "delta": -0.005527019134259632,
+        "error_rate": 0.05349315434123265,
+        "inflated": 0,
+        "seconds": 28.38203683,
+        "segments": 0.0
+      },
+      "-45|earshot|tdefault|speech-only": {
+        "delta": 0.0019399209985594065,
+        "error_rate": 0.060960094474051686,
+        "inflated": 0,
+        "seconds": 21.745781409,
+        "segments": 2.1333333333333333
+      },
+      "-45|none|tdefault|whole": {
+        "delta": 0.007071962919726629,
+        "error_rate": 0.06609213639521891,
+        "inflated": 0,
+        "seconds": 28.044564271,
+        "segments": 0.0
+      },
+      "clean|none|tdefault|whole": {
+        "delta": 0.0,
+        "error_rate": 0.05902017347549228,
+        "inflated": 0,
+        "seconds": 18.42109965,
+        "segments": 0.0
+      }
     }
   },
   "silence_only_transcripts": {
     "en|-100": ".S. Sometimes it's a long way, sometimes it's a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a long way, a",
     "en|-45": ". The first person to be able to help her, but wouldn't have to recover the burger that she had and would have gone back to the stairs of the other day or so, I would have to go back to the world when I was around.",
     "ja|-100": "心の声。",
-    "ja|-45": "うん。"
+    "ja|-45": "うん。",
+    "es|-100": "",
+    "es|-45": "Qué bien."
   },
   "trail_silence_s": 5.0
 }
