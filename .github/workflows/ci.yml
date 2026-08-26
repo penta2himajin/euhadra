@@ -255,6 +255,19 @@ jobs:
         env:
           PARAKEET_JA_DIR: vendor/parakeet_ja
 
+      - name: Cache paraformer-zh ONNX bundle (~240 MB)
+        id: paraformer-zh-cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/paraformer_zh
+          key: paraformer-large-zh-funasr-quant-v1
+
+      - name: Download paraformer-zh model (cache miss only)
+        if: steps.paraformer-zh-cache.outputs.cache-hit != 'true'
+        run: bash scripts/setup_paraformer_zh.sh
+        env:
+          PARAFORMER_ZH_DIR: vendor/paraformer_zh
+
       - name: Build eval binary (onnx + vad)
         run: cargo build --release --features onnx,vad --example eval_vad --locked
 
@@ -264,13 +277,15 @@ jobs:
       # re-running it here would spend ~30 minutes protecting numbers
       # that are not what anyone ships. −45 dBFS is the realistic side:
       # digital silence flatters a level detector. `es` reuses the en
-      # Canary INT8 cache (same multilingual checkpoint; #150).
-      - name: VAD ΔWER gate (en / ja / es)
+      # Canary INT8 cache (same multilingual checkpoint; #150). `zh`
+      # uses Paraformer (#156).
+      - name: VAD ΔWER gate (en / ja / es / zh)
         run: |
           cargo run --release --features onnx,vad --example eval_vad --locked -- \
             --canary-en-dir vendor/canary_en \
             --parakeet-ja-dir vendor/parakeet_ja \
-            --langs en,ja,es \
+            --paraformer-zh-dir vendor/paraformer_zh \
+            --langs en,ja,es,zh \
             --noise-db=-45 \
             --detectors none,earshot \
             --policies speech-only \
@@ -343,15 +358,29 @@ jobs:
         env:
           PARAKEET_JA_DIR: vendor/parakeet_ja
 
+      - name: Cache paraformer-zh ONNX bundle (~240 MB)
+        id: paraformer-zh-cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/paraformer_zh
+          key: paraformer-large-zh-funasr-quant-v1
+
+      - name: Download paraformer-zh model (cache miss only)
+        if: steps.paraformer-zh-cache.outputs.cache-hit != 'true'
+        run: bash scripts/setup_paraformer_zh.sh
+        env:
+          PARAFORMER_ZH_DIR: vendor/paraformer_zh
+
       - name: Build eval binary (onnx + vad + testing)
         run: cargo build --release --features onnx,vad,testing --example eval_endpoint --locked
 
-      - name: Endpoint latency gate (en / ja / es)
+      - name: Endpoint latency gate (en / ja / es / zh)
         run: |
           cargo run --release --features onnx,vad,testing --example eval_endpoint --locked -- \
             --canary-en-dir vendor/canary_en \
             --parakeet-ja-dir vendor/parakeet_ja \
-            --langs en,ja,es \
+            --paraformer-zh-dir vendor/paraformer_zh \
+            --langs en,ja,es,zh \
             --baseline docs/benchmarks/ci_baseline_endpoint.json
 
   # L1 ASR live smoke (§1.1 / §3.8): runs Canary-180M-Flash (en + es),

@@ -196,6 +196,43 @@
         "seconds": 18.42109965,
         "segments": 0.0
       }
+    },
+    "zh": {
+      "-100|earshot|tdefault|speech-only": {
+        "delta": 0.0021595262974573176,
+        "error_rate": 0.06287810512940027,
+        "inflated": 0,
+        "seconds": 5.590409929,
+        "segments": 1.0
+      },
+      "-100|none|tdefault|whole": {
+        "delta": 0.007396175990628764,
+        "error_rate": 0.06811475482257172,
+        "inflated": 0,
+        "seconds": 8.619181589,
+        "segments": 0.0
+      },
+      "-45|earshot|tdefault|speech-only": {
+        "delta": 0.003995275089727857,
+        "error_rate": 0.06471385392167081,
+        "inflated": 0,
+        "seconds": 6.340338596,
+        "segments": 2.2333333333333334
+      },
+      "-45|none|tdefault|whole": {
+        "delta": 0.004662658015175292,
+        "error_rate": 0.06538123684711825,
+        "inflated": 0,
+        "seconds": 8.617244324,
+        "segments": 0.0
+      },
+      "clean|none|tdefault|whole": {
+        "delta": 0.0,
+        "error_rate": 0.060718578831942954,
+        "inflated": 0,
+        "seconds": 4.708157621,
+        "segments": 0.0
+      }
     }
   },
   "silence_only_transcripts": {
@@ -204,7 +241,9 @@
     "ja|-100": "心の声。",
     "ja|-45": "うん。",
     "es|-100": "",
-    "es|-45": "Qué bien."
+    "es|-45": "Qué bien.",
+    "zh|-100": "hello 啦 lo ty ty 僵 尸 假 假 假 的 假 的 的 的 的 的 的 的 的 的 的 的",
+    "zh|-45": "the 有 没 有 没 有 的 有 有 没 有 没 有 没 有"
   },
   "trail_silence_s": 5.0
 }
