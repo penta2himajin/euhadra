@@ -154,7 +154,9 @@ pub trait VadStream: Send {
 /// A stretch of audio the detector considered speech.
 ///
 /// Bounds are sample indices into the buffer that was analysed, half-open
-/// `[start, end)`, and already include [`SegmenterConfig::speech_pad`].
+/// `[start, end)`. They already include [`SegmenterConfig::speech_pad`] on
+/// both sides and [`SegmenterConfig::preroll`] on the leading edge, with
+/// the leading edge clamped so consecutive segments do not overlap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct SpeechSegment {

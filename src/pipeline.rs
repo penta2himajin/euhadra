@@ -698,9 +698,12 @@ impl LiveSegmenter {
 
 /// Cut one segment out of a recording.
 ///
-/// Bounds are clamped: [`SegmenterConfig::speech_pad`] can reach past the
-/// end of what has been captured when the pad is wider than the silence
-/// that closed the utterance.
+/// Bounds are clamped: left-side [`SegmenterConfig::preroll`] /
+/// [`SegmenterConfig::speech_pad`] can ask for samples before what has
+/// been captured, and the trailing pad can reach past the end when it is
+/// wider than the silence that closed the utterance. The segmenter
+/// already refuses to start before the previous segment's end; this
+/// clamp covers the buffer edges.
 fn slice_chunk(
     samples: &[f32],
     segment: SpeechSegment,
