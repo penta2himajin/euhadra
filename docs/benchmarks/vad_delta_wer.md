@@ -122,7 +122,7 @@ ASR パスが 1 回で済む唯一のポリシーだが、**分割誤りを緩�
 
 ## 派生した別件
 
-**Canary の EOS ガードが、無音をトークン生成の義務に変換している（#136）。** `src/canary/decoder.rs` の `min_token_to_frame_ratio` は出力長が `0.2 × T_sub` に達するまで EOS を `-inf` にするが、この `T_sub` は録音全体のエンコーダフレーム数である。clean な FLEURS-es で truncation を潰すために調整された値で、無音が入る運用では向きが逆になる。既定の `SpeechOnly` は無音をエンコーダに渡さないため実害を回避しているが、ガード自体は発話フレーム基準に直すべきで、対称の上限ノブも無い。
+**Canary の EOS ガードは発話フレーム基準（#136）。** `min_token_to_frame_ratio` は `0.2 × T_speech` まで EOS を抑え、`max_token_to_frame_ratio`（既定 1.5）で上限を切る。`T_speech` はアダプタがエネルギー推定した発話分のエンコーダフレーム数（発話が大半ならフル長）。既定の `SpeechOnly` は無音をエンコーダに渡さないため実害をさらに小さくする。
 
 ## 限界
 

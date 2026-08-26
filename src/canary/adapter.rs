@@ -53,9 +53,12 @@ pub struct CanaryConfig {
     /// Greedy-decode repetition penalty. See
     /// `decoder::DEFAULT_REPETITION_PENALTY`. `1.0` disables.
     pub repetition_penalty: f32,
-    /// Min-length gate ratio (suffix tokens / encoder frames). See
-    /// `decoder::DEFAULT_MIN_TOKEN_TO_FRAME_RATIO`. `0.0` disables.
+    /// Min-length gate ratio (suffix tokens / speech encoder frames).
+    /// See `decoder::DEFAULT_MIN_TOKEN_TO_FRAME_RATIO`. `0.0` disables.
     pub min_token_to_frame_ratio: f32,
+    /// Max-length gate ratio (suffix tokens / speech encoder frames).
+    /// See `decoder::DEFAULT_MAX_TOKEN_TO_FRAME_RATIO`. `0.0` disables.
+    pub max_token_to_frame_ratio: f32,
     /// EOS-confidence margin in raw logit units. See
     /// `decoder::DEFAULT_EOS_CONFIDENCE_MARGIN`. `0.0` disables.
     pub eos_confidence_margin: f32,
@@ -81,6 +84,7 @@ impl CanaryConfig {
             max_sequence_length: super::decoder::DEFAULT_MAX_SEQUENCE_LENGTH,
             repetition_penalty: super::decoder::DEFAULT_REPETITION_PENALTY,
             min_token_to_frame_ratio: super::decoder::DEFAULT_MIN_TOKEN_TO_FRAME_RATIO,
+            max_token_to_frame_ratio: super::decoder::DEFAULT_MAX_TOKEN_TO_FRAME_RATIO,
             eos_confidence_margin: super::decoder::DEFAULT_EOS_CONFIDENCE_MARGIN,
             beam_size: super::decoder::DEFAULT_BEAM_SIZE,
             length_penalty: super::decoder::DEFAULT_LENGTH_PENALTY,
@@ -194,6 +198,14 @@ impl CanaryAdapter {
         let n_mels = self.frontend.n_mels();
         let enc = self.encoder.encode(&mel, n_mels, n_frames)?;
 
+        // Gate the decoder against speech frames, not the full
+        // recording length (#136). Without a pipeline VAD, estimate
+        // the speech fraction with EnergyVad so silence-padded audio
+        // does not inflate the min-token quota.
+        let n_enc = super::decoder::valid_frame_count(&enc.mask, 0);
+        let speech_encoder_frames =
+            Some(estimate_speech_encoder_frames(samples, 16_000, n_enc));
+
         let opts = DecodeOptions {
             source_language: self.language.clone(),
             target_language: self.language.clone(),
@@ -201,6 +213,8 @@ impl CanaryAdapter {
             max_sequence_length: self.cfg.max_sequence_length,
             repetition_penalty: self.cfg.repetition_penalty,
             min_token_to_frame_ratio: self.cfg.min_token_to_frame_ratio,
+            max_token_to_frame_ratio: self.cfg.max_token_to_frame_ratio,
+            speech_encoder_frames,
             eos_confidence_margin: self.cfg.eos_confidence_margin,
             beam_size: self.cfg.beam_size,
             length_penalty: self.cfg.length_penalty,
@@ -212,6 +226,56 @@ impl CanaryAdapter {
 
         Ok(self.vocab.decode(&decoded.tokens))
     }
+}
+
+/// Map a waveform onto an estimated speech-frame count for the
+/// decoder's min/max token gates (#136).
+///
+/// Runs [`EnergyVad`](crate::vad::EnergyVad) over 10 ms frames and
+/// scales `n_encoder_frames` by the speech-frame fraction when the
+/// clip is mostly silence. Pure silence yields 0 so the min-length
+/// gate stays off and the max-length gate forbids content tokens.
+///
+/// When most of the clip scores as speech (`≥ 85%`), the estimate
+/// is discarded in favour of the full encoder length. EnergyVad
+/// under-counts quiet onsets on clean FLEURS enough to shrink
+/// `T_speech` and reintroduce the mid-utterance truncations the
+/// min-ratio gate was calibrated to kill (L1 en smoke WER jump).
+fn estimate_speech_encoder_frames(
+    samples: &[f32],
+    _sample_rate: u32,
+    n_encoder_frames: usize,
+) -> usize {
+    use crate::vad::{EnergyVad, VadBackend};
+
+    if samples.is_empty() || n_encoder_frames == 0 {
+        return 0;
+    }
+    let backend = EnergyVad::new();
+    let frame_size = backend.frame_size().max(1);
+    let threshold = backend.default_threshold();
+    let mut stream = backend.start();
+    let mut speech = 0usize;
+    let mut total = 0usize;
+    let mut offset = 0usize;
+    while offset + frame_size <= samples.len() {
+        let frame = &samples[offset..offset + frame_size];
+        if stream.speech_probability(frame) >= threshold {
+            speech += 1;
+        }
+        total += 1;
+        offset += frame_size;
+    }
+    if total == 0 {
+        return 0;
+    }
+    let speech_frac = speech as f32 / total as f32;
+    // Mostly-speech clips: keep the encoder mask length so the
+    // clean-path calibration of min_token_to_frame_ratio is unchanged.
+    if speech_frac >= 0.85 {
+        return n_encoder_frames;
+    }
+    (speech_frac * n_encoder_frames as f32).round() as usize
 }
 
 #[async_trait]
@@ -272,6 +336,55 @@ mod tests {
         // Other defaults survive the override.
         assert_eq!(cfg.vocab_filename, "vocab.txt");
         assert_eq!(cfg.default_language, "en");
+    }
+
+    #[test]
+    fn config_default_exposes_max_token_ratio() {
+        let cfg = CanaryConfig::default();
+        assert_eq!(
+            cfg.max_token_to_frame_ratio,
+            super::super::decoder::DEFAULT_MAX_TOKEN_TO_FRAME_RATIO
+        );
+    }
+
+    /// Digital silence must not contribute speech frames — otherwise
+    /// the min-length gate still forces tokens on a no-VAD padded
+    /// recording (#136).
+    #[test]
+    fn estimate_speech_frames_is_zero_on_digital_silence() {
+        let silence = vec![0.0_f32; 16_000]; // 1 s
+        assert_eq!(estimate_speech_encoder_frames(&silence, 16_000, 100), 0);
+    }
+
+    #[test]
+    fn estimate_speech_frames_scales_with_voiced_fraction() {
+        // 0.5 s silence + 0.5 s loud tone — well below the 85%
+        // "mostly speech" cutoff, so the fraction is applied.
+        let mut samples = vec![0.0_f32; 8_000];
+        for i in 0..8_000 {
+            samples.push((i as f32 * 0.3).sin() * 0.5);
+        }
+        let n = estimate_speech_encoder_frames(&samples, 16_000, 100);
+        assert!(
+            (40..=70).contains(&n),
+            "≈half the recording is voiced → speech frames near 50, got {n}"
+        );
+    }
+
+    /// Clean / mostly-voiced audio must keep the full encoder length.
+    /// Shrinking `T_speech` on FLEURS-en reintroduced mid-utterance
+    /// truncations and blew the L1 smoke WER gate.
+    #[test]
+    fn estimate_speech_frames_keeps_full_length_when_mostly_voiced() {
+        let mut samples = Vec::with_capacity(16_000);
+        for i in 0..16_000 {
+            samples.push((i as f32 * 0.3).sin() * 0.5);
+        }
+        assert_eq!(
+            estimate_speech_encoder_frames(&samples, 16_000, 100),
+            100,
+            "fully voiced clip must not shrink the gate basis"
+        );
     }
 
     #[test]
