@@ -276,6 +276,83 @@ jobs:
             --max-delta 0.03 \
             --max-segments 3.0
 
+  # Endpoint latency on the live VAD path (#148). Guards segment-close →
+  # partial / final p50 against docs/benchmarks/ci_baseline_endpoint.json.
+  # Distinct from `evaluate (ASR live smoke)`: that job's ASR/E2E p50 is
+  # full-file wall clock; this one times from when the segmenter closes
+  # an utterance. Same FLEURS / model caches as `evaluate-vad` so warm
+  # runs share artefacts. Gated with the L1-style relative baseline
+  # (not the fixed --max-delta used by ΔWER).
+  evaluate-endpoint:
+    name: evaluate (endpoint latency)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: endpoint-latency
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
+
+      - name: Install Python deps for FLEURS download
+        run: pip3 install --quiet 'datasets==2.21.0' soundfile librosa
+
+      - name: Cache FLEURS subset
+        id: fleurs-cache
+        uses: actions/cache@v4
+        with:
+          path: data/fleurs_subset
+          key: fleurs-subset-v3-en-ja-zh-es-ko-n30
+
+      - name: Download FLEURS subset (cache miss only)
+        if: steps.fleurs-cache.outputs.cache-hit != 'true'
+        run: python3 scripts/download_fleurs_subset.py --lang en --lang ja --lang zh --lang es --lang ko --n 30
+
+      - name: Cache canary-en ONNX bundle (~213 MB INT8)
+        id: canary-en-cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/canary_en
+          key: canary-180m-flash-istupakov-int8-v1
+
+      - name: Download canary-en model (cache miss only)
+        if: steps.canary-en-cache.outputs.cache-hit != 'true'
+        run: bash scripts/setup_canary.sh
+        env:
+          CANARY_DIR: vendor/canary_en
+
+      - name: Cache parakeet-ja ONNX bundle (~2.4 GB)
+        id: parakeet-ja-cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/parakeet_ja
+          key: parakeet-tdt-ctc-0.6b-ja-sunilmahendrakar-v1
+
+      - name: Download parakeet-ja model (cache miss only)
+        if: steps.parakeet-ja-cache.outputs.cache-hit != 'true'
+        run: bash scripts/setup_parakeet_ja.sh
+        env:
+          PARAKEET_JA_DIR: vendor/parakeet_ja
+
+      - name: Build eval binary (onnx + vad + testing)
+        run: cargo build --release --features onnx,vad,testing --example eval_endpoint --locked
+
+      - name: Endpoint latency gate (en / ja)
+        run: |
+          cargo run --release --features onnx,vad,testing --example eval_endpoint --locked -- \
+            --canary-en-dir vendor/canary_en \
+            --parakeet-ja-dir vendor/parakeet_ja \
+            --langs en,ja \
+            --baseline docs/benchmarks/ci_baseline_endpoint.json
+
   # L1 ASR live smoke (§1.1 / §3.8): runs Canary-180M-Flash (en + es),
   # Parakeet (ja), Paraformer-large (zh), Whisper-large-v3-turbo ONNX
   # (ko), and whisper-tiny (fallback) on a 10-utterance FLEURS subset

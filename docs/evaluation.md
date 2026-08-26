@@ -454,6 +454,7 @@ ParagraphSplitter は文字列の最終 WER に直接影響しない (改行の�
 
 - `ci_baseline.json` — `evaluate-asr` 用 (Phase A-1)。各言語の WER/CER + ASR + E2E latency
 - `ci_baseline_layers.json` — `evaluate-fast` 用 (Phase A-2)。各言語の layer ablation (full / without_X) + 各 layer の μ-benchmark latency (μs 単位)
+- `ci_baseline_endpoint.json` — `evaluate-endpoint` 用 (#148)。発話単位経路の **segment close → partial / final** p50/p95（L1 の全文壁時計とは別 KPI）
 
 `evaluate-asr` (live ASR) と `evaluate-fast` (post-ASR ablation) は **異なる正規化パス** を使う:
 

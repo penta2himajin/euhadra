@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "generated": "epoch:1787735558",
+  "asr_model": "en=canary-180m-flash-int8 / ja=parakeet (GitHub Actions ubuntu-latest)",
+  "languages": {
+    "en": {
+      "utterances": 30,
+      "segments": 32,
+      "endpoint_to_partial_ms": {
+        "p50": 955.4,
+        "p95": 1840.0
+      },
+      "endpoint_to_final_ms": {
+        "p50": 1964.5,
+        "p95": 3742.0
+      },
+      "segment_rtf": 0.113
+    },
+    "ja": {
+      "utterances": 30,
+      "segments": 41,
+      "endpoint_to_partial_ms": {
+        "p50": 1053.5,
+        "p95": 1645.0
+      },
+      "endpoint_to_final_ms": {
+        "p50": 2326.9,
+        "p95": 3684.0
+      },
+      "segment_rtf": 0.118
+    }
+  },
+  "tolerances": {
+    "partial_p50_relative_warn": 0.5,
+    "partial_p50_relative_fail": 1.5,
+    "final_p50_relative_warn": 0.3,
+    "final_p50_relative_fail": 1.0,
+    "rtf_relative_warn": 0.5,
+    "rtf_relative_fail": 1.5,
+    "rtf_absolute_warn": 1.0,
+    "partial_absolute_warn_ms": 1000.0,
+    "final_absolute_warn_ms": 1000.0
+  }
+}
