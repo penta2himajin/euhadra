@@ -25,6 +25,7 @@ use std::time::Instant;
 use clap::Parser;
 use euhadra::canary::decoder::PrefixFormat;
 use euhadra::canary::{CanaryAdapter, CanaryConfig};
+use euhadra::dolphin::DolphinAdapter;
 use euhadra::eval::metrics::{cer_lenient, wer_lenient};
 use euhadra::parakeet::ParakeetAdapter;
 use euhadra::paraformer::ParaformerAdapter;
@@ -65,6 +66,10 @@ struct Cli {
     /// FunASR `paraformer-large` ONNX bundle for `zh` (shipped path).
     #[arg(long)]
     paraformer_zh_dir: Option<PathBuf>,
+
+    /// Dolphin CTC INT8 bundle for `ko` (shipped path).
+    #[arg(long)]
+    dolphin_ko_dir: Option<PathBuf>,
 
     #[arg(long, value_delimiter = ',', default_value = "en,ja")]
     langs: Vec<String>,
@@ -296,6 +301,9 @@ fn main() {
                     ModelKind::Paraformer,
                 )
             }
+            "ko" if cli.dolphin_ko_dir.is_some() => {
+                (cli.dolphin_ko_dir.clone().unwrap(), ModelKind::Dolphin)
+            }
             other => {
                 eprintln!("[skip] {other}: no model directory wired for this language");
                 continue;
@@ -315,7 +323,7 @@ fn main() {
         );
 
         let asr: std::sync::Arc<dyn AsrAdapter> = load_adapter(&model_dir, lang, kind);
-        let by_chars = matches!(lang.as_str(), "ja" | "zh");
+        let by_chars = matches!(lang.as_str(), "ja" | "zh" | "ko");
 
         let audio: Vec<(Row, AudioChunk)> = rows
             .into_iter()
@@ -524,6 +532,7 @@ enum ModelKind {
     Canary,
     Parakeet,
     Paraformer,
+    Dolphin,
 }
 
 impl ModelKind {
@@ -532,6 +541,7 @@ impl ModelKind {
             ModelKind::Canary => "canary",
             ModelKind::Parakeet => "parakeet",
             ModelKind::Paraformer => "paraformer",
+            ModelKind::Dolphin => "dolphin",
         }
     }
 }
@@ -556,6 +566,10 @@ fn load_adapter(dir: &Path, lang: &str, kind: ModelKind) -> std::sync::Arc<dyn A
         ModelKind::Paraformer => std::sync::Arc::new(
             ParaformerAdapter::load(dir)
                 .unwrap_or_else(|e| panic!("load paraformer from {}: {e}", dir.display())),
+        ),
+        ModelKind::Dolphin => std::sync::Arc::new(
+            DolphinAdapter::load(dir)
+                .unwrap_or_else(|e| panic!("load dolphin from {}: {e}", dir.display())),
         ),
     }
 }

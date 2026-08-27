@@ -157,7 +157,7 @@ ASR パスが 1 回で済む唯一のポリシーだが、**分割誤りを緩�
 ## 限界
 
 1. **合成無音は上限を測る指標。** デジタル無音も一様ノイズも実際の室内騒音とスペクトルが違う。実録音の環境音は energy VAD に厳しく、earshot に有利に働くと予想されるが、**予想であって測定ではない**。
-2. **`ko` は未測定。** `es`（Canary）と `zh`（Paraformer）は #150 / #156 で測定・CI ゲート済み。`ko`（Dolphin）は #157。
+2. **5 言語ともゲート済み。** en / ja（#137）に加え `es`（#150）/ `zh`（#156）/ `ko`（#157）。
 3. **1 発話 1 ファイルの素材。** FLEURS は朗読音声で、発話中のポーズが実際の dictation より少ない。過分割の評価としては楽観側。
 4. **`inflated` は転写長の比較であって幻覚の判定ではない。** 長くなった理由が幻覚とは限らない。
 5. **CI が守るのは既定構成のみ。** `evaluate (VAD ΔWER)` ジョブ（#137）は en / ja / es / zh × −45 dBFS × `EarshotVad` × `SpeechOnly` の 1 行ずつしか判定しない。本ドキュメントの他の行——`JoinSegments`、`EnergyVad`、−100 dBFS、閾値スイープ——は**測定であって保護対象ではない**。既定値を選ぶための材料と、退行を防ぐための番人は別物である。
@@ -167,7 +167,7 @@ ASR パスが 1 回で済む唯一のポリシーだが、**分割誤りを緩�
 `evaluate (VAD ΔWER)` ジョブが以下を守る（#137）:
 
 ```
---langs en,ja,es,zh --noise-db=-45 --detectors none,earshot --policies speech-only
+--langs en,ja,es,zh,ko --noise-db=-45 --detectors none,earshot --policies speech-only
 --max-delta 0.03 --max-segments 3.0
 ```
 
@@ -226,7 +226,7 @@ scripts/setup_parakeet_ja.sh                  # vendor/parakeet_ja
 cargo run --release --features onnx,vad --example eval_vad -- \
     --canary-en-dir   vendor/canary_en \
     --parakeet-ja-dir vendor/parakeet_ja \
-    --langs en,ja,es,zh \
+    --langs en,ja,es,zh,ko \
     --out docs/benchmarks/vad_delta_wer.json
 ```
 

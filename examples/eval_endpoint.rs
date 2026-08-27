@@ -19,6 +19,7 @@ use async_trait::async_trait;
 use clap::Parser;
 use euhadra::canary::decoder::PrefixFormat;
 use euhadra::canary::{CanaryAdapter, CanaryConfig};
+use euhadra::dolphin::DolphinAdapter;
 use euhadra::eval::baseline::{
     check_endpoint_language, EndpointBaseline, EndpointLanguageBaseline, EndpointTolerances,
     LatencyRecord, Verdict,
@@ -57,6 +58,10 @@ struct Cli {
     /// FunASR `paraformer-large` ONNX bundle for `zh`.
     #[arg(long)]
     paraformer_zh_dir: Option<PathBuf>,
+
+    /// Dolphin CTC INT8 bundle for `ko`.
+    #[arg(long)]
+    dolphin_ko_dir: Option<PathBuf>,
 
     #[arg(long, value_delimiter = ',', default_value = "en,ja")]
     langs: Vec<String>,
@@ -97,6 +102,25 @@ fn load_manifest(data_dir: &Path, lang: &str) -> std::io::Result<Vec<Row>> {
         .collect())
 }
 
+#[derive(Clone, Copy)]
+enum ModelKind {
+    Canary,
+    Parakeet,
+    Paraformer,
+    Dolphin,
+}
+
+impl ModelKind {
+    fn label(self) -> &'static str {
+        match self {
+            ModelKind::Canary => "canary-180m-flash-int8",
+            ModelKind::Parakeet => "parakeet",
+            ModelKind::Paraformer => "paraformer-large-zh",
+            ModelKind::Dolphin => "dolphin-small-ctc-int8",
+        }
+    }
+}
+
 fn load_adapter(dir: &Path, lang: &str, kind: ModelKind) -> Arc<dyn AsrAdapter> {
     match kind {
         ModelKind::Canary => {
@@ -118,23 +142,10 @@ fn load_adapter(dir: &Path, lang: &str, kind: ModelKind) -> Arc<dyn AsrAdapter> 
             ParaformerAdapter::load(dir)
                 .unwrap_or_else(|e| panic!("load paraformer from {}: {e}", dir.display())),
         ),
-    }
-}
-
-#[derive(Clone, Copy)]
-enum ModelKind {
-    Canary,
-    Parakeet,
-    Paraformer,
-}
-
-impl ModelKind {
-    fn label(self) -> &'static str {
-        match self {
-            ModelKind::Canary => "canary-180m-flash-int8",
-            ModelKind::Parakeet => "parakeet",
-            ModelKind::Paraformer => "paraformer-large-zh",
-        }
+        ModelKind::Dolphin => Arc::new(
+            DolphinAdapter::load(dir)
+                .unwrap_or_else(|e| panic!("load dolphin from {}: {e}", dir.display())),
+        ),
     }
 }
 
@@ -187,6 +198,9 @@ fn main() {
                     cli.paraformer_zh_dir.clone().unwrap(),
                     ModelKind::Paraformer,
                 )
+            }
+            "ko" if cli.dolphin_ko_dir.is_some() => {
+                (cli.dolphin_ko_dir.clone().unwrap(), ModelKind::Dolphin)
             }
             other => {
                 eprintln!("[skip] {other}: no model directory wired");

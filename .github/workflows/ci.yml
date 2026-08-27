@@ -268,6 +268,19 @@ jobs:
         env:
           PARAFORMER_ZH_DIR: vendor/paraformer_zh
 
+      - name: Cache dolphin-ko bundle
+        id: dolphin-ko-cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/dolphin_ko
+          key: dolphin-small-ctc-int8-2025-04-02-v1
+
+      - name: Download dolphin-ko (cache miss only)
+        if: steps.dolphin-ko-cache.outputs.cache-hit != 'true'
+        run: bash scripts/setup_dolphin_ko.sh
+        env:
+          DOLPHIN_KO_DIR: vendor/dolphin_ko
+
       - name: Build eval binary (onnx + vad)
         run: cargo build --release --features onnx,vad --example eval_vad --locked
 
@@ -278,14 +291,15 @@ jobs:
       # that are not what anyone ships. −45 dBFS is the realistic side:
       # digital silence flatters a level detector. `es` reuses the en
       # Canary INT8 cache (same multilingual checkpoint; #150). `zh`
-      # uses Paraformer (#156).
-      - name: VAD ΔWER gate (en / ja / es / zh)
+      # uses Paraformer (#156). `ko` uses Dolphin (#157).
+      - name: VAD ΔWER gate (en / ja / es / zh / ko)
         run: |
           cargo run --release --features onnx,vad --example eval_vad --locked -- \
             --canary-en-dir vendor/canary_en \
             --parakeet-ja-dir vendor/parakeet_ja \
             --paraformer-zh-dir vendor/paraformer_zh \
-            --langs en,ja,es,zh \
+            --dolphin-ko-dir vendor/dolphin_ko \
+            --langs en,ja,es,zh,ko \
             --noise-db=-45 \
             --detectors none,earshot \
             --policies speech-only \
@@ -371,16 +385,30 @@ jobs:
         env:
           PARAFORMER_ZH_DIR: vendor/paraformer_zh
 
+      - name: Cache dolphin-ko bundle
+        id: dolphin-ko-cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/dolphin_ko
+          key: dolphin-small-ctc-int8-2025-04-02-v1
+
+      - name: Download dolphin-ko (cache miss only)
+        if: steps.dolphin-ko-cache.outputs.cache-hit != 'true'
+        run: bash scripts/setup_dolphin_ko.sh
+        env:
+          DOLPHIN_KO_DIR: vendor/dolphin_ko
+
       - name: Build eval binary (onnx + vad + testing)
         run: cargo build --release --features onnx,vad,testing --example eval_endpoint --locked
 
-      - name: Endpoint latency gate (en / ja / es / zh)
+      - name: Endpoint latency gate (en / ja / es / zh / ko)
         run: |
           cargo run --release --features onnx,vad,testing --example eval_endpoint --locked -- \
             --canary-en-dir vendor/canary_en \
             --parakeet-ja-dir vendor/parakeet_ja \
             --paraformer-zh-dir vendor/paraformer_zh \
-            --langs en,ja,es,zh \
+            --dolphin-ko-dir vendor/dolphin_ko \
+            --langs en,ja,es,zh,ko \
             --baseline docs/benchmarks/ci_baseline_endpoint.json
 
   # L1 ASR live smoke (§1.1 / §3.8): runs Canary-180M-Flash (en + es),
