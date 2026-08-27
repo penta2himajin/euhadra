@@ -18,15 +18,15 @@ This is **not** the L1 ASR/E2E p50 in `ci_baseline.json` (full-file wall clock).
 
 ## Configuration
 
-- Corpus: FLEURS subset, en / ja / es / zh, n=30 (same as `evaluate-vad`)
+- Corpus: FLEURS subset, en / ja / es / zh / ko, n=30 (same as `evaluate-vad`)
 - VAD: `EarshotVad` + default `SegmenterConfig`
 - Final pass: `SpeechOnly` (library default)
-- Models: Canary-180M-Flash INT8 (en, es), Parakeet TDT-CTC 0.6B ja (ja), Paraformer-large (zh)
+- Models: Canary-180M-Flash INT8 (en, es), Parakeet TDT-CTC 0.6B ja (ja), Paraformer-large (zh), Dolphin CTC INT8 (ko)
 - Audio fed in ~100 ms chunks to exercise the live segmenter path
 
-`es` / `zh` were added under #150 / #156. Seeded baseline rows for new
-languages use agent measurement × (en GHA / en agent) so the relative
-gate matches `ubuntu-latest`; recalibrate from CI if needed.
+`es` / `zh` / `ko` were added under #150 / #156 / #157. Seeded baseline
+rows for new languages use agent measurement × (en GHA / en agent) so
+the relative gate matches `ubuntu-latest`; recalibrate from CI if needed.
 
 ## Seed measurement
 
@@ -41,7 +41,7 @@ Re-measure on CI (or an equivalent runner) when updating intentionally:
 cargo run --release --features onnx,vad,testing --example eval_endpoint -- \
   --canary-en-dir vendor/canary_en \
   --parakeet-ja-dir vendor/parakeet_ja \
-  --langs en,ja,es,zh \
+  --langs en,ja,es,zh,ko \
   --write-baseline docs/benchmarks/ci_baseline_endpoint.json
 ```
 

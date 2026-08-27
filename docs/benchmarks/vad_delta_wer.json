@@ -233,6 +233,43 @@
         "seconds": 4.708157621,
         "segments": 0.0
       }
+    },
+    "ko": {
+      "-100|earshot|tdefault|speech-only": {
+        "delta": 0.0035332878503610138,
+        "error_rate": 0.06301334202394054,
+        "inflated": 0,
+        "seconds": 27.915016497,
+        "segments": 1.2
+      },
+      "-100|none|tdefault|whole": {
+        "delta": 0.0007309936533299796,
+        "error_rate": 0.06021104782690951,
+        "inflated": 0,
+        "seconds": 41.247764123,
+        "segments": 0.0
+      },
+      "-45|earshot|tdefault|speech-only": {
+        "delta": -0.0002907769737037977,
+        "error_rate": 0.05918927719987573,
+        "inflated": 0,
+        "seconds": 31.247948354,
+        "segments": 2.033333333333333
+      },
+      "-45|none|tdefault|whole": {
+        "delta": 0.0041720092772724315,
+        "error_rate": 0.06365206345085196,
+        "inflated": 0,
+        "seconds": 41.632502039,
+        "segments": 0.0
+      },
+      "clean|none|tdefault|whole": {
+        "delta": 0.0,
+        "error_rate": 0.05948005417357953,
+        "inflated": 0,
+        "seconds": 20.93300774,
+        "segments": 0.0
+      }
     }
   },
   "silence_only_transcripts": {
@@ -243,7 +280,9 @@
     "es|-100": "",
     "es|-45": "Qué bien.",
     "zh|-100": "hello 啦 lo ty ty 僵 尸 假 假 假 的 假 的 的 的 的 的 的 的 的 的 的 的",
-    "zh|-45": "the 有 没 有 没 有 的 有 有 没 有 没 有 没 有"
+    "zh|-45": "the 有 没 有 没 有 的 有 有 没 有 没 有 没 有",
+    "ko|-100": "",
+    "ko|-45": ""
   },
   "trail_silence_s": 5.0
 }
