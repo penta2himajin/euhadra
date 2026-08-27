@@ -27,6 +27,7 @@ use euhadra::canary::decoder::PrefixFormat;
 use euhadra::canary::{CanaryAdapter, CanaryConfig};
 use euhadra::eval::metrics::{cer_lenient, wer_lenient};
 use euhadra::parakeet::ParakeetAdapter;
+use euhadra::paraformer::ParaformerAdapter;
 use euhadra::prelude::*;
 use euhadra::vad::{EarshotVad, EnergyVad, SegmenterConfig, VadBackend};
 use euhadra::whisper_local::read_wav;
@@ -60,6 +61,10 @@ struct Cli {
     /// point at `vendor/canary_es` or reuse the en cache.
     #[arg(long)]
     canary_es_dir: Option<PathBuf>,
+
+    /// FunASR `paraformer-large` ONNX bundle for `zh` (shipped path).
+    #[arg(long)]
+    paraformer_zh_dir: Option<PathBuf>,
 
     #[arg(long, value_delimiter = ',', default_value = "en,ja")]
     langs: Vec<String>,
@@ -261,28 +266,40 @@ fn main() {
         // Canary wins for `en` when both are supplied: it is the model
         // euhadra ships for that language, so it is the one whose
         // behaviour on silence matters. `es` is the same multilingual
-        // Canary checkpoint (#150).
-        let use_canary = match lang.as_str() {
-            "en" => cli.canary_en_dir.is_some(),
-            "es" => cli.canary_es_dir.is_some() || cli.canary_en_dir.is_some(),
-            _ => false,
-        };
-        let model_dir = match lang.as_str() {
-            "en" if use_canary => cli.canary_en_dir.clone(),
-            "en" => cli.parakeet_en_dir.clone(),
-            "ja" => cli.parakeet_ja_dir.clone(),
-            "es" => cli
-                .canary_es_dir
-                .clone()
-                .or_else(|| cli.canary_en_dir.clone()),
+        // Canary checkpoint (#150). `zh` ships Paraformer (#156).
+        let (model_dir, kind) = match lang.as_str() {
+            "en" if cli.canary_en_dir.is_some() => {
+                (cli.canary_en_dir.clone().unwrap(), ModelKind::Canary)
+            }
+            "en" if cli.parakeet_en_dir.is_some() => {
+                (cli.parakeet_en_dir.clone().unwrap(), ModelKind::Parakeet)
+            }
+            "ja" if cli.parakeet_ja_dir.is_some() => {
+                (cli.parakeet_ja_dir.clone().unwrap(), ModelKind::Parakeet)
+            }
+            "es" => {
+                let dir = cli
+                    .canary_es_dir
+                    .clone()
+                    .or_else(|| cli.canary_en_dir.clone());
+                match dir {
+                    Some(d) => (d, ModelKind::Canary),
+                    None => {
+                        eprintln!("[skip] es: model directory not supplied");
+                        continue;
+                    }
+                }
+            }
+            "zh" if cli.paraformer_zh_dir.is_some() => {
+                (
+                    cli.paraformer_zh_dir.clone().unwrap(),
+                    ModelKind::Paraformer,
+                )
+            }
             other => {
                 eprintln!("[skip] {other}: no model directory wired for this language");
                 continue;
             }
-        };
-        let Some(model_dir) = model_dir else {
-            eprintln!("[skip] {lang}: model directory not supplied");
-            continue;
         };
 
         let mut rows = load_manifest(&cli.data_dir, lang)
@@ -293,11 +310,11 @@ fn main() {
         eprintln!(
             "[{lang}] {} utterances, {} at {}",
             rows.len(),
-            if use_canary { "canary" } else { "parakeet" },
+            kind.label(),
             model_dir.display()
         );
 
-        let asr: std::sync::Arc<dyn AsrAdapter> = load_adapter(&model_dir, lang, use_canary);
+        let asr: std::sync::Arc<dyn AsrAdapter> = load_adapter(&model_dir, lang, kind);
         let by_chars = matches!(lang.as_str(), "ja" | "zh");
 
         let audio: Vec<(Row, AudioChunk)> = rows
@@ -502,22 +519,44 @@ fn gate(cli: &Cli, report: &BTreeMap<String, BTreeMap<String, Cell>>) -> Vec<Str
 /// Canary needs its config assembled the same way `eval_l1_smoke.rs`
 /// does — INT8 weights and the NeMo prefix layout — or the numbers are
 /// not comparable with `docs/benchmarks/ci_baseline.json`.
-fn load_adapter(dir: &Path, lang: &str, canary: bool) -> std::sync::Arc<dyn AsrAdapter> {
-    if canary {
-        let cfg = CanaryConfig::istupakov_default().with_int8_weights();
-        let cfg = CanaryConfig {
-            prefix_format: PrefixFormat::NemoCanary2,
-            ..cfg
-        };
-        let adapter = CanaryAdapter::load_with_config(dir, cfg)
-            .unwrap_or_else(|e| panic!("load canary from {}: {e}", dir.display()))
-            .with_language(lang);
-        std::sync::Arc::new(adapter)
-    } else {
-        std::sync::Arc::new(
+#[derive(Clone, Copy)]
+enum ModelKind {
+    Canary,
+    Parakeet,
+    Paraformer,
+}
+
+impl ModelKind {
+    fn label(self) -> &'static str {
+        match self {
+            ModelKind::Canary => "canary",
+            ModelKind::Parakeet => "parakeet",
+            ModelKind::Paraformer => "paraformer",
+        }
+    }
+}
+
+fn load_adapter(dir: &Path, lang: &str, kind: ModelKind) -> std::sync::Arc<dyn AsrAdapter> {
+    match kind {
+        ModelKind::Canary => {
+            let cfg = CanaryConfig::istupakov_default().with_int8_weights();
+            let cfg = CanaryConfig {
+                prefix_format: PrefixFormat::NemoCanary2,
+                ..cfg
+            };
+            let adapter = CanaryAdapter::load_with_config(dir, cfg)
+                .unwrap_or_else(|e| panic!("load canary from {}: {e}", dir.display()))
+                .with_language(lang);
+            std::sync::Arc::new(adapter)
+        }
+        ModelKind::Parakeet => std::sync::Arc::new(
             ParakeetAdapter::load(dir)
                 .unwrap_or_else(|e| panic!("load parakeet from {}: {e}", dir.display())),
-        )
+        ),
+        ModelKind::Paraformer => std::sync::Arc::new(
+            ParaformerAdapter::load(dir)
+                .unwrap_or_else(|e| panic!("load paraformer from {}: {e}", dir.display())),
+        ),
     }
 }
 

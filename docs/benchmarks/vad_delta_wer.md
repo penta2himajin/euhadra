@@ -20,6 +20,7 @@ FLEURS サブセット（`en` / `ja` 各 30 発話）の各発話に、前後 5 
 | en | canary-180m-flash INT8 | attention encoder-decoder | 0.0762 (WER) | 0.0762 |
 | ja | parakeet-tdt_ctc-0.6b-ja | Hybrid TDT-CTC | 0.0724 (CER) | 0.0724 |
 | es | canary-180m-flash INT8（en と同梱） | attention encoder-decoder | 0.0590 (WER) | 0.0621（L1; 測定日差） |
+| zh | paraformer-large | non-autoregressive AED | 0.0607 (CER) | （L1 CER 参照） |
 
 **clean 値が CI ベースラインと完全一致する。** ハーネスが既存の測定と同じものを測っている確認になる。
 
@@ -33,6 +34,7 @@ FLEURS サブセット（`en` / `ja` 各 30 発話）の各発話に、前後 5 
 |---|---|---|
 | **canary (en)** | `".S. Sometimes it's a long way, sometimes it's a long way, a long way, a long way, …"`（約 50 回反復） | `". The first person to be able to help her, but wouldn't have to recover the burger that she had and would have gone back to the stairs of the other day or so, I would have to go back to the world when I was around."` |
 | **canary (es)** | `""` | `"Qué bien."` |
+| **paraformer (zh)** | `"hello 啦 lo ty … 的 的 的 …"`（退行） | `"the 有 没 有 没 有 …"` |
 | parakeet (ja) | `"心の声。"` | `"うん。"` |
 | parakeet-v3 (en, 非採用) | `""` | `""` |
 
@@ -87,6 +89,18 @@ FLEURS サブセット（`en` / `ja` 各 30 発話）の各発話に、前後 5 
 | −45 | earshot | speech-only | 0.0610 | **+0.0019** | 2.13 | 0 |
 
 en と同じ AED でも、この FLEURS-es サブセットでは無音付加の悪化が小さい（Δ はゲート 0.03 を大きく下回る）。無音単独では −45 で短い `"Qué bien."` が出るが、発話付きクリップへの混入は en ほど肥大しない。
+
+### zh — paraformer-large（CER, #156）
+
+| ノイズ | 検出器 | ポリシー | CER | Δ | segments | inflated |
+|---|---|---|---|---|---|---|
+| — | なし | — | 0.0607 | — | — | — |
+| −100 | なし | whole | 0.0681 | +0.0074 | 0.00 | 0 |
+| −100 | earshot | speech-only | 0.0629 | +0.0022 | 1.00 | 0 |
+| −45 | なし | whole | 0.0654 | +0.0047 | 0.00 | 0 |
+| −45 | earshot | speech-only | 0.0647 | **+0.0040** | 2.23 | 0 |
+
+無音単独では強い幻覚／退行が出るが、発話付きへの Δ は小さい。ゲート対象行は 0.03 内。
 
 ## 読み取り
 
@@ -143,17 +157,17 @@ ASR パスが 1 回で済む唯一のポリシーだが、**分割誤りを緩�
 ## 限界
 
 1. **合成無音は上限を測る指標。** デジタル無音も一様ノイズも実際の室内騒音とスペクトルが違う。実録音の環境音は energy VAD に厳しく、earshot に有利に働くと予想されるが、**予想であって測定ではない**。
-2. **`zh` / `ko` は未測定。** `es` は #150 で Canary INT8（en と同じ多言語チェックポイント）を測り、CI に入れた。`zh`（Paraformer）と `ko`（Dolphin）は別途モデル取得が要るため #150 の子 issue で進める。
+2. **`ko` は未測定。** `es`（Canary）と `zh`（Paraformer）は #150 / #156 で測定・CI ゲート済み。`ko`（Dolphin）は #157。
 3. **1 発話 1 ファイルの素材。** FLEURS は朗読音声で、発話中のポーズが実際の dictation より少ない。過分割の評価としては楽観側。
 4. **`inflated` は転写長の比較であって幻覚の判定ではない。** 長くなった理由が幻覚とは限らない。
-5. **CI が守るのは既定構成のみ。** `evaluate (VAD ΔWER)` ジョブ（#137）は en / ja / es × −45 dBFS × `EarshotVad` × `SpeechOnly` の 1 行ずつしか判定しない。本ドキュメントの他の行——`JoinSegments`、`EnergyVad`、−100 dBFS、閾値スイープ——は**測定であって保護対象ではない**。既定値を選ぶための材料と、退行を防ぐための番人は別物である。
+5. **CI が守るのは既定構成のみ。** `evaluate (VAD ΔWER)` ジョブ（#137）は en / ja / es / zh × −45 dBFS × `EarshotVad` × `SpeechOnly` の 1 行ずつしか判定しない。本ドキュメントの他の行——`JoinSegments`、`EnergyVad`、−100 dBFS、閾値スイープ——は**測定であって保護対象ではない**。既定値を選ぶための材料と、退行を防ぐための番人は別物である。
 
 ## CI ゲート
 
 `evaluate (VAD ΔWER)` ジョブが以下を守る（#137）:
 
 ```
---langs en,ja,es --noise-db=-45 --detectors none,earshot --policies speech-only
+--langs en,ja,es,zh --noise-db=-45 --detectors none,earshot --policies speech-only
 --max-delta 0.03 --max-segments 3.0
 ```
 
@@ -161,7 +175,7 @@ ASR パスが 1 回で済む唯一のポリシーだが、**分割誤りを緩�
 
 **固定閾値で、ベースラインファイルは持たない。** ベースラインを置くと `--update-baseline` の運用が要る割に、Δ 固定閾値と比べて追加で捕まえるものがない。
 
-`--max-segments` が別に要るのは、**`SpeechOnly` が過分割を吸収して Δ に出さない**ため。実測は 2.03 (en) / 2.20 (ja) / 2.13 (es) で、分割が壊れても誤り率が動かない領域がある。
+`--max-segments` が別に要るのは、**`SpeechOnly` が過分割を吸収して Δ に出さない**ため。実測は 2.03 (en) / 2.20 (ja) / 2.13 (es) / 2.23 (zh) で、分割が壊れても誤り率が動かない領域がある。
 
 ### 検証
 
@@ -212,7 +226,7 @@ scripts/setup_parakeet_ja.sh                  # vendor/parakeet_ja
 cargo run --release --features onnx,vad --example eval_vad -- \
     --canary-en-dir   vendor/canary_en \
     --parakeet-ja-dir vendor/parakeet_ja \
-    --langs en,ja,es \
+    --langs en,ja,es,zh \
     --out docs/benchmarks/vad_delta_wer.json
 ```
 
