@@ -301,6 +301,21 @@ mod tests {
         );
     }
 
+    #[test]
+    fn smoke_longer_utterance_1893() {
+        let dir = std::path::Path::new("vendor/reazon_ja");
+        let wav = std::path::Path::new("data/fleurs_subset/ja/audio/1893.wav");
+        if !dir.join("encoder.int8.onnx").is_file() || !wav.is_file() {
+            return;
+        }
+        let adapter = ReazonAdapter::load(dir).unwrap();
+        let chunk = crate::whisper_local::read_wav(wav).expect("read_wav");
+        eprintln!("samples={} sr={} ch={}", chunk.samples.len(), chunk.sample_rate, chunk.channels);
+        let text = adapter.transcribe_samples(&chunk.samples).unwrap();
+        eprintln!("TEXT={text:?}");
+        assert!(!text.is_empty(), "empty hyp for 1893 via read_wav");
+    }
+
     fn read_pcm16_wav(path: &Path) -> Vec<f32> {
         use std::io::Read;
         let mut buf = Vec::new();

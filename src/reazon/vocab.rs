@@ -51,10 +51,7 @@ pub fn byte_decode(text: &str) -> String {
             None => return String::new(),
         }
     }
-    match String::from_utf8(out) {
-        Ok(s) => s,
-        Err(_) => String::new(),
-    }
+    String::from_utf8(out).unwrap_or_default()
 }
 
 /// `tokens.txt` lines: `<symbol> <id>`.
