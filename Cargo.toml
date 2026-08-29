@@ -167,6 +167,12 @@ required-features = ["onnx"]
 name = "bench_dolphin_ko"
 required-features = ["onnx"]
 
+# Offline RTF for shipping ASR models (paired with
+# scripts/bench_hayamimi_asr.py for the hayamimi head-to-head).
+[[example]]
+name = "bench_shipping_asr"
+required-features = ["onnx"]
+
 [dev-dependencies]
 # euhadra depends on itself with `testing` on so that integration tests
 # and the eval examples get the mocks and the harness without every

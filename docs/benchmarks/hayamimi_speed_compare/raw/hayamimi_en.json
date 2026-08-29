@@ -1,0 +1,85 @@
+{
+  "side": "hayamimi",
+  "model": "hayamimi/parakeet-tdt-0.6b-v3-int8",
+  "kind": "parakeet_v3",
+  "language": "",
+  "threads": 4,
+  "n": 10,
+  "total_audio_s": 90.97999999999999,
+  "total_asr_s": 4.065973906999716,
+  "mean_rtf": 0.04469085411079046,
+  "p50_asr_ms": 439.97060100036833,
+  "p95_asr_ms": 483.5724559998198,
+  "rows": [
+    {
+      "id": "1904",
+      "audio_s": 10.56,
+      "asr_s": 0.4835724559998198,
+      "rtf": 0.045792846212104145,
+      "hyp": "However, due to the slow communication channels, styles in the West could lag behind by 25 to 30 years."
+    },
+    {
+      "id": "1675",
+      "audio_s": 8.76,
+      "asr_s": 0.3908203659998435,
+      "rtf": 0.04461419703194561,
+      "hyp": "All nouns alongside the world say for you always begin with a capital letter, even in the middle of a sentence"
+    },
+    {
+      "id": "1950",
+      "audio_s": 11.46,
+      "asr_s": 0.4783399040002223,
+      "rtf": 0.041739956719042084,
+      "hyp": "To the north and within easy reach is the romantic and fascinating town of Sintra, and which was made famous to foreigners, after a glowing account of its splendors recorded by Lord Byron."
+    },
+    {
+      "id": "1728",
+      "audio_s": 5.76,
+      "asr_s": 0.2933932589999131,
+      "rtf": 0.05093632968748491,
+      "hyp": "The cabbage juice changes color depending on how acidic, basic, alkaline the chemical is."
+    },
+    {
+      "id": "1972",
+      "audio_s": 4.32,
+      "asr_s": 0.25462061600001107,
+      "rtf": 0.05893995740740997,
+      "hyp": "Many people don't think about them as dinosaurs because they have feathers and can fly."
+    },
+    {
+      "id": "1938",
+      "audio_s": 11.42,
+      "asr_s": 0.4758225199998378,
+      "rtf": 0.04166571978982818,
+      "hyp": "The hospital has followed protocol for infection control, including separating the patient from others to prevent possible infection of others."
+    },
+    {
+      "id": "1876",
+      "audio_s": 10.8,
+      "asr_s": 0.4597369670000262,
+      "rtf": 0.04256823768518761,
+      "hyp": "The Northern Mariana's Emergency Management Office said that there were no damages reported in the nation."
+    },
+    {
+      "id": "1914",
+      "audio_s": 6.96,
+      "asr_s": 0.32983469999999215,
+      "rtf": 0.047390043103447146,
+      "hyp": "Twentieth century research has shown that there are two pools of genetic variation hidden and expressed."
+    },
+    {
+      "id": "1846",
+      "audio_s": 11.04,
+      "asr_s": 0.4598625179996816,
+      "rtf": 0.04165421358692768,
+      "hyp": "The aspect ratio of this format, dividing by 12 to obtain the simplest whole number ratio, is therefore said to be free to two."
+    },
+    {
+      "id": "1806",
+      "audio_s": 9.9,
+      "asr_s": 0.43997060100036833,
+      "rtf": 0.04444147484852205,
+      "hyp": "As light pollution in their hey was not the kind of problem it is today, they are usually located in cities or at campuses easier to reach than those built in modern times."
+    }
+  ]
+}

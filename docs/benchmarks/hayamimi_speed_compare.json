@@ -1,0 +1,876 @@
+{
+  "host": {
+    "hostname": "cursor",
+    "cpu": "Intel(R) Xeon(R) Processor",
+    "platform": "Linux-6.12.94+-x86_64-with-glibc2.39",
+    "python": "3.12.3",
+    "generated_utc": "2026-08-29T10:29:59.515073+00:00"
+  },
+  "pairs": [
+    {
+      "lang": "en",
+      "euhadra": {
+        "side": "euhadra",
+        "model": "euhadra/canary-180m-flash-int8",
+        "kind": "canary",
+        "language": "en",
+        "threads_note": "ort default (adapter-controlled)",
+        "n": 10,
+        "total_audio_s": 90.97999999999999,
+        "total_asr_s": 4.437734354,
+        "mean_rtf": 0.04877703180918884,
+        "p50_asr_ms": 473.63866,
+        "p95_asr_ms": 711.903824,
+        "rows": [
+          {
+            "id": "1904",
+            "audio_s": 10.56,
+            "asr_s": 0.47363866,
+            "rtf": 0.04485214583333333,
+            "hyp": "However, due to the slow communication channels, styles in the West could lag behind by twenty five to thirty years."
+          },
+          {
+            "id": "1675",
+            "audio_s": 8.76,
+            "asr_s": 0.388457034,
+            "rtf": 0.0443444102739726,
+            "hyp": "All nouns alongside the word say for you always begin with a capital letter, even in the middle of a sentence."
+          },
+          {
+            "id": "1950",
+            "audio_s": 11.46,
+            "asr_s": 0.711903824,
+            "rtf": 0.062120752530541,
+            "hyp": "To the north and within easy reach is the romantic and fascinating town of Sintra and which was made famous to foreigners after a glowing account of its splendorous recorded by Lord Byron."
+          },
+          {
+            "id": "1728",
+            "audio_s": 5.76,
+            "asr_s": 0.255666744,
+            "rtf": 0.044386587500000005,
+            "hyp": "The cabbage juice changes color depending on how acidic, basic, alkaline the chemical is."
+          },
+          {
+            "id": "1972",
+            "audio_s": 4.32,
+            "asr_s": 0.21405811,
+            "rtf": 0.04955048842592592,
+            "hyp": "Many people don't think about them as dinosaurs because they have feathers and can fly."
+          },
+          {
+            "id": "1938",
+            "audio_s": 11.42,
+            "asr_s": 0.542709128,
+            "rtf": 0.04752269071803853,
+            "hyp": "The hospital has followed protocol for infection control, including separating the patient from others to prevent possible infection of others."
+          },
+          {
+            "id": "1876",
+            "audio_s": 10.8,
+            "asr_s": 0.441157871,
+            "rtf": 0.040847951018518514,
+            "hyp": "The Northern Mariana's Emergency Management Office said that there were no damages reported in the nation."
+          },
+          {
+            "id": "1914",
+            "audio_s": 6.96,
+            "asr_s": 0.315103464,
+            "rtf": 0.04527348620689655,
+            "hyp": "Twentieth century research has shown that there are two pools of genetic variation hidden and expressed."
+          },
+          {
+            "id": "1846",
+            "audio_s": 11.04,
+            "asr_s": 0.477098658,
+            "rtf": 0.04321545815217392,
+            "hyp": "The aspect ratio of this format dividing by twelve to obtain the simplest whole number ratio is therefore said to be three to two."
+          },
+          {
+            "id": "1806",
+            "audio_s": 9.9,
+            "asr_s": 0.617940861,
+            "rtf": 0.06241826878787879,
+            "hyp": "As light pollution in their heyday was not the kind of problem it is today, they are usually located in cities or at campuses easier to reach than those built in modern times."
+          }
+        ]
+      },
+      "hayamimi": {
+        "side": "hayamimi",
+        "model": "hayamimi/parakeet-tdt-0.6b-v3-int8",
+        "kind": "parakeet_v3",
+        "language": "",
+        "threads": 4,
+        "n": 10,
+        "total_audio_s": 90.97999999999999,
+        "total_asr_s": 4.065973906999716,
+        "mean_rtf": 0.04469085411079046,
+        "p50_asr_ms": 439.97060100036833,
+        "p95_asr_ms": 483.5724559998198,
+        "rows": [
+          {
+            "id": "1904",
+            "audio_s": 10.56,
+            "asr_s": 0.4835724559998198,
+            "rtf": 0.045792846212104145,
+            "hyp": "However, due to the slow communication channels, styles in the West could lag behind by 25 to 30 years."
+          },
+          {
+            "id": "1675",
+            "audio_s": 8.76,
+            "asr_s": 0.3908203659998435,
+            "rtf": 0.04461419703194561,
+            "hyp": "All nouns alongside the world say for you always begin with a capital letter, even in the middle of a sentence"
+          },
+          {
+            "id": "1950",
+            "audio_s": 11.46,
+            "asr_s": 0.4783399040002223,
+            "rtf": 0.041739956719042084,
+            "hyp": "To the north and within easy reach is the romantic and fascinating town of Sintra, and which was made famous to foreigners, after a glowing account of its splendors recorded by Lord Byron."
+          },
+          {
+            "id": "1728",
+            "audio_s": 5.76,
+            "asr_s": 0.2933932589999131,
+            "rtf": 0.05093632968748491,
+            "hyp": "The cabbage juice changes color depending on how acidic, basic, alkaline the chemical is."
+          },
+          {
+            "id": "1972",
+            "audio_s": 4.32,
+            "asr_s": 0.25462061600001107,
+            "rtf": 0.05893995740740997,
+            "hyp": "Many people don't think about them as dinosaurs because they have feathers and can fly."
+          },
+          {
+            "id": "1938",
+            "audio_s": 11.42,
+            "asr_s": 0.4758225199998378,
+            "rtf": 0.04166571978982818,
+            "hyp": "The hospital has followed protocol for infection control, including separating the patient from others to prevent possible infection of others."
+          },
+          {
+            "id": "1876",
+            "audio_s": 10.8,
+            "asr_s": 0.4597369670000262,
+            "rtf": 0.04256823768518761,
+            "hyp": "The Northern Mariana's Emergency Management Office said that there were no damages reported in the nation."
+          },
+          {
+            "id": "1914",
+            "audio_s": 6.96,
+            "asr_s": 0.32983469999999215,
+            "rtf": 0.047390043103447146,
+            "hyp": "Twentieth century research has shown that there are two pools of genetic variation hidden and expressed."
+          },
+          {
+            "id": "1846",
+            "audio_s": 11.04,
+            "asr_s": 0.4598625179996816,
+            "rtf": 0.04165421358692768,
+            "hyp": "The aspect ratio of this format, dividing by 12 to obtain the simplest whole number ratio, is therefore said to be free to two."
+          },
+          {
+            "id": "1806",
+            "audio_s": 9.9,
+            "asr_s": 0.43997060100036833,
+            "rtf": 0.04444147484852205,
+            "hyp": "As light pollution in their hey was not the kind of problem it is today, they are usually located in cities or at campuses easier to reach than those built in modern times."
+          }
+        ]
+      }
+    },
+    {
+      "lang": "es",
+      "euhadra": {
+        "side": "euhadra",
+        "model": "euhadra/canary-180m-flash-int8",
+        "kind": "canary",
+        "language": "es",
+        "threads_note": "ort default (adapter-controlled)",
+        "n": 10,
+        "total_audio_s": 111.6,
+        "total_asr_s": 5.770375832,
+        "mean_rtf": 0.05170587663082438,
+        "p50_asr_ms": 465.92215,
+        "p95_asr_ms": 1680.5424850000002,
+        "rows": [
+          {
+            "id": "2001",
+            "audio_s": 12.84,
+            "asr_s": 0.720725779,
+            "rtf": 0.056131291199376945,
+            "hyp": "Se recomienda enfáticamente a los viajeros que se informen sobre cualquier riesgo del clima extremo en el área que visitan, dado que ello pueda afectar sus planes de viaje."
+          },
+          {
+            "id": "1852",
+            "audio_s": 21.36,
+            "asr_s": 1.6805424850000001,
+            "rtf": 0.07867708263108615,
+            "hyp": "El uso adecuado de los blogs puede empoderar a los alumnos para que sean más analíticos y críticos a través de la respuesta activa a los contenidos de internet, pueden definir sus posturas en el contexto de los escritos de otros, además de establecer sus perspectivas sobre temas específicos Orabek dos mil dos."
+          },
+          {
+            "id": "1764",
+            "audio_s": 9.72,
+            "asr_s": 0.407426184,
+            "rtf": 0.04191627407407408,
+            "hyp": "Fue tanta la cantidad de gente que se concentró que no todos pudieron acceder al funeral en la plaza de San Pedro."
+          },
+          {
+            "id": "1770",
+            "audio_s": 8.58,
+            "asr_s": 0.300294997,
+            "rtf": 0.0349994168997669,
+            "hyp": "Esto parece tener sentido, ya que en la tierra no se percibe su movimiento, cierto."
+          },
+          {
+            "id": "1799",
+            "audio_s": 10.62,
+            "asr_s": 0.415016688,
+            "rtf": 0.039078784180790964,
+            "hyp": "Carpaneo participó en dos carreras individuales del campeonato, aparte de la competencia del miércoles."
+          },
+          {
+            "id": "1820",
+            "audio_s": 9.78,
+            "asr_s": 0.46592215,
+            "rtf": 0.04764030163599182,
+            "hyp": "Hoy en día las personas escriben mensajes en las pantallas de sus computadoras, no tienen la necesidad de siquiera aproximarse a cuatro puntas."
+          },
+          {
+            "id": "1747",
+            "audio_s": 5.64,
+            "asr_s": 0.200474878,
+            "rtf": 0.035545191134751776,
+            "hyp": "Los luchadores compañeros de luna también le rindieron homenaje."
+          },
+          {
+            "id": "1816",
+            "audio_s": 10.26,
+            "asr_s": 0.448367073,
+            "rtf": 0.043700494444444446,
+            "hyp": "Duval, que está casado y tiene dos hijos adultos, no causó una buena impresión a Miller, que fue quien le relató la historia."
+          },
+          {
+            "id": "1783",
+            "audio_s": 10.68,
+            "asr_s": 0.502456144,
+            "rtf": 0.04704645543071161,
+            "hyp": "Entre los fenómenos climáticos regionales y estacionales extremos encontramos los ventarrones, las tormentas de nieve, hielo o polvo."
+          },
+          {
+            "id": "1794",
+            "audio_s": 12.12,
+            "asr_s": 0.629149454,
+            "rtf": 0.05191002095709571,
+            "hyp": "Se puede definir a una civilización como una cultura específica de que forma parte un extenso grupo de personas que viven y trabajan en conjunto, es decir, una sociedad."
+          }
+        ]
+      },
+      "hayamimi": {
+        "side": "hayamimi",
+        "model": "hayamimi/parakeet-tdt-0.6b-v3-int8",
+        "kind": "parakeet_v3",
+        "language": "",
+        "threads": 4,
+        "n": 10,
+        "total_audio_s": 111.6,
+        "total_asr_s": 4.8575719939995,
+        "mean_rtf": 0.04352663077060484,
+        "p50_asr_ms": 447.1228410002368,
+        "p95_asr_ms": 924.8171280000861,
+        "rows": [
+          {
+            "id": "2001",
+            "audio_s": 12.84,
+            "asr_s": 0.5569471910002903,
+            "rtf": 0.04337594945485127,
+            "hyp": "Se recomienda enfáticamente a los viajeros que se informen sobre cualquier riesgo del clima extremo en el área que visitan, dado que ello pueda afectar sus planes de viaje."
+          },
+          {
+            "id": "1852",
+            "audio_s": 21.36,
+            "asr_s": 0.9248171280000861,
+            "rtf": 0.04329668202247594,
+            "hyp": "El uso adecuado de los blogs puede empoderar a los alumnos para que sean más analíticos y críticos a través de la respuesta activa a los contenidos de Internet. Pueden definir sus posturas en el contexto de los escritos de otros, además de establecer sus perspectivas sobre temas específicos. Ahora 2002."
+          },
+          {
+            "id": "1764",
+            "audio_s": 9.72,
+            "asr_s": 0.4213889519996883,
+            "rtf": 0.0433527728394741,
+            "hyp": "Fue tanta la cantidad de gente que se concentró que no todos pudieron acceder al funeral en la plaza de San Pedro."
+          },
+          {
+            "id": "1770",
+            "audio_s": 8.58,
+            "asr_s": 0.3863070089996654,
+            "rtf": 0.04502412692303793,
+            "hyp": "Esto parece tener sentido, ya que en la tierra no se percibe su movimiento, ¿cierto?"
+          },
+          {
+            "id": "1799",
+            "audio_s": 10.62,
+            "asr_s": 0.4471228410002368,
+            "rtf": 0.042101962429400834,
+            "hyp": "Carpaneo participó en dos carreras individuales del campeonato, aparte de la competencia del miércoles."
+          },
+          {
+            "id": "1820",
+            "audio_s": 9.78,
+            "asr_s": 0.4522245139996812,
+            "rtf": 0.04623972535784062,
+            "hyp": "Hoy en día, las personas escriben mensajes en las pantallas de sus computadoras, no tienen la necesidad de siquiera aproximarse en sacapuntas."
+          },
+          {
+            "id": "1747",
+            "audio_s": 5.64,
+            "asr_s": 0.2718460880000748,
+            "rtf": 0.04819966099292107,
+            "hyp": "Los luchadores compañeros de Luna también le rindieron homenaje."
+          },
+          {
+            "id": "1816",
+            "audio_s": 10.26,
+            "asr_s": 0.4431865100000323,
+            "rtf": 0.04319556627680626,
+            "hyp": "Duall, que está casado y tiene dos hijos adultos, no causó una buena impresión a Miller, que fue a quien le relató la historia."
+          },
+          {
+            "id": "1783",
+            "audio_s": 10.68,
+            "asr_s": 0.47628217300007236,
+            "rtf": 0.04459570908240378,
+            "hyp": "Entre los fenómenos climáticos regionales y estacionales extremos encontramos los ventarrones, las tormentas de nieve, hielo o polvo."
+          },
+          {
+            "id": "1794",
+            "audio_s": 12.12,
+            "asr_s": 0.4774495879996721,
+            "rtf": 0.03939353036300925,
+            "hyp": "Se puede definir a una civilización como una cultura específica de que forma parte un extenso grupo de personas que viven y trabajan en conjunto, es decir, una sociedad."
+          }
+        ]
+      }
+    },
+    {
+      "lang": "ja",
+      "euhadra": {
+        "side": "euhadra",
+        "model": "euhadra/parakeet-tdt_ctc-0.6b-ja",
+        "kind": "parakeet",
+        "language": "ja",
+        "threads_note": "ort default (adapter-controlled)",
+        "n": 10,
+        "total_audio_s": 110.04,
+        "total_asr_s": 3.550160784,
+        "mean_rtf": 0.032262457142857144,
+        "p50_asr_ms": 366.59303,
+        "p95_asr_ms": 451.812539,
+        "rows": [
+          {
+            "id": "1828",
+            "audio_s": 10.44,
+            "asr_s": 0.327657496,
+            "rtf": 0.031384817624521076,
+            "hyp": "インターネットで敵対的環境コースについて検索すると恐らく現地企業の住所が出てくるでしょう。"
+          },
+          {
+            "id": "1834",
+            "audio_s": 14.22,
+            "asr_s": 0.451812539,
+            "rtf": 0.031773033684950776,
+            "hyp": "また、北側に行くなら、世界的に有名なマリア像の聖地であるファティマの聖母の聖域、神社を訪れましょう。"
+          },
+          {
+            "id": "1813",
+            "audio_s": 12.84,
+            "asr_s": 0.407241144,
+            "rtf": 0.0317166,
+            "hyp": "バルセロナの公用語は、カタルーニャ語とスペイン語で、約半数がカタルーニャ語を好み、大多数がカタルーニャ語を理解し、ほぼ全員がスペイン語を知っています。"
+          },
+          {
+            "id": "1869",
+            "audio_s": 12.54,
+            "asr_s": 0.385816852,
+            "rtf": 0.030766894098883574,
+            "hyp": "その長いあごには 70本以上の鋭い歯が並び、郊外には別の歯列があり、つまりここを通ったら逃げ道はないということになります。"
+          },
+          {
+            "id": "1744",
+            "audio_s": 12.06,
+            "asr_s": 0.36659303,
+            "rtf": 0.030397432006633498,
+            "hyp": "ロスビー数が小さいほど、磁気判定に関して星の活性が低下するわけです。"
+          },
+          {
+            "id": "1731",
+            "audio_s": 6.96,
+            "asr_s": 0.229873737,
+            "rtf": 0.03302783577586207,
+            "hyp": "群島や湖では、必ずしもヨットは必要ありません。"
+          },
+          {
+            "id": "1910",
+            "audio_s": 8.88,
+            "asr_s": 0.299121652,
+            "rtf": 0.03368487072072072,
+            "hyp": "パリジャンは自己中心的で横柄で失礼な人が多いといわれています。"
+          },
+          {
+            "id": "1771",
+            "audio_s": 12.96,
+            "asr_s": 0.436008556,
+            "rtf": 0.03364263549382716,
+            "hyp": "メインステージの音楽が終わってもフェスティバルには夜遅くまで演奏を流し続けるセクションがあるかもしれないことを覚えておいてください。"
+          },
+          {
+            "id": "1764",
+            "audio_s": 9.48,
+            "asr_s": 0.320895842,
+            "rtf": 0.03384977236286919,
+            "hyp": "参列者の数が多すぎて全員がサンピエトロ広場での葬儀に参加することは不可能でした。"
+          },
+          {
+            "id": "2003",
+            "audio_s": 9.66,
+            "asr_s": 0.325139936,
+            "rtf": 0.0336583784679089,
+            "hyp": "香港の最高の景色を見るには島から出てクーロンのウォーターフロントに向かいましょう。"
+          }
+        ]
+      },
+      "hayamimi": {
+        "side": "hayamimi",
+        "model": "hayamimi/reazonspeech-zipformer",
+        "kind": "reazon",
+        "language": "",
+        "threads": 4,
+        "n": 10,
+        "total_audio_s": 110.04,
+        "total_asr_s": 1.8160938620003435,
+        "mean_rtf": 0.016503942766269934,
+        "p50_asr_ms": 177.62593800034665,
+        "p95_asr_ms": 234.89914300034798,
+        "rows": [
+          {
+            "id": "1828",
+            "audio_s": 10.44,
+            "asr_s": 0.19620851900026537,
+            "rtf": 0.018793919444469863,
+            "hyp": "インターネットで敵対的環境構想について検索すると恐らく現地企業の住所が出てくるでしょう"
+          },
+          {
+            "id": "1834",
+            "audio_s": 14.22,
+            "asr_s": 0.2282192729999224,
+            "rtf": 0.016049175316450236,
+            "hyp": "また北側に行くなら世界的に有名なマリア像の聖地であるファティマの聖母の聖域神社を訪れましょう"
+          },
+          {
+            "id": "1813",
+            "audio_s": 12.84,
+            "asr_s": 0.23489914300034798,
+            "rtf": 0.0182943257788433,
+            "hyp": "バルセロナの公用語はカタルーネ語とスペイン語列約半数がカタルーネが好み大多数がカタルーネ語を理解しほぼ全員がスペイン語を知っています"
+          },
+          {
+            "id": "1869",
+            "audio_s": 12.54,
+            "asr_s": 0.1716294919997381,
+            "rtf": 0.013686562360425687,
+            "hyp": "その長いあごには七十本以上の鋭い歯が並び郊外には別の歯列がありつまりここを通ったらねぎ道はないということになります"
+          },
+          {
+            "id": "1744",
+            "audio_s": 12.06,
+            "asr_s": 0.1951044180000281,
+            "rtf": 0.016177812437813275,
+            "hyp": "ロスビー数が小さいほど磁気判定に関して星の活性が低下するわけです"
+          },
+          {
+            "id": "1731",
+            "audio_s": 6.96,
+            "asr_s": 0.1346709159997772,
+            "rtf": 0.019349269540197875,
+            "hyp": "群島や湖では必ずしもヨットは必要ありません"
+          },
+          {
+            "id": "1910",
+            "audio_s": 8.88,
+            "asr_s": 0.12918278699999064,
+            "rtf": 0.014547611148647593,
+            "hyp": "パリジャンは自己中心的な横柄で失礼な人が多いといわれています"
+          },
+          {
+            "id": "1771",
+            "audio_s": 12.96,
+            "asr_s": 0.17762593800034665,
+            "rtf": 0.01370570509261934,
+            "hyp": "メインステージの音楽が終わってもフェスティバルには夜遅くまで演奏を流し続けるセクションがあるかもしれないことを覚えておいて下さい"
+          },
+          {
+            "id": "1764",
+            "audio_s": 9.48,
+            "asr_s": 0.18296358999987206,
+            "rtf": 0.019299956751041354,
+            "hyp": "参列者の数が多すぎて全員がサンピエトル広場での葬儀に参加することは不可能でした"
+          },
+          {
+            "id": "2003",
+            "audio_s": 9.66,
+            "asr_s": 0.16558978600005503,
+            "rtf": 0.01714179979296636,
+            "hyp": "香港の最高の景色を見るには島から出てクーロンのウォーターフロントに向かいましょう"
+          }
+        ]
+      }
+    },
+    {
+      "lang": "zh",
+      "euhadra": {
+        "side": "euhadra",
+        "model": "euhadra/paraformer-large",
+        "kind": "paraformer",
+        "language": "zh",
+        "threads_note": "ort default (adapter-controlled)",
+        "n": 10,
+        "total_audio_s": 119.68,
+        "total_asr_s": 1.705244135,
+        "mean_rtf": 0.014248363427473262,
+        "p50_asr_ms": 189.955823,
+        "p95_asr_ms": 221.639437,
+        "rows": [
+          {
+            "id": "1906",
+            "audio_s": 10.38,
+            "asr_s": 0.146942149,
+            "rtf": 0.014156276396917147,
+            "hyp": "这并不是告别这是一个篇章的结束也是新篇章的开始"
+          },
+          {
+            "id": "2006",
+            "audio_s": 8.28,
+            "asr_s": 0.129917384,
+            "rtf": 0.015690505314009662,
+            "hyp": "钙钾等元素属于金属银和金等元素当然也是金属"
+          },
+          {
+            "id": "1883",
+            "audio_s": 13.86,
+            "asr_s": 0.192792383,
+            "rtf": 0.013909984343434345,
+            "hyp": "桥下垂直净空十五米该项目于二零一一年八月完工但直到二零一七年三月才开始通车"
+          },
+          {
+            "id": "1852",
+            "audio_s": 15.42,
+            "asr_s": 0.221639437,
+            "rtf": 0.014373504345006484,
+            "hyp": "适 当 使 用 博 客 可 以 使 学 生 变 得 更 善 于 分 析 和 进 行 思 辨 通 过 积 极 回 忆 网 络 材 料 学 生 们 可 以 在 他 人 的 文 章 的 上 下 文 语 境 中 找 到 自 己 的 立 场 并 能 够 针 对 特 定 问 题 提 出 自 己 的 观 点 work 二 零 零 二"
+          },
+          {
+            "id": "1734",
+            "audio_s": 12.9,
+            "asr_s": 0.179033286,
+            "rtf": 0.013878549302325582,
+            "hyp": "科学作家们可以得出结论暗物质对其他暗物质的影响方式与普通物质相同"
+          },
+          {
+            "id": "1890",
+            "audio_s": 13.74,
+            "asr_s": 0.189955823,
+            "rtf": 0.013825023508005822,
+            "hyp": "大多数现代科研望远镜都是巨型设施位于大气大气条件优良的偏远地区"
+          },
+          {
+            "id": "1721",
+            "audio_s": 15.18,
+            "asr_s": 0.208490983,
+            "rtf": 0.013734583860342556,
+            "hyp": "一九六三年大坝建成后季节性洪水被控制住了沉积雾不再冲散到河流里"
+          },
+          {
+            "id": "1869",
+            "audio_s": 15.46,
+            "asr_s": 0.215297223,
+            "rtf": 0.01392608169469599,
+            "hyp": "他的长下颚上铺满了七十多颗剃刀般锋利的牙齿上颚上还有一排这意味着任何与他相遇的东西都无路可逃"
+          },
+          {
+            "id": "1805",
+            "audio_s": 7.62,
+            "asr_s": 0.115026378,
+            "rtf": 0.015095325196850393,
+            "hyp": "scotb 四 零 三 路 公 交 汽 车 定 期 发 车 前 往 辛 特 拉 在 罗 卡 角 停 靠"
+          },
+          {
+            "id": "1965",
+            "audio_s": 6.84,
+            "asr_s": 0.106149089,
+            "rtf": 0.015518872660818714,
+            "hyp": "这里几乎都是沙滩游泳很安全大部分地方都有新西兰圣诞树的树荫"
+          }
+        ]
+      },
+      "hayamimi": {
+        "side": "hayamimi",
+        "model": "hayamimi/paraformer-zh-int8",
+        "kind": "paraformer_zh",
+        "language": "",
+        "threads": 4,
+        "n": 10,
+        "total_audio_s": 119.68,
+        "total_asr_s": 1.688997185000062,
+        "mean_rtf": 0.01411261016878394,
+        "p50_asr_ms": 178.48804599998402,
+        "p95_asr_ms": 231.9587059996593,
+        "rows": [
+          {
+            "id": "1906",
+            "audio_s": 10.38,
+            "asr_s": 0.14175057500006005,
+            "rtf": 0.013656124759158,
+            "hyp": "这并不是告别这是一个篇章的结束也是新篇章的开始"
+          },
+          {
+            "id": "2006",
+            "audio_s": 8.28,
+            "asr_s": 0.12283531599996422,
+            "rtf": 0.01483518309178312,
+            "hyp": "钙钾等元素属于金属银和金等元素当然也是金属"
+          },
+          {
+            "id": "1883",
+            "audio_s": 13.86,
+            "asr_s": 0.19083816200009096,
+            "rtf": 0.013768987157293721,
+            "hyp": "桥下垂直净空十五米该项目于二零一一年八月完工但直到二零一七年三月才开始通车"
+          },
+          {
+            "id": "1852",
+            "audio_s": 15.42,
+            "asr_s": 0.2319587059996593,
+            "rtf": 0.015042717639407217,
+            "hyp": "适当使用博客可以使学生变得更善于分析和进行思辨通过积极回忆网络材料学生们可以在他人的文章的上下文语境中找到自己的立场并能够针对特定问题提出自己的观点 o r r 二零零二"
+          },
+          {
+            "id": "1734",
+            "audio_s": 12.9,
+            "asr_s": 0.17848804599998402,
+            "rtf": 0.013836282635657676,
+            "hyp": "科学学家们可以得出结论暗物质对其他暗物质的影响方式与普通物质相同"
+          },
+          {
+            "id": "1890",
+            "audio_s": 13.74,
+            "asr_s": 0.18675984999981665,
+            "rtf": 0.013592419941762492,
+            "hyp": "大多数现代科研望远镜都是巨型设施位于大气大气条件优良的偏远地区"
+          },
+          {
+            "id": "1721",
+            "audio_s": 15.18,
+            "asr_s": 0.2029571789998954,
+            "rtf": 0.0133700381422856,
+            "hyp": "一九六三年大坝建成后季节性洪水被控制住了沉积物不再冲散到河流里"
+          },
+          {
+            "id": "1869",
+            "audio_s": 15.46,
+            "asr_s": 0.2103497710004376,
+            "rtf": 0.013606065394594928,
+            "hyp": "他的长下额上铺满了七十多颗剃刀般锋利的牙齿上额上还有一排这意味着任何与他相遇的东西都无路可逃"
+          },
+          {
+            "id": "1805",
+            "audio_s": 7.62,
+            "asr_s": 0.11730885899987697,
+            "rtf": 0.015394863385810626,
+            "hyp": "s o o t o b 四零三路公交汽车定期发车前往辛特拉在罗卡角停靠"
+          },
+          {
+            "id": "1965",
+            "audio_s": 6.84,
+            "asr_s": 0.10575072100027683,
+            "rtf": 0.01546063172518667,
+            "hyp": "这里几乎都是沙滩游泳很安全大部分地方都有新西兰圣诞树的树荫"
+          }
+        ]
+      }
+    },
+    {
+      "lang": "ko",
+      "euhadra": {
+        "side": "euhadra",
+        "model": "euhadra/dolphin-small-ctc-int8",
+        "kind": "dolphin",
+        "language": "ko",
+        "threads_note": "ort default (adapter-controlled)",
+        "n": 10,
+        "total_audio_s": 111.11999999999999,
+        "total_asr_s": 5.832428462999999,
+        "mean_rtf": 0.052487657154427644,
+        "p50_asr_ms": 626.7717379999999,
+        "p95_asr_ms": 1095.626555,
+        "rows": [
+          {
+            "id": "1883",
+            "audio_s": 12.48,
+            "asr_s": 0.651552545,
+            "rtf": 0.052207735977564104,
+            "hyp": "다리이 수직간격은 십오미터이며 공사는 이천십일년 팔월에 마무리되었으며 해당 다리의 통행금지는 이천십칠년 삼월까지이다"
+          },
+          {
+            "id": "1929",
+            "audio_s": 10.8,
+            "asr_s": 0.561910465,
+            "rtf": 0.05202874675925925,
+            "hyp": "델포트로가 이세트에서 먼저 어드베티지를를 얻었지만 육대 육이 된 후 다시 타이브레이크가 필요했다"
+          },
+          {
+            "id": "1701",
+            "audio_s": 8.94,
+            "asr_s": 0.441703607,
+            "rtf": 0.049407562304250564,
+            "hyp": "염소사육은 대략 일만년 전에 이란의 자그로스 산맥에서 시작한 것으로 보입니다"
+          },
+          {
+            "id": "2000",
+            "audio_s": 12.54,
+            "asr_s": 0.65680736,
+            "rtf": 0.05237698245614035,
+            "hyp": "겨울에 붓발트해를 건널 경우에는 빙판을 통과하면서 꽤 끔찍한 소음이 발생하기 때문에 객실의 위치를 확인하는 것이 좋다"
+          },
+          {
+            "id": "1801",
+            "audio_s": 12.12,
+            "asr_s": 0.626771738,
+            "rtf": 0.0517138397689769,
+            "hyp": "홍콩의 스카이라인을 이루는 빌딩 행렬은 빅토리아 항구의 수면에 선명히비치는 모습 때문에 반짝이는 막대그래프에 비유된다"
+          },
+          {
+            "id": "1662",
+            "audio_s": 9.9,
+            "asr_s": 0.49508947,
+            "rtf": 0.05000903737373737,
+            "hyp": "합금은 기본적으로 금속 두 개 이상의 혼합물이다 주기율표상의 원소가 많이 있다는 것을 잊지 마라"
+          },
+          {
+            "id": "1705",
+            "audio_s": 13.62,
+            "asr_s": 0.728913856,
+            "rtf": 0.05351790425844347,
+            "hyp": "천구백사십년 팔월 십오일 연합군은 프랑스 남부를 침략했고 이 침략은 드래군 작전이라 불렸다."
+          },
+          {
+            "id": "1959",
+            "audio_s": 7.02,
+            "asr_s": 0.339203649,
+            "rtf": 0.048319608119658124,
+            "hyp": "그래도 관계자의 조언을 듣고 모든 표지판을 지키고 안전경고에 세심한 주의를 기울여야 합니다"
+          },
+          {
+            "id": "1715",
+            "audio_s": 18.9,
+            "asr_s": 1.095626555,
+            "rtf": 0.057969658994708996,
+            "hyp": "지하철의 정규안내방송은 카찰로니아어로만 제공되나 계획이 앞다운행중단시에는 자동시스템을 통해 스페인너 영어 프랑서 아라비아어 에이버어를 포함한 다양한 언어로 방송됩니다"
+          },
+          {
+            "id": "1907",
+            "audio_s": 4.8,
+            "asr_s": 0.234849218,
+            "rtf": 0.048926920416666665,
+            "hyp": "교전이 발발한 직후 영국은 독일에 대한 해상봉세를 시작한다"
+          }
+        ]
+      },
+      "hayamimi": {
+        "side": "hayamimi",
+        "model": "hayamimi/sensevoice-small-int8",
+        "kind": "sensevoice",
+        "language": "ko",
+        "threads": 4,
+        "n": 10,
+        "total_audio_s": 111.11999999999999,
+        "total_asr_s": 2.1104149600005258,
+        "mean_rtf": 0.01899221526278371,
+        "p50_asr_ms": 210.57338800028447,
+        "p95_asr_ms": 354.8861950002902,
+        "rows": [
+          {
+            "id": "1883",
+            "audio_s": 12.48,
+            "asr_s": 0.22690861699993548,
+            "rtf": 0.018181780208328162,
+            "hyp": "다름미 수직 간격은 십 오미터이며 공사는20 십 일 년 8 월에 마무리되었으며 해당 다리의 통행금 이0 십칠 년  삼 월까지이다"
+          },
+          {
+            "id": "1929",
+            "audio_s": 10.8,
+            "asr_s": 0.21057338800028447,
+            "rtf": 0.019497535925952263,
+            "hyp": "데포트로가 이 세트에서 먼저 어드벤티지를를 얻었지만 6 대6이 된 후 다시 타이이브레이크가 필요했다"
+          },
+          {
+            "id": "1701",
+            "audio_s": 8.94,
+            "asr_s": 0.1756556919999639,
+            "rtf": 0.019648287695745403,
+            "hyp": "염소사육은 대략 1만년 전에 이란의 자그로스 산맥에서 시작한 것으로 보입니다"
+          },
+          {
+            "id": "2000",
+            "audio_s": 12.54,
+            "asr_s": 0.23091308700031732,
+            "rtf": 0.018414121770360233,
+            "hyp": "겨울에 북 발트해를 건널 경우에는 빙판을 통과하면서 꽤 끔찍한 소음이 발생하기 때문에 객실의 위치를 확인하는 것이 좋다"
+          },
+          {
+            "id": "1801",
+            "audio_s": 12.12,
+            "asr_s": 0.22392275699985476,
+            "rtf": 0.018475474999988018,
+            "hyp": "홍콩의 스카라인을 이루는 빌딩 행렬은 빅토리아 항구의 수면에 선명이이 비치는 모습 때문에 반짝이는 막대 그래프에 비유된다"
+          },
+          {
+            "id": "1662",
+            "audio_s": 9.9,
+            "asr_s": 0.19277633699994112,
+            "rtf": 0.019472357272721324,
+            "hyp": "합금은 기본적으로 금속 두 개 이상의 혼합물이다 주기율표상의 원소가 많이 있다는 것을 잊지 마라"
+          },
+          {
+            "id": "1705",
+            "audio_s": 13.62,
+            "asr_s": 0.2515850960003263,
+            "rtf": 0.018471739794443928,
+            "hyp": "천 구백 사십 년 팔 월 십 오 일 연합군은 프랑스 남부를 침략했고 이 침략은 드래곤 작전이라 불렸다"
+          },
+          {
+            "id": "1959",
+            "audio_s": 7.02,
+            "asr_s": 0.14201155399996424,
+            "rtf": 0.020229566096861003,
+            "hyp": "그래도 관계자의 조언을 듣고고 모든 표지판을 지키고 안전경고에 세심한 주의를 기울여야 합니다"
+          },
+          {
+            "id": "1715",
+            "audio_s": 18.9,
+            "asr_s": 0.35488619500029017,
+            "rtf": 0.01877704735451271,
+            "hyp": "지하철의 정규 안내 방송은 카타로니아 어로만 제공되나 계획이 없던 은행 중단단 시에는 자동 시스템을 통해 스페인어 영어 프랑스 아라비아어 일본어를 포함한 다양한 언어로 방송됩니다"
+          },
+          {
+            "id": "1907",
+            "audio_s": 4.8,
+            "asr_s": 0.10118223699964801,
+            "rtf": 0.021079632708260004,
+            "hyp": "교전이 발한 직후코 영국은 독일에 대한 해상 봉세를 시작한다"
+          }
+        ]
+      }
+    }
+  ]
+}
