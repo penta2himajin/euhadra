@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated": "epoch:1778602562",
-  "asr_model": "canary-180m-flash-int8 (en) / parakeet-tdt_ctc-0.6b-ja (ja) / paraformer-large-zh (zh) / canary-180m-flash-int8 (es) / dolphin-small-ctc-int8 (ko)",
+  "generated": "epoch:1788012494",
+  "asr_model": "canary-180m-flash-int8 (en) / reazonspeech-zipformer-ja-en-int8 (ja) / paraformer-large-zh (zh) / canary-180m-flash-int8 (es) / dolphin-small-ctc-int8 (ko)",
   "languages": {
     "en": {
       "samples": 30,
@@ -31,7 +31,7 @@
     },
     "ja": {
       "samples": 30,
-      "cer": 0.0724,
+      "cer": 0.1057,
       "asr_latency_ms": {
         "p50": 1267.0,
         "p95": 1937.0

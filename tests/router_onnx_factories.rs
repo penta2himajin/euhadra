@@ -12,6 +12,7 @@
 use euhadra::canary::CanaryFactory;
 use euhadra::paraformer::ParaformerFactory;
 use euhadra::parakeet::ParakeetFactory;
+use euhadra::reazon::ReazonFactory;
 use euhadra::prelude::{AdapterRequest, AsrRouter, ModelSource, RouterError};
 use std::path::PathBuf;
 
@@ -61,13 +62,26 @@ async fn router_dispatches_canary_factory() {
 }
 
 #[tokio::test]
+async fn router_dispatches_reazon_factory() {
+    let router = AsrRouter::new().register(ReazonFactory);
+    match router.dispatch(make_request("reazon", "ja")).await {
+        Err(RouterError::InstantiationFailed { runtime, .. }) => {
+            assert_eq!(runtime, "reazon");
+        }
+        Err(other) => panic!("expected InstantiationFailed, got {other:?}"),
+        Ok(_) => panic!("expected loader error"),
+    }
+}
+
+#[tokio::test]
 async fn router_routes_three_factories_independently() {
     let router = AsrRouter::new()
         .register(ParakeetFactory)
         .register(ParaformerFactory)
-        .register(CanaryFactory);
+        .register(CanaryFactory)
+        .register(ReazonFactory);
 
-    for runtime in ["parakeet", "paraformer", "canary"] {
+    for runtime in ["parakeet", "paraformer", "canary", "reazon"] {
         match router.dispatch(make_request(runtime, "en")).await {
             Err(RouterError::InstantiationFailed { runtime: got, .. }) => {
                 assert_eq!(got, runtime);

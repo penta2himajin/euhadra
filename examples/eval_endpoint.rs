@@ -27,6 +27,7 @@ use euhadra::eval::baseline::{
 use euhadra::eval::latency::Samples;
 use euhadra::parakeet::ParakeetAdapter;
 use euhadra::paraformer::ParaformerAdapter;
+use euhadra::reazon::ReazonAdapter;
 use euhadra::prelude::*;
 use euhadra::vad::EarshotVad;
 use euhadra::whisper_local::read_wav;
@@ -46,7 +47,12 @@ struct Cli {
     #[arg(long)]
     parakeet_en_dir: Option<PathBuf>,
 
-    /// `nvidia/parakeet-tdt_ctc-0.6b-ja` bundle for `ja`.
+    /// ReazonSpeech Zipformer INT8 for `ja` (shipping path). Prefer over
+    /// `--parakeet-ja-dir` when both are set.
+    #[arg(long)]
+    reazon_ja_dir: Option<PathBuf>,
+
+    /// `nvidia/parakeet-tdt_ctc-0.6b-ja` bundle for `ja` (legacy).
     #[arg(long)]
     parakeet_ja_dir: Option<PathBuf>,
 
@@ -106,6 +112,7 @@ fn load_manifest(data_dir: &Path, lang: &str) -> std::io::Result<Vec<Row>> {
 enum ModelKind {
     Canary,
     Parakeet,
+    Reazon,
     Paraformer,
     Dolphin,
 }
@@ -115,6 +122,7 @@ impl ModelKind {
         match self {
             ModelKind::Canary => "canary-180m-flash-int8",
             ModelKind::Parakeet => "parakeet",
+            ModelKind::Reazon => "reazonspeech-zipformer-ja-en-int8",
             ModelKind::Paraformer => "paraformer-large-zh",
             ModelKind::Dolphin => "dolphin-small-ctc-int8",
         }
@@ -137,6 +145,10 @@ fn load_adapter(dir: &Path, lang: &str, kind: ModelKind) -> Arc<dyn AsrAdapter> 
         ModelKind::Parakeet => Arc::new(
             ParakeetAdapter::load(dir)
                 .unwrap_or_else(|e| panic!("load parakeet from {}: {e}", dir.display())),
+        ),
+        ModelKind::Reazon => Arc::new(
+            ReazonAdapter::load(dir)
+                .unwrap_or_else(|e| panic!("load reazon from {}: {e}", dir.display())),
         ),
         ModelKind::Paraformer => Arc::new(
             ParaformerAdapter::load(dir)
@@ -176,6 +188,9 @@ fn main() {
             }
             "en" if cli.parakeet_en_dir.is_some() => {
                 (cli.parakeet_en_dir.clone().unwrap(), ModelKind::Parakeet)
+            }
+            "ja" if cli.reazon_ja_dir.is_some() => {
+                (cli.reazon_ja_dir.clone().unwrap(), ModelKind::Reazon)
             }
             "ja" if cli.parakeet_ja_dir.is_some() => {
                 (cli.parakeet_ja_dir.clone().unwrap(), ModelKind::Parakeet)

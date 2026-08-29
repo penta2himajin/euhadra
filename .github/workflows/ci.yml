@@ -242,18 +242,18 @@ jobs:
         env:
           CANARY_DIR: vendor/canary_en
 
-      - name: Cache parakeet-ja ONNX bundle (~2.4 GB)
-        id: parakeet-ja-cache
+      - name: Cache reazon-ja ONNX bundle (~72 MB INT8)
+        id: reazon-ja-cache
         uses: actions/cache@v4
         with:
-          path: vendor/parakeet_ja
-          key: parakeet-tdt-ctc-0.6b-ja-sunilmahendrakar-v1
+          path: vendor/reazon_ja
+          key: reazonspeech-zipformer-ja-en-2025-01-17-int8-v1
 
-      - name: Download parakeet-ja model (cache miss only)
-        if: steps.parakeet-ja-cache.outputs.cache-hit != 'true'
-        run: bash scripts/setup_parakeet_ja.sh
+      - name: Download reazon-ja model (cache miss only)
+        if: steps.reazon-ja-cache.outputs.cache-hit != 'true'
+        run: bash scripts/setup_reazon_ja.sh
         env:
-          PARAKEET_JA_DIR: vendor/parakeet_ja
+          REAZON_JA_DIR: vendor/reazon_ja
 
       - name: Cache paraformer-zh ONNX bundle (~240 MB)
         id: paraformer-zh-cache
@@ -296,7 +296,7 @@ jobs:
         run: |
           cargo run --release --features onnx,vad --example eval_vad --locked -- \
             --canary-en-dir vendor/canary_en \
-            --parakeet-ja-dir vendor/parakeet_ja \
+            --reazon-ja-dir vendor/reazon_ja \
             --paraformer-zh-dir vendor/paraformer_zh \
             --dolphin-ko-dir vendor/dolphin_ko \
             --langs en,ja,es,zh,ko \
@@ -359,18 +359,18 @@ jobs:
         env:
           CANARY_DIR: vendor/canary_en
 
-      - name: Cache parakeet-ja ONNX bundle (~2.4 GB)
-        id: parakeet-ja-cache
+      - name: Cache reazon-ja ONNX bundle (~72 MB INT8)
+        id: reazon-ja-cache
         uses: actions/cache@v4
         with:
-          path: vendor/parakeet_ja
-          key: parakeet-tdt-ctc-0.6b-ja-sunilmahendrakar-v1
+          path: vendor/reazon_ja
+          key: reazonspeech-zipformer-ja-en-2025-01-17-int8-v1
 
-      - name: Download parakeet-ja model (cache miss only)
-        if: steps.parakeet-ja-cache.outputs.cache-hit != 'true'
-        run: bash scripts/setup_parakeet_ja.sh
+      - name: Download reazon-ja model (cache miss only)
+        if: steps.reazon-ja-cache.outputs.cache-hit != 'true'
+        run: bash scripts/setup_reazon_ja.sh
         env:
-          PARAKEET_JA_DIR: vendor/parakeet_ja
+          REAZON_JA_DIR: vendor/reazon_ja
 
       - name: Cache paraformer-zh ONNX bundle (~240 MB)
         id: paraformer-zh-cache
@@ -405,18 +405,18 @@ jobs:
         run: |
           cargo run --release --features onnx,vad,testing --example eval_endpoint --locked -- \
             --canary-en-dir vendor/canary_en \
-            --parakeet-ja-dir vendor/parakeet_ja \
+            --reazon-ja-dir vendor/reazon_ja \
             --paraformer-zh-dir vendor/paraformer_zh \
             --dolphin-ko-dir vendor/dolphin_ko \
             --langs en,ja,es,zh,ko \
             --baseline docs/benchmarks/ci_baseline_endpoint.json
 
   # L1 ASR live smoke (§1.1 / §3.8): runs Canary-180M-Flash (en + es),
-  # Parakeet (ja), Paraformer-large (zh), Whisper-large-v3-turbo ONNX
-  # (ko), and whisper-tiny (fallback) on a 10-utterance FLEURS subset
+  # ReazonSpeech Zipformer (ja), Paraformer-large (zh), Dolphin CTC
+  # (ko), and whisper-tiny (fallback) on a 30-utterance FLEURS subset
   # per language, measures WER/CER + ASR/E2E latency + RTF, and gates
   # against docs/benchmarks/ci_baseline.json. All large artefacts
-  # (whisper.cpp build, GGML models, FLEURS subset, parakeet-ja
+  # (whisper.cpp build, GGML models, FLEURS subset, reazon-ja
   # ONNX bundle, paraformer-zh ONNX bundle, canary en + es ONNX
   # bundles, whisper-onnx-turbo ONNX bundle) are cached so warm
   # runs finish in a couple of minutes.
@@ -531,18 +531,18 @@ jobs:
         if: steps.fleurs-cache.outputs.cache-hit != 'true'
         run: python3 scripts/download_fleurs_subset.py --lang en --lang ja --lang zh --lang es --lang ko --n 30
 
-      - name: Cache parakeet-ja ONNX bundle (~2.4 GB)
-        id: parakeet-ja-cache
+      - name: Cache reazon-ja ONNX bundle (~72 MB INT8)
+        id: reazon-ja-cache
         uses: actions/cache@v4
         with:
-          path: vendor/parakeet_ja
-          key: parakeet-tdt-ctc-0.6b-ja-sunilmahendrakar-v1
+          path: vendor/reazon_ja
+          key: reazonspeech-zipformer-ja-en-2025-01-17-int8-v1
 
-      - name: Download parakeet-ja model (cache miss only)
-        if: steps.parakeet-ja-cache.outputs.cache-hit != 'true'
-        run: bash scripts/setup_parakeet_ja.sh
+      - name: Download reazon-ja model (cache miss only)
+        if: steps.reazon-ja-cache.outputs.cache-hit != 'true'
+        run: bash scripts/setup_reazon_ja.sh
         env:
-          PARAKEET_JA_DIR: vendor/parakeet_ja
+          REAZON_JA_DIR: vendor/reazon_ja
 
       - name: Cache paraformer-zh ONNX bundle (~240 MB)
         id: paraformer-zh-cache
@@ -628,7 +628,7 @@ jobs:
         env:
           DOLPHIN_KO_DIR: vendor/dolphin_ko
 
-      - name: Build eval binary (with onnx for Parakeet/Paraformer/Canary/WhisperOnnx/Dolphin adapters)
+      - name: Build eval binary (with onnx for Reazon/Paraformer/Canary/WhisperOnnx/Dolphin adapters)
         run: cargo build --release --example eval_l1_smoke --features onnx --locked
 
       - name: Prepare ORT profile output dir
@@ -659,7 +659,7 @@ jobs:
             --model-multi vendor/whisper.cpp/models/ggml-tiny.bin \
             --data-dir data/fleurs_subset \
             --canary-en-dir vendor/canary_en \
-            --parakeet-ja-dir vendor/parakeet_ja \
+            --reazon-ja-dir vendor/reazon_ja \
             --paraformer-zh-dir vendor/paraformer_zh \
             --canary-es-dir vendor/canary_es \
             --dolphin-ko-dir vendor/dolphin_ko \
