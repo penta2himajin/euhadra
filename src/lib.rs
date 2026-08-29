@@ -60,6 +60,9 @@ pub mod canary;
 pub mod dolphin;
 
 #[cfg(feature = "onnx")]
+pub mod reazon;
+
+#[cfg(feature = "onnx")]
 pub mod sensevoice;
 
 #[cfg(feature = "onnx")]

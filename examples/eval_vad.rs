@@ -29,6 +29,7 @@ use euhadra::dolphin::DolphinAdapter;
 use euhadra::eval::metrics::{cer_lenient, wer_lenient};
 use euhadra::parakeet::ParakeetAdapter;
 use euhadra::paraformer::ParaformerAdapter;
+use euhadra::reazon::ReazonAdapter;
 use euhadra::prelude::*;
 use euhadra::vad::{EarshotVad, EnergyVad, SegmenterConfig, VadBackend};
 use euhadra::whisper_local::read_wav;
@@ -53,7 +54,12 @@ struct Cli {
     #[arg(long)]
     parakeet_en_dir: Option<PathBuf>,
 
-    /// `nvidia/parakeet-tdt_ctc-0.6b-ja` bundle, used for `ja`.
+    /// ReazonSpeech Zipformer INT8 for `ja` (shipping path). Prefer over
+    /// `--parakeet-ja-dir` when both are set.
+    #[arg(long)]
+    reazon_ja_dir: Option<PathBuf>,
+
+    /// `nvidia/parakeet-tdt_ctc-0.6b-ja` bundle, used for `ja` (legacy).
     #[arg(long)]
     parakeet_ja_dir: Option<PathBuf>,
 
@@ -278,6 +284,9 @@ fn main() {
             }
             "en" if cli.parakeet_en_dir.is_some() => {
                 (cli.parakeet_en_dir.clone().unwrap(), ModelKind::Parakeet)
+            }
+            "ja" if cli.reazon_ja_dir.is_some() => {
+                (cli.reazon_ja_dir.clone().unwrap(), ModelKind::Reazon)
             }
             "ja" if cli.parakeet_ja_dir.is_some() => {
                 (cli.parakeet_ja_dir.clone().unwrap(), ModelKind::Parakeet)
@@ -531,6 +540,7 @@ fn gate(cli: &Cli, report: &BTreeMap<String, BTreeMap<String, Cell>>) -> Vec<Str
 enum ModelKind {
     Canary,
     Parakeet,
+    Reazon,
     Paraformer,
     Dolphin,
 }
@@ -540,6 +550,7 @@ impl ModelKind {
         match self {
             ModelKind::Canary => "canary",
             ModelKind::Parakeet => "parakeet",
+            ModelKind::Reazon => "reazon",
             ModelKind::Paraformer => "paraformer",
             ModelKind::Dolphin => "dolphin",
         }
@@ -562,6 +573,10 @@ fn load_adapter(dir: &Path, lang: &str, kind: ModelKind) -> std::sync::Arc<dyn A
         ModelKind::Parakeet => std::sync::Arc::new(
             ParakeetAdapter::load(dir)
                 .unwrap_or_else(|e| panic!("load parakeet from {}: {e}", dir.display())),
+        ),
+        ModelKind::Reazon => std::sync::Arc::new(
+            ReazonAdapter::load(dir)
+                .unwrap_or_else(|e| panic!("load reazon from {}: {e}", dir.display())),
         ),
         ModelKind::Paraformer => std::sync::Arc::new(
             ParaformerAdapter::load(dir)

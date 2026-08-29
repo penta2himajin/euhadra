@@ -36,6 +36,8 @@ use euhadra::paraformer::ParaformerAdapter;
 #[cfg(feature = "onnx")]
 use euhadra::parakeet::ParakeetAdapter;
 #[cfg(feature = "onnx")]
+use euhadra::reazon::ReazonAdapter;
+#[cfg(feature = "onnx")]
 use euhadra::dolphin::DolphinAdapter;
 use euhadra::prelude::*;
 #[cfg(feature = "onnx")]
@@ -75,13 +77,22 @@ struct Cli {
     #[arg(long)]
     update_baseline: bool,
 
+    /// Optional path to a ReazonSpeech Zipformer INT8 bundle
+    /// (`encoder.int8.onnx`, `decoder.int8.onnx`, `joiner.int8.onnx`,
+    /// `tokens.txt` — layout from `scripts/setup_reazon_ja.sh`). When
+    /// provided, `ja` runs through `ReazonAdapter`.
+    ///
+    /// **Takes precedence over `--parakeet-ja-dir`.** Shipping path after
+    /// the hayamimi speed compare: ~2× RTF vs Parakeet-ja at ~72 MB
+    /// (Apache-2.0) instead of ~2.4 GB (CC-BY-4.0).
+    #[arg(long, env = "REAZON_JA_DIR")]
+    reazon_ja_dir: Option<PathBuf>,
+
     /// Optional path to an `nvidia/parakeet-tdt_ctc-0.6b-ja` ONNX model
     /// directory (encoder-model.onnx, decoder_joint-model.onnx,
-    /// vocab.txt, *.data). When provided, the `ja` language is run
-    /// through ParakeetAdapter (80-mel) instead of WhisperLocal — gives
-    /// dramatically better CER (~6–9% vs whisper-tiny's ~42%). Requires
-    /// `--features onnx` at build time. When omitted, `ja` falls back
-    /// to whisper.
+    /// vocab.txt, *.data). When provided and `--reazon-ja-dir` is
+    /// absent, the `ja` language is run through ParakeetAdapter
+    /// (80-mel) instead of WhisperLocal. Requires `--features onnx`.
     #[arg(long, env = "PARAKEET_JA_DIR")]
     parakeet_ja_dir: Option<PathBuf>,
 
@@ -217,6 +228,7 @@ async fn run() -> Result<(), String> {
 
     let mut measured: BTreeMap<String, LanguageBaseline> = BTreeMap::new();
 
+    let mut used_reazon_ja = false;
     let mut used_parakeet_ja = false;
     let mut used_canary_en = false;
     let mut used_paraformer_zh = false;
@@ -245,6 +257,7 @@ async fn run() -> Result<(), String> {
             &cli.whisper_cli,
             model,
             lang,
+            cli.reazon_ja_dir.as_deref(),
             cli.parakeet_ja_dir.as_deref(),
             cli.paraformer_zh_dir.as_deref(),
             cli.canary_es_dir.as_deref(),
@@ -253,7 +266,9 @@ async fn run() -> Result<(), String> {
             cli.whisper_onnx_ko_dir.as_deref(),
             cli.dolphin_ko_dir.as_deref(),
         )?;
-        if lang == "ja" && cli.parakeet_ja_dir.is_some() {
+        if lang == "ja" && cli.reazon_ja_dir.is_some() {
+            used_reazon_ja = true;
+        } else if lang == "ja" && cli.parakeet_ja_dir.is_some() {
             used_parakeet_ja = true;
         }
         if lang == "en" && cli.canary_en_dir.is_some() {
@@ -292,7 +307,9 @@ async fn run() -> Result<(), String> {
         } else {
             "ggml-tiny.en"
         },
-        ja_model = if used_parakeet_ja {
+        ja_model = if used_reazon_ja {
+            "reazonspeech-zipformer-ja-en-int8"
+        } else if used_parakeet_ja {
             "parakeet-tdt_ctc-0.6b-ja"
         } else {
             "ggml-tiny"
@@ -512,6 +529,7 @@ fn build_pipeline(
     whisper_cli: &Path,
     model: &Path,
     lang: &str,
+    reazon_ja_dir: Option<&Path>,
     parakeet_ja_dir: Option<&Path>,
     paraformer_zh_dir: Option<&Path>,
     canary_es_dir: Option<&Path>,
@@ -538,6 +556,19 @@ fn build_pipeline(
     };
 
     builder = match lang {
+        "ja" if reazon_ja_dir.is_some() => {
+            #[cfg(feature = "onnx")]
+            {
+                let dir = reazon_ja_dir.unwrap();
+                let asr = ReazonAdapter::load(dir)
+                    .map_err(|e| format!("load reazon ja from {}: {e}", dir.display()))?;
+                builder.asr(asr)
+            }
+            #[cfg(not(feature = "onnx"))]
+            {
+                return Err("--reazon-ja-dir requires --features onnx at build time".into());
+            }
+        }
         "ja" if parakeet_ja_dir.is_some() => {
             #[cfg(feature = "onnx")]
             {
