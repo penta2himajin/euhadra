@@ -14,7 +14,7 @@
 //! ```text
 //! cargo run --release --features onnx,vad --example eval_vad -- \
 //!     --parakeet-en-dir vendor/parakeet_v3 \
-//!     --parakeet-ja-dir vendor/parakeet_ja \
+//!     --reazon-ja-dir vendor/reazon_ja \
 //!     --out docs/benchmarks/vad_delta_wer.json
 //! ```
 
@@ -41,16 +41,15 @@ struct Cli {
     #[arg(long, default_value = "data/fleurs_subset")]
     data_dir: PathBuf,
 
-    /// `canary-180m-flash` bundle. **This is what euhadra actually uses
-    /// for `en`** (`docs/benchmarks/ci_baseline.json`), and it is an
-    /// attention encoder-decoder — the architecture whose decoder decides
-    /// its own output length, and so the one where silence can run away.
-    /// Prefer it over `--parakeet-en-dir` when measuring hallucination.
+    /// `canary-180m-flash` bundle. Legacy AED path for `en` — prefer
+    /// `--parakeet-en-dir` for the shipped transducer configuration.
+    /// Still useful when deliberately measuring AED silence hallucination.
     #[arg(long)]
     canary_en_dir: Option<PathBuf>,
 
-    /// `parakeet-tdt-0.6b-v3` bundle, an alternative for `en`. A
-    /// transducer, so output length is bounded by acoustic frames.
+    /// `parakeet-tdt-0.6b-v3` INT8 bundle for `en` (shipping path).
+    /// A transducer, so output length is bounded by acoustic frames.
+    /// Takes precedence over `--canary-en-dir` when both are set.
     #[arg(long)]
     parakeet_en_dir: Option<PathBuf>,
 
@@ -63,9 +62,14 @@ struct Cli {
     #[arg(long)]
     parakeet_ja_dir: Option<PathBuf>,
 
-    /// `canary-180m-flash` bundle for `es`. Same multilingual checkpoint
-    /// as `--canary-en-dir` (en / de / fr / es); a separate flag so CI can
-    /// point at `vendor/canary_es` or reuse the en cache.
+    /// `parakeet-tdt-0.6b-v3` INT8 for `es` (shipping path). Same
+    /// multilingual checkpoint as `--parakeet-en-dir`; falls back to
+    /// that flag when omitted. Prefer over Canary when set.
+    #[arg(long)]
+    parakeet_es_dir: Option<PathBuf>,
+
+    /// `canary-180m-flash` bundle for `es` (legacy). Falls back to
+    /// `--canary-en-dir` when omitted.
     #[arg(long)]
     canary_es_dir: Option<PathBuf>,
 
@@ -274,16 +278,15 @@ fn main() {
     let mut probes: BTreeMap<String, String> = BTreeMap::new();
 
     for lang in &cli.langs {
-        // Canary wins for `en` when both are supplied: it is the model
-        // euhadra ships for that language, so it is the one whose
-        // behaviour on silence matters. `es` is the same multilingual
-        // Canary checkpoint (#150). `zh` ships Paraformer (#156).
+        // Parakeet-v3 wins for `en`/`es` when supplied: it is the model
+        // euhadra ships for those languages (transducer; silence-bounded).
+        // Canary remains available for AED hallucination contrast.
         let (model_dir, kind) = match lang.as_str() {
-            "en" if cli.canary_en_dir.is_some() => {
-                (cli.canary_en_dir.clone().unwrap(), ModelKind::Canary)
-            }
             "en" if cli.parakeet_en_dir.is_some() => {
                 (cli.parakeet_en_dir.clone().unwrap(), ModelKind::Parakeet)
+            }
+            "en" if cli.canary_en_dir.is_some() => {
+                (cli.canary_en_dir.clone().unwrap(), ModelKind::Canary)
             }
             "ja" if cli.reazon_ja_dir.is_some() => {
                 (cli.reazon_ja_dir.clone().unwrap(), ModelKind::Reazon)
@@ -292,15 +295,23 @@ fn main() {
                 (cli.parakeet_ja_dir.clone().unwrap(), ModelKind::Parakeet)
             }
             "es" => {
-                let dir = cli
-                    .canary_es_dir
+                let parakeet = cli
+                    .parakeet_es_dir
                     .clone()
-                    .or_else(|| cli.canary_en_dir.clone());
-                match dir {
-                    Some(d) => (d, ModelKind::Canary),
-                    None => {
-                        eprintln!("[skip] es: model directory not supplied");
-                        continue;
+                    .or_else(|| cli.parakeet_en_dir.clone());
+                if let Some(d) = parakeet {
+                    (d, ModelKind::Parakeet)
+                } else {
+                    let dir = cli
+                        .canary_es_dir
+                        .clone()
+                        .or_else(|| cli.canary_en_dir.clone());
+                    match dir {
+                        Some(d) => (d, ModelKind::Canary),
+                        None => {
+                            eprintln!("[skip] es: model directory not supplied");
+                            continue;
+                        }
                     }
                 }
             }

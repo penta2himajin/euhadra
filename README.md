@@ -577,7 +577,8 @@ Setup scripts (idempotent, skip-if-present):
 
 ```bash
 scripts/setup_whisper.sh                   # whisper.cpp + ggml-tiny models (zh L1)
-scripts/setup_canary.sh                    # canary-180m-flash-onnx (en + es L1, ~213 MB INT8)
+scripts/setup_parakeet_v3.sh               # parakeet-tdt-0.6b-v3 ONNX INT8 (en + es L1, ~670 MB)
+scripts/setup_canary.sh                    # canary-180m-flash-onnx (legacy en/es, ~213 MB INT8)
 scripts/setup_reazon_ja.sh                 # ReazonSpeech Zipformer INT8 (ja L1, ~72 MB)
 scripts/setup_parakeet_ja.sh               # parakeet-tdt_ctc-0.6b-ja ONNX (legacy ja, ~2.4 GB)
 scripts/setup_paraformer_zh.sh             # FunASR Paraformer-large ONNX (zh L1, ~240 MB)

@@ -23,7 +23,7 @@ The survey covered every model slot in the pipeline. The short version:
 
 | Slot | Shipping today | Verdict |
 |---|---|---|
-| ASR en / es | `canary-180m-flash` INT8 | Upgrade path exists (`canary-1b-v2`), not urgent |
+| ASR en / es | `parakeet-tdt-0.6b-v3` INT8 | Canary INT8 kept as legacy fallback; size ~3× Canary |
 | ASR ja | `parakeet-tdt_ctc-0.6b-ja` | **Keep** — still the strongest option measured |
 | ASR zh | `paraformer-large` | Accuracy headroom exists |
 | ASR ko | `whisper-large-v3-turbo` q4 | **Worst offender** — RTF 1.34 in `ci_baseline.json` |

@@ -21,11 +21,11 @@ euhadra のパイプラインを評価する際に使用する ASR テストデ�
 
 1. **`evaluate-asr` ジョブ — ASR live スモーク**
    - FLEURS の en / ja / zh / es / ko から各 10 発話を実音声で ASR に通す
-     (**en: canary-180m-flash INT8** — issue #57 / PR #61 以降 (旧: parakeet-tdt-0.6b-v3 PR #12)、
-     **ja: parakeet-tdt_ctc-0.6b-ja** — PR #11 以降、
+     (**en: parakeet-tdt-0.6b-v3 INT8** — 出荷経路（旧: Canary INT8 / issue #57、その前は Parakeet-v3 FP32 PR #12）、
+     **ja: reazonspeech-zipformer-ja-en INT8** — #162 以降（旧: parakeet-tdt_ctc-0.6b-ja PR #11）、
      **zh: paraformer-large** — PR #14 以降、
-     **es: canary-180m-flash via istupakov ONNX** — PR #28 以降、`--canary-es-dir` で起動、
-     **ko: sensevoice-small** — PR #45 以降)
+     **es: parakeet-tdt-0.6b-v3 INT8** — en と同梱（旧: Canary INT8 / PR #28）、
+     **ko: dolphin-small-ctc INT8** — §I 以降（旧: whisper-onnx-turbo / SenseVoice）)
    - 計測値: **WER (en) / CER (ja, zh, es)**、**E2E ユーザー知覚レイテンシ p50/p95**、**ASR 段レイテンシ p50/p95**
    - 期待実行時間: 3–5 分 (whisper.cpp ビルド + tiny モデル + FLEURS subset を CI キャッシュ)
 2. **`evaluate-fast` ジョブ — 層 ablation + 各層レイテンシ μ-benchmark**
