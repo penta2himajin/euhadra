@@ -6,8 +6,8 @@
 //!
 //! ```text
 //! cargo run --release --features onnx,vad,testing --example eval_endpoint -- \
-//!     --canary-en-dir vendor/canary_en \
-//!     --parakeet-ja-dir vendor/parakeet_ja \
+//!     --parakeet-en-dir vendor/parakeet_v3 \
+//!     --reazon-ja-dir vendor/reazon_ja \
 //!     --baseline docs/benchmarks/ci_baseline_endpoint.json
 //! ```
 
@@ -39,11 +39,12 @@ struct Cli {
     #[arg(long, default_value = "data/fleurs_subset")]
     data_dir: PathBuf,
 
-    /// `canary-180m-flash` bundle for `en` (shipped configuration).
+    /// `canary-180m-flash` bundle for `en` (legacy AED path).
     #[arg(long)]
     canary_en_dir: Option<PathBuf>,
 
-    /// `parakeet-tdt-0.6b-v3` alternative for `en`.
+    /// `parakeet-tdt-0.6b-v3` INT8 for `en` (shipping path). Prefer over
+    /// `--canary-en-dir` when both are set.
     #[arg(long)]
     parakeet_en_dir: Option<PathBuf>,
 
@@ -56,8 +57,13 @@ struct Cli {
     #[arg(long)]
     parakeet_ja_dir: Option<PathBuf>,
 
-    /// `canary-180m-flash` for `es` (same multilingual checkpoint as en).
-    /// Falls back to `--canary-en-dir` when omitted.
+    /// `parakeet-tdt-0.6b-v3` INT8 for `es`. Falls back to
+    /// `--parakeet-en-dir` when omitted.
+    #[arg(long)]
+    parakeet_es_dir: Option<PathBuf>,
+
+    /// `canary-180m-flash` for `es` (legacy). Falls back to
+    /// `--canary-en-dir` when omitted.
     #[arg(long)]
     canary_es_dir: Option<PathBuf>,
 
@@ -121,7 +127,7 @@ impl ModelKind {
     fn label(self) -> &'static str {
         match self {
             ModelKind::Canary => "canary-180m-flash-int8",
-            ModelKind::Parakeet => "parakeet",
+            ModelKind::Parakeet => "parakeet-tdt-0.6b-v3-int8",
             ModelKind::Reazon => "reazonspeech-zipformer-ja-en-int8",
             ModelKind::Paraformer => "paraformer-large-zh",
             ModelKind::Dolphin => "dolphin-small-ctc-int8",
@@ -183,11 +189,11 @@ fn main() {
 
     for lang in &cli.langs {
         let (model_dir, kind) = match lang.as_str() {
-            "en" if cli.canary_en_dir.is_some() => {
-                (cli.canary_en_dir.clone().unwrap(), ModelKind::Canary)
-            }
             "en" if cli.parakeet_en_dir.is_some() => {
                 (cli.parakeet_en_dir.clone().unwrap(), ModelKind::Parakeet)
+            }
+            "en" if cli.canary_en_dir.is_some() => {
+                (cli.canary_en_dir.clone().unwrap(), ModelKind::Canary)
             }
             "ja" if cli.reazon_ja_dir.is_some() => {
                 (cli.reazon_ja_dir.clone().unwrap(), ModelKind::Reazon)
@@ -196,15 +202,23 @@ fn main() {
                 (cli.parakeet_ja_dir.clone().unwrap(), ModelKind::Parakeet)
             }
             "es" => {
-                let dir = cli
-                    .canary_es_dir
+                let parakeet = cli
+                    .parakeet_es_dir
                     .clone()
-                    .or_else(|| cli.canary_en_dir.clone());
-                match dir {
-                    Some(d) => (d, ModelKind::Canary),
-                    None => {
-                        eprintln!("[skip] es: model directory not supplied");
-                        continue;
+                    .or_else(|| cli.parakeet_en_dir.clone());
+                if let Some(d) = parakeet {
+                    (d, ModelKind::Parakeet)
+                } else {
+                    let dir = cli
+                        .canary_es_dir
+                        .clone()
+                        .or_else(|| cli.canary_en_dir.clone());
+                    match dir {
+                        Some(d) => (d, ModelKind::Canary),
+                        None => {
+                            eprintln!("[skip] es: model directory not supplied");
+                            continue;
+                        }
                     }
                 }
             }

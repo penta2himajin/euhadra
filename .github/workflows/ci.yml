@@ -179,21 +179,12 @@ jobs:
   # recording with Δ still near zero, so segmentation can break without
   # the error rate showing it.
   #
-  # Only `en` and `ja`: those are the two languages with measurements
-  # in docs/benchmarks/vad_delta_wer.md. zh / ko / es were never run and
-  # gating them would assert a number nobody has checked.
-  #
-  # `ja` reproduces bit-for-bit between a developer machine and this
-  # runner; `en` does not, drifting ~0.008 in Δ because Canary's
-  # autoregressive greedy decode turns a float reduction-order
-  # difference into a different token and diverges from there. Parakeet
-  # is frame-synchronous and cannot. `--max-segments` is unaffected in
-  # both — `earshot` is pure Rust and the segmenter is integer logic.
-  #
-  # So 0.03 is not slack, it is the room the AED's non-determinism
-  # needs: measured worst case +0.0150 plus ~0.008 of drift that
-  # happened to fall favourably this time. If CI starts brushing the
-  # limit, measure `en` with `--parakeet-en-dir` rather than raising it.
+  # en / ja / es / zh / ko all ship through this gate. Historical ΔWER
+  # notes for Canary AED are in docs/benchmarks/vad_delta_wer.md;
+  # shipped `en`/`es` are now Parakeet-v3 INT8 (frame-synchronous TDT),
+  # so float-order drift is no longer the AED concern that set the
+  # original 0.03 budget. Keep the threshold until a Parakeet-only
+  # remeasure tightens it.
   evaluate-vad:
     name: evaluate (VAD ΔWER)
     runs-on: ubuntu-latest
@@ -229,18 +220,18 @@ jobs:
         if: steps.fleurs-cache.outputs.cache-hit != 'true'
         run: python3 scripts/download_fleurs_subset.py --lang en --lang ja --lang zh --lang es --lang ko --n 30
 
-      - name: Cache canary-en ONNX bundle (~213 MB INT8)
-        id: canary-en-cache
+      - name: Cache parakeet-v3 ONNX bundle (~670 MB INT8, en+es)
+        id: parakeet-v3-cache
         uses: actions/cache@v4
         with:
-          path: vendor/canary_en
-          key: canary-180m-flash-istupakov-int8-v1
+          path: vendor/parakeet_v3
+          key: parakeet-tdt-0.6b-v3-istupakov-int8-v1
 
-      - name: Download canary-en model (cache miss only)
-        if: steps.canary-en-cache.outputs.cache-hit != 'true'
-        run: bash scripts/setup_canary.sh
+      - name: Download parakeet-v3 model (cache miss only)
+        if: steps.parakeet-v3-cache.outputs.cache-hit != 'true'
+        run: bash scripts/setup_parakeet_v3.sh
         env:
-          CANARY_DIR: vendor/canary_en
+          PARAKEET_V3_DIR: vendor/parakeet_v3
 
       - name: Cache reazon-ja ONNX bundle (~72 MB INT8)
         id: reazon-ja-cache
@@ -289,13 +280,13 @@ jobs:
       # docs/benchmarks/vad_delta_wer.md is how the defaults were chosen;
       # re-running it here would spend ~30 minutes protecting numbers
       # that are not what anyone ships. −45 dBFS is the realistic side:
-      # digital silence flatters a level detector. `es` reuses the en
-      # Canary INT8 cache (same multilingual checkpoint; #150). `zh`
-      # uses Paraformer (#156). `ko` uses Dolphin (#157).
+      # digital silence flatters a level detector. `en`/`es` share the
+      # Parakeet-v3 INT8 multilingual checkpoint. `zh` uses Paraformer
+      # (#156). `ko` uses Dolphin (#157).
       - name: VAD ΔWER gate (en / ja / es / zh / ko)
         run: |
           cargo run --release --features onnx,vad --example eval_vad --locked -- \
-            --canary-en-dir vendor/canary_en \
+            --parakeet-en-dir vendor/parakeet_v3 \
             --reazon-ja-dir vendor/reazon_ja \
             --paraformer-zh-dir vendor/paraformer_zh \
             --dolphin-ko-dir vendor/dolphin_ko \
@@ -346,18 +337,18 @@ jobs:
         if: steps.fleurs-cache.outputs.cache-hit != 'true'
         run: python3 scripts/download_fleurs_subset.py --lang en --lang ja --lang zh --lang es --lang ko --n 30
 
-      - name: Cache canary-en ONNX bundle (~213 MB INT8)
-        id: canary-en-cache
+      - name: Cache parakeet-v3 ONNX bundle (~670 MB INT8, en+es)
+        id: parakeet-v3-cache
         uses: actions/cache@v4
         with:
-          path: vendor/canary_en
-          key: canary-180m-flash-istupakov-int8-v1
+          path: vendor/parakeet_v3
+          key: parakeet-tdt-0.6b-v3-istupakov-int8-v1
 
-      - name: Download canary-en model (cache miss only)
-        if: steps.canary-en-cache.outputs.cache-hit != 'true'
-        run: bash scripts/setup_canary.sh
+      - name: Download parakeet-v3 model (cache miss only)
+        if: steps.parakeet-v3-cache.outputs.cache-hit != 'true'
+        run: bash scripts/setup_parakeet_v3.sh
         env:
-          CANARY_DIR: vendor/canary_en
+          PARAKEET_V3_DIR: vendor/parakeet_v3
 
       - name: Cache reazon-ja ONNX bundle (~72 MB INT8)
         id: reazon-ja-cache
@@ -404,26 +395,29 @@ jobs:
       - name: Endpoint latency gate (en / ja / es / zh / ko)
         run: |
           cargo run --release --features onnx,vad,testing --example eval_endpoint --locked -- \
-            --canary-en-dir vendor/canary_en \
+            --parakeet-en-dir vendor/parakeet_v3 \
             --reazon-ja-dir vendor/reazon_ja \
             --paraformer-zh-dir vendor/paraformer_zh \
             --dolphin-ko-dir vendor/dolphin_ko \
             --langs en,ja,es,zh,ko \
             --baseline docs/benchmarks/ci_baseline_endpoint.json
 
-  # L1 ASR live smoke (§1.1 / §3.8): runs Canary-180M-Flash (en + es),
+  # L1 ASR live smoke (§1.1 / §3.8): runs Parakeet-v3 INT8 (en + es),
   # ReazonSpeech Zipformer (ja), Paraformer-large (zh), Dolphin CTC
   # (ko), and whisper-tiny (fallback) on a 30-utterance FLEURS subset
   # per language, measures WER/CER + ASR/E2E latency + RTF, and gates
   # against docs/benchmarks/ci_baseline.json. All large artefacts
   # (whisper.cpp build, GGML models, FLEURS subset, reazon-ja
-  # ONNX bundle, paraformer-zh ONNX bundle, canary en + es ONNX
-  # bundles, whisper-onnx-turbo ONNX bundle) are cached so warm
+  # ONNX bundle, paraformer-zh ONNX bundle, parakeet-v3 ONNX
+  # bundle, whisper-onnx-turbo ONNX bundle) are cached so warm
   # runs finish in a couple of minutes.
-  # Parakeet-ja replaced whisper-tiny for `ja` in PR #11 (CER 42% → 3.3%).
+  # Parakeet-ja replaced whisper-tiny for `ja` in PR #11 (CER 42% → 3.3%),
+  # then ReazonSpeech Zipformer INT8 replaced Parakeet-ja (#162).
   # Parakeet-v3 replaced whisper-tiny.en for `en` in PR #12 (WER 8.4% → 7.5%),
   # then Canary-180M-Flash INT8 replaced Parakeet-v3 for `en` in
-  # PR #61 / issue #57 (WER 7.5% → 4.4%, ~2.4 GB → ~213 MB).
+  # PR #61 / issue #57 (WER 7.5% → 4.4%, ~2.4 GB → ~213 MB),
+  # then Parakeet-v3 INT8 returned for `en`/`es` for transducer
+  # silence-hallucination resistance (~670 MB INT8).
   # Paraformer-large replaced whisper-tiny for `zh` in PR #14
   # (CER 37% → ~5%; baseline numbers recalibrated in a follow-up commit).
   # SenseVoice-Small added `ko` in PR #45, then Whisper-large-v3-turbo
@@ -557,40 +551,21 @@ jobs:
         env:
           PARAFORMER_ZH_DIR: vendor/paraformer_zh
 
-      - name: Cache canary-es ONNX bundle (~213 MB INT8)
-        id: canary-es-cache
+      # Shared multilingual INT8 checkpoint for en + es (~670 MB).
+      # One cache slot (unlike the old dual canary_en / canary_es layout):
+      # ParakeetAdapter does not mutate the on-disk weights per language.
+      - name: Cache parakeet-v3 ONNX bundle (~670 MB INT8, en+es)
+        id: parakeet-v3-cache
         uses: actions/cache@v4
         with:
-          path: vendor/canary_es
-          key: canary-180m-flash-istupakov-es-int8-v1
+          path: vendor/parakeet_v3
+          key: parakeet-tdt-0.6b-v3-istupakov-int8-v1
 
-      - name: Download canary-es model (cache miss only)
-        if: steps.canary-es-cache.outputs.cache-hit != 'true'
-        run: bash scripts/setup_canary.sh
+      - name: Download parakeet-v3 model (cache miss only)
+        if: steps.parakeet-v3-cache.outputs.cache-hit != 'true'
+        run: bash scripts/setup_parakeet_v3.sh
         env:
-          CANARY_DIR: vendor/canary_es
-
-      # canary-en uses the SAME `canary-180m-flash` multilingual
-      # checkpoint as canary-es — both now run on the INT8 weights
-      # (issue #58 flipped es from FP32 → INT8, matching en's Phase 2
-      # swap in issue #57). The bundles still live in separate vendor
-      # dirs / cache slots because the adapter is configured per
-      # language (e.g. language tag, prompt format) and we don't want
-      # one language's hypothesis-time mutation to clobber the other's
-      # cache entry. The cache keys are kept distinct (`-es-int8-v1`
-      # vs `-int8-v1`) so the two slots can be evicted independently.
-      - name: Cache canary-en ONNX bundle (~213 MB INT8)
-        id: canary-en-cache
-        uses: actions/cache@v4
-        with:
-          path: vendor/canary_en
-          key: canary-180m-flash-istupakov-int8-v1
-
-      - name: Download canary-en model (cache miss only)
-        if: steps.canary-en-cache.outputs.cache-hit != 'true'
-        run: bash scripts/setup_canary.sh
-        env:
-          CANARY_DIR: vendor/canary_en
+          PARAKEET_V3_DIR: vendor/parakeet_v3
 
       # Whisper-large-v3-turbo ONNX bundle for ko (~900 MB total:
       # tokenizer.json + 3 quantised ONNX files at `q4`). Direct
@@ -628,57 +603,23 @@ jobs:
         env:
           DOLPHIN_KO_DIR: vendor/dolphin_ko
 
-      - name: Build eval binary (with onnx for Reazon/Paraformer/Canary/WhisperOnnx/Dolphin adapters)
+      - name: Build eval binary (with onnx for Reazon/Paraformer/Parakeet/WhisperOnnx/Dolphin adapters)
         run: cargo build --release --example eval_l1_smoke --features onnx --locked
 
-      - name: Prepare ORT profile output dir
-        run: mkdir -p "${{ github.workspace }}/canary-profile"
-
       - name: Run L1 smoke evaluation
-        env:
-          # Force INT8 for both `en` and `es` canary slots. `en` already
-          # defaults to INT8 in `load_canary_adapter` (issue #57), so this
-          # is a no-op for `en` and the actual flip for `es` (issue #58).
-          # Setting it at job scope keeps the two slots symmetric and
-          # makes the variant explicit in the CI log.
-          CANARY_INT8: "1"
-          # ORT per-op profile JSONs for both Canary sessions (en + es,
-          # encoder + decoder = 4 traces total, named
-          # `canary-{encoder,decoder}_<timestamp>.json`). Uploaded as
-          # an artifact by the next step. Used to diagnose whether the
-          # ORT runtime is picking INT8 GEMM kernels
-          # (`MatMulIntegerToFloat` / `QLinearMatMul`) or falling back
-          # to dequantize-then-FP32 on runners without AVX-VNNI. See
-          # `src/canary/profiling.rs` and issue #58 PR #64 for the
-          # investigation context.
-          CANARY_PROFILE_DIR: ${{ github.workspace }}/canary-profile
         run: |
           ./target/release/examples/eval_l1_smoke \
             --whisper-cli vendor/whisper.cpp/build/bin/whisper-cli \
             --model-en vendor/whisper.cpp/models/ggml-tiny.en.bin \
             --model-multi vendor/whisper.cpp/models/ggml-tiny.bin \
             --data-dir data/fleurs_subset \
-            --canary-en-dir vendor/canary_en \
+            --parakeet-v3-dir vendor/parakeet_v3 \
             --reazon-ja-dir vendor/reazon_ja \
             --paraformer-zh-dir vendor/paraformer_zh \
-            --canary-es-dir vendor/canary_es \
             --dolphin-ko-dir vendor/dolphin_ko \
             --langs en,ja,zh,es,ko \
             --baseline docs/benchmarks/ci_baseline.json \
             --dump-utterances
-
-      - name: List captured Canary profile traces
-        if: always()
-        run: ls -la "${{ github.workspace }}/canary-profile" || true
-
-      - name: Upload Canary ORT profile traces
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: canary-ort-profile-${{ github.run_id }}
-          path: ${{ github.workspace }}/canary-profile/*.json
-          if-no-files-found: warn
-          retention-days: 7
 
   # L1 fast layer ablation + per-layer μ-benchmark (§1.1 / §3.8 Phase A-2).
   # Replays committed text fixtures through MockAsr → post-ASR layers,

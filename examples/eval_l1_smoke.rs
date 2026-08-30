@@ -104,31 +104,30 @@ struct Cli {
     #[arg(long, env = "PARAFORMER_ZH_DIR")]
     paraformer_zh_dir: Option<PathBuf>,
 
+    /// Optional path to an `istupakov/parakeet-tdt-0.6b-v3-onnx`
+    /// INT8 bundle (`encoder-model.int8.onnx`,
+    /// `decoder_joint-model.int8.onnx`, `vocab.txt` — layout from
+    /// `scripts/setup_parakeet_v3.sh`). When provided, **both** `en`
+    /// and `es` run through `ParakeetAdapter` (25-language EU TDT).
+    ///
+    /// **Takes precedence over `--canary-en-dir` / `--canary-es-dir`.**
+    /// Shipping path after Canary AED silence-hallucination findings:
+    /// transducer output length is bounded by acoustic frames (~670 MB
+    /// INT8 vs Canary ~213 MB). Requires `--features onnx`.
+    #[arg(long, env = "PARAKEET_V3_DIR")]
+    parakeet_v3_dir: Option<PathBuf>,
+
     /// Optional path to an `istupakov/canary-180m-flash-onnx` bundle
     /// (`encoder-model.onnx`, `decoder-model.onnx`, `vocab.txt`; INT8
-    /// pair `encoder-model.int8.onnx` / `decoder-model.int8.onnx`
-    /// also accepted via the `with_int8_weights` config). When
-    /// provided, the `es` language is run through `CanaryAdapter`
-    /// — Canary-180M-Flash reports MLS-Spanish WER 3.17 % on the
-    /// official model card, vs. whisper-tiny in the ~50 % range.
-    /// Requires `--features onnx` at build time. Populate via
-    /// `scripts/setup_canary.sh`.
+    /// pair also accepted). Legacy `es` route when `--parakeet-v3-dir`
+    /// is absent. Populate via `scripts/setup_canary.sh`.
     #[arg(long, env = "CANARY_ES_DIR")]
     canary_es_dir: Option<PathBuf>,
 
     /// Optional path to an `istupakov/canary-180m-flash-onnx` bundle
-    /// for English. `canary-180m-flash` is a single multilingual
-    /// checkpoint covering en / de / fr / es, so the same bundle the
-    /// `--canary-es-dir` flag uses works here too — they may point at
-    /// the same directory. When provided, the `en` language is run
-    /// through `CanaryAdapter` instead of whisper-tiny.en (the
-    /// previous Parakeet-v3 `--parakeet-en-dir` route was retired in
-    /// issue #57 — Canary INT8 is the default and only ONNX en route
-    /// in CI). INT8 weights are selected by default to honour the
-    /// size target behind issue #57 (~213 MB vs Parakeet-v3's
-    /// ~2.4 GB); set `CANARY_INT8=0` to force FP32. Requires
-    /// `--features onnx` at build time. Populate via
-    /// `scripts/setup_canary.sh`.
+    /// for English. Legacy `en` route when `--parakeet-v3-dir` is
+    /// absent (issue #57 size trade; superseded for hallucination
+    /// resistance by Parakeet-v3 INT8). Requires `--features onnx`.
     #[arg(long, env = "CANARY_EN_DIR")]
     canary_en_dir: Option<PathBuf>,
 
@@ -230,7 +229,10 @@ async fn run() -> Result<(), String> {
 
     let mut used_reazon_ja = false;
     let mut used_parakeet_ja = false;
+    let mut used_parakeet_v3_en = false;
+    let mut used_parakeet_v3_es = false;
     let mut used_canary_en = false;
+    let mut used_canary_es = false;
     let mut used_paraformer_zh = false;
     let mut used_sensevoice_ko = false;
     let mut used_whisper_onnx_ko = false;
@@ -260,6 +262,7 @@ async fn run() -> Result<(), String> {
             cli.reazon_ja_dir.as_deref(),
             cli.parakeet_ja_dir.as_deref(),
             cli.paraformer_zh_dir.as_deref(),
+            cli.parakeet_v3_dir.as_deref(),
             cli.canary_es_dir.as_deref(),
             cli.canary_en_dir.as_deref(),
             cli.sensevoice_dir.as_deref(),
@@ -271,8 +274,15 @@ async fn run() -> Result<(), String> {
         } else if lang == "ja" && cli.parakeet_ja_dir.is_some() {
             used_parakeet_ja = true;
         }
-        if lang == "en" && cli.canary_en_dir.is_some() {
+        if lang == "en" && cli.parakeet_v3_dir.is_some() {
+            used_parakeet_v3_en = true;
+        } else if lang == "en" && cli.canary_en_dir.is_some() {
             used_canary_en = true;
+        }
+        if lang == "es" && cli.parakeet_v3_dir.is_some() {
+            used_parakeet_v3_es = true;
+        } else if lang == "es" && cli.canary_es_dir.is_some() {
+            used_canary_es = true;
         }
         if lang == "zh" && cli.paraformer_zh_dir.is_some() {
             used_paraformer_zh = true;
@@ -301,8 +311,10 @@ async fn run() -> Result<(), String> {
     }
 
     let asr_model_label = format!(
-        "{en_model} (en) / {ja_model} (ja) / {zh_model} (zh) / {ko_model} (ko)",
-        en_model = if used_canary_en {
+        "{en_model} (en) / {ja_model} (ja) / {zh_model} (zh) / {es_model} (es) / {ko_model} (ko)",
+        en_model = if used_parakeet_v3_en {
+            "parakeet-tdt-0.6b-v3-int8"
+        } else if used_canary_en {
             "canary-180m-flash-int8"
         } else {
             "ggml-tiny.en"
@@ -316,6 +328,13 @@ async fn run() -> Result<(), String> {
         },
         zh_model = if used_paraformer_zh {
             "paraformer-large-zh"
+        } else {
+            "ggml-tiny"
+        },
+        es_model = if used_parakeet_v3_es {
+            "parakeet-tdt-0.6b-v3-int8"
+        } else if used_canary_es {
+            "canary-180m-flash-int8"
         } else {
             "ggml-tiny"
         },
@@ -532,6 +551,7 @@ fn build_pipeline(
     reazon_ja_dir: Option<&Path>,
     parakeet_ja_dir: Option<&Path>,
     paraformer_zh_dir: Option<&Path>,
+    parakeet_v3_dir: Option<&Path>,
     canary_es_dir: Option<&Path>,
     canary_en_dir: Option<&Path>,
     sensevoice_dir: Option<&Path>,
@@ -582,6 +602,19 @@ fn build_pipeline(
             #[cfg(not(feature = "onnx"))]
             {
                 return Err("--parakeet-ja-dir requires --features onnx at build time".into());
+            }
+        }
+        "en" if parakeet_v3_dir.is_some() => {
+            #[cfg(feature = "onnx")]
+            {
+                let dir = parakeet_v3_dir.unwrap();
+                let asr = ParakeetAdapter::load(dir)
+                    .map_err(|e| format!("load parakeet-v3 en from {}: {e}", dir.display()))?;
+                builder.asr(asr)
+            }
+            #[cfg(not(feature = "onnx"))]
+            {
+                return Err("--parakeet-v3-dir requires --features onnx at build time".into());
             }
         }
         "en" if canary_en_dir.is_some() => {
@@ -643,6 +676,19 @@ fn build_pipeline(
             #[cfg(not(feature = "onnx"))]
             {
                 return Err("--sensevoice-dir requires --features onnx at build time".into());
+            }
+        }
+        "es" if parakeet_v3_dir.is_some() => {
+            #[cfg(feature = "onnx")]
+            {
+                let dir = parakeet_v3_dir.unwrap();
+                let asr = ParakeetAdapter::load(dir)
+                    .map_err(|e| format!("load parakeet-v3 es from {}: {e}", dir.display()))?;
+                builder.asr(asr)
+            }
+            #[cfg(not(feature = "onnx"))]
+            {
+                return Err("--parakeet-v3-dir requires --features onnx at build time".into());
             }
         }
         "es" if canary_es_dir.is_some() => {
