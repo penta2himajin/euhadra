@@ -82,9 +82,9 @@ struct Cli {
     /// `tokens.txt` — layout from `scripts/setup_reazon_ja.sh`). When
     /// provided, `ja` runs through `ReazonAdapter`.
     ///
-    /// **Takes precedence over `--parakeet-ja-dir`.** Shipping path after
-    /// the hayamimi speed compare: ~2× RTF vs Parakeet-ja at ~72 MB
-    /// (Apache-2.0) instead of ~2.4 GB (CC-BY-4.0).
+    /// **Takes precedence over `--parakeet-ja-dir`.** Shipping path:
+    /// ~2× RTF vs Parakeet-ja on FLEURS-ja at ~72 MB (Apache-2.0)
+    /// instead of ~2.4 GB (CC-BY-4.0).
     #[arg(long, env = "REAZON_JA_DIR")]
     reazon_ja_dir: Option<PathBuf>,
 
