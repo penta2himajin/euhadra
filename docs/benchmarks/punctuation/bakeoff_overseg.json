@@ -1,0 +1,392 @@
+{
+  "annotations": "data/punct_eval",
+  "n": 120,
+  "equiv_zh_commas": false,
+  "backends": {
+    "basic": {
+      "en": {
+        "n": 30,
+        "punct_precision": 1.0,
+        "punct_recall": 0.2132,
+        "punct_f1": 0.3515,
+        "terminal_accuracy": 0.9667,
+        "latency_ms": {
+          "p50": 0.02,
+          "p95": 0.03,
+          "mean": 0.02
+        },
+        "tp": 29,
+        "fp": 0,
+        "fn": 107
+      },
+      "es": {
+        "n": 20,
+        "punct_precision": 1.0,
+        "punct_recall": 0.1156,
+        "punct_f1": 0.2073,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 0.03,
+          "p95": 0.09,
+          "mean": 0.04
+        },
+        "tp": 20,
+        "fp": 0,
+        "fn": 153
+      },
+      "ja": {
+        "n": 30,
+        "punct_precision": 1.0,
+        "punct_recall": 0.2098,
+        "punct_f1": 0.3468,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 0.01,
+          "p95": 0.02,
+          "mean": 0.01
+        },
+        "tp": 30,
+        "fp": 0,
+        "fn": 113
+      },
+      "ko": {
+        "n": 20,
+        "punct_precision": 1.0,
+        "punct_recall": 0.25,
+        "punct_f1": 0.4,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 0.01,
+          "p95": 0.02,
+          "mean": 0.01
+        },
+        "tp": 20,
+        "fp": 0,
+        "fn": 60
+      },
+      "zh": {
+        "n": 20,
+        "punct_precision": 1.0,
+        "punct_recall": 0.1258,
+        "punct_f1": 0.2235,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 0.01,
+          "p95": 0.01,
+          "mean": 0.01
+        },
+        "tp": 20,
+        "fp": 0,
+        "fn": 139
+      }
+    },
+    "xlmr": {
+      "en": {
+        "n": 30,
+        "punct_precision": 0.8376,
+        "punct_recall": 0.7206,
+        "punct_f1": 0.7747,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 245.11,
+          "p95": 257.55,
+          "mean": 246.55
+        },
+        "tp": 98,
+        "fp": 19,
+        "fn": 38
+      },
+      "es": {
+        "n": 20,
+        "punct_precision": 0.7083,
+        "punct_recall": 0.7861,
+        "punct_f1": 0.7452,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 258.09,
+          "p95": 299.66,
+          "mean": 260.41
+        },
+        "tp": 136,
+        "fp": 56,
+        "fn": 37
+      },
+      "ja": {
+        "n": 30,
+        "punct_precision": 0.5987,
+        "punct_recall": 0.6573,
+        "punct_f1": 0.6267,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 244.25,
+          "p95": 255.6,
+          "mean": 245.96
+        },
+        "tp": 94,
+        "fp": 63,
+        "fn": 49
+      },
+      "ko": {
+        "n": 20,
+        "punct_precision": 0.7536,
+        "punct_recall": 0.65,
+        "punct_f1": 0.698,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 243.35,
+          "p95": 251.15,
+          "mean": 244.37
+        },
+        "tp": 52,
+        "fp": 17,
+        "fn": 28
+      },
+      "zh": {
+        "n": 20,
+        "punct_precision": 0.3372,
+        "punct_recall": 0.3648,
+        "punct_f1": 0.3505,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 243.63,
+          "p95": 253.16,
+          "mean": 244.76
+        },
+        "tp": 58,
+        "fp": 114,
+        "fn": 101
+      }
+    },
+    "xlmr_zh": {
+      "en": {
+        "n": 30,
+        "punct_precision": 0.8376,
+        "punct_recall": 0.7206,
+        "punct_f1": 0.7747,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 242.86,
+          "p95": 253.26,
+          "mean": 244.02
+        },
+        "tp": 98,
+        "fp": 19,
+        "fn": 38
+      },
+      "es": {
+        "n": 20,
+        "punct_precision": 0.7083,
+        "punct_recall": 0.7861,
+        "punct_f1": 0.7452,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 254.83,
+          "p95": 294.08,
+          "mean": 257.43
+        },
+        "tp": 136,
+        "fp": 56,
+        "fn": 37
+      },
+      "ja": {
+        "n": 30,
+        "punct_precision": 0.5987,
+        "punct_recall": 0.6573,
+        "punct_f1": 0.6267,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 243.3,
+          "p95": 255.68,
+          "mean": 244.38
+        },
+        "tp": 94,
+        "fp": 63,
+        "fn": 49
+      },
+      "ko": {
+        "n": 20,
+        "punct_precision": 0.7536,
+        "punct_recall": 0.65,
+        "punct_f1": 0.698,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 242.74,
+          "p95": 249.93,
+          "mean": 243.56
+        },
+        "tp": 52,
+        "fp": 17,
+        "fn": 28
+      },
+      "zh": {
+        "n": 20,
+        "punct_precision": 0.6395,
+        "punct_recall": 0.6918,
+        "punct_f1": 0.6647,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 243.99,
+          "p95": 252.28,
+          "mean": 244.66
+        },
+        "tp": 110,
+        "fp": 62,
+        "fn": 49
+      }
+    },
+    "xlmr_ja": {
+      "en": {
+        "n": 30,
+        "punct_precision": 0.8376,
+        "punct_recall": 0.7206,
+        "punct_f1": 0.7747,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 243.13,
+          "p95": 253.97,
+          "mean": 243.72
+        },
+        "tp": 98,
+        "fp": 19,
+        "fn": 38
+      },
+      "es": {
+        "n": 20,
+        "punct_precision": 0.7083,
+        "punct_recall": 0.7861,
+        "punct_f1": 0.7452,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 255.35,
+          "p95": 294.42,
+          "mean": 257.49
+        },
+        "tp": 136,
+        "fp": 56,
+        "fn": 37
+      },
+      "ja": {
+        "n": 30,
+        "punct_precision": 0.7059,
+        "punct_recall": 0.6713,
+        "punct_f1": 0.6882,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 243.51,
+          "p95": 255.42,
+          "mean": 244.19
+        },
+        "tp": 96,
+        "fp": 40,
+        "fn": 47
+      },
+      "ko": {
+        "n": 20,
+        "punct_precision": 0.7536,
+        "punct_recall": 0.65,
+        "punct_f1": 0.698,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 242.74,
+          "p95": 250.69,
+          "mean": 244.15
+        },
+        "tp": 52,
+        "fp": 17,
+        "fn": 28
+      },
+      "zh": {
+        "n": 20,
+        "punct_precision": 0.3946,
+        "punct_recall": 0.3648,
+        "punct_f1": 0.3791,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 244.51,
+          "p95": 252.19,
+          "mean": 245.37
+        },
+        "tp": 58,
+        "fp": 89,
+        "fn": 101
+      }
+    },
+    "xlmr_es": {
+      "en": {
+        "n": 30,
+        "punct_precision": 0.8376,
+        "punct_recall": 0.7206,
+        "punct_f1": 0.7747,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 243.03,
+          "p95": 254.04,
+          "mean": 244.05
+        },
+        "tp": 98,
+        "fp": 19,
+        "fn": 38
+      },
+      "es": {
+        "n": 20,
+        "punct_precision": 0.7552,
+        "punct_recall": 0.8382,
+        "punct_f1": 0.7945,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 255.8,
+          "p95": 294.43,
+          "mean": 257.87
+        },
+        "tp": 145,
+        "fp": 47,
+        "fn": 28
+      },
+      "ja": {
+        "n": 30,
+        "punct_precision": 0.5987,
+        "punct_recall": 0.6573,
+        "punct_f1": 0.6267,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 243.71,
+          "p95": 255.67,
+          "mean": 245.07
+        },
+        "tp": 94,
+        "fp": 63,
+        "fn": 49
+      },
+      "ko": {
+        "n": 20,
+        "punct_precision": 0.7536,
+        "punct_recall": 0.65,
+        "punct_f1": 0.698,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 244.21,
+          "p95": 251.09,
+          "mean": 244.98
+        },
+        "tp": 52,
+        "fp": 17,
+        "fn": 28
+      },
+      "zh": {
+        "n": 20,
+        "punct_precision": 0.3372,
+        "punct_recall": 0.3648,
+        "punct_f1": 0.3505,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 245.84,
+          "p95": 252.64,
+          "mean": 246.2
+        },
+        "tp": 58,
+        "fp": 114,
+        "fn": 101
+      }
+    }
+  }
+}

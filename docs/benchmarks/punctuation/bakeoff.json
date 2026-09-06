@@ -1,0 +1,161 @@
+{
+  "annotations": "data/punct_eval",
+  "n": 120,
+  "equiv_zh_commas": false,
+  "backends": {
+    "basic": {
+      "en": {
+        "n": 30,
+        "punct_precision": 1.0,
+        "punct_recall": 0.2132,
+        "punct_f1": 0.3515,
+        "terminal_accuracy": 0.9667,
+        "latency_ms": {
+          "p50": 0.02,
+          "p95": 0.04,
+          "mean": 0.02
+        },
+        "tp": 29,
+        "fp": 0,
+        "fn": 107
+      },
+      "es": {
+        "n": 20,
+        "punct_precision": 1.0,
+        "punct_recall": 0.1156,
+        "punct_f1": 0.2073,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 0.03,
+          "p95": 0.09,
+          "mean": 0.04
+        },
+        "tp": 20,
+        "fp": 0,
+        "fn": 153
+      },
+      "ja": {
+        "n": 30,
+        "punct_precision": 1.0,
+        "punct_recall": 0.2098,
+        "punct_f1": 0.3468,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 0.01,
+          "p95": 0.02,
+          "mean": 0.01
+        },
+        "tp": 30,
+        "fp": 0,
+        "fn": 113
+      },
+      "ko": {
+        "n": 20,
+        "punct_precision": 1.0,
+        "punct_recall": 0.25,
+        "punct_f1": 0.4,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 0.01,
+          "p95": 0.02,
+          "mean": 0.01
+        },
+        "tp": 20,
+        "fp": 0,
+        "fn": 60
+      },
+      "zh": {
+        "n": 20,
+        "punct_precision": 1.0,
+        "punct_recall": 0.1258,
+        "punct_f1": 0.2235,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 0.01,
+          "p95": 0.01,
+          "mean": 0.01
+        },
+        "tp": 20,
+        "fp": 0,
+        "fn": 139
+      }
+    },
+    "xlmr": {
+      "en": {
+        "n": 30,
+        "punct_precision": 0.8376,
+        "punct_recall": 0.7206,
+        "punct_f1": 0.7747,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 241.97,
+          "p95": 253.55,
+          "mean": 243.62
+        },
+        "tp": 98,
+        "fp": 19,
+        "fn": 38
+      },
+      "es": {
+        "n": 20,
+        "punct_precision": 0.7083,
+        "punct_recall": 0.7861,
+        "punct_f1": 0.7452,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 252.87,
+          "p95": 291.9,
+          "mean": 256.07
+        },
+        "tp": 136,
+        "fp": 56,
+        "fn": 37
+      },
+      "ja": {
+        "n": 30,
+        "punct_precision": 0.5987,
+        "punct_recall": 0.6573,
+        "punct_f1": 0.6267,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 241.63,
+          "p95": 254.23,
+          "mean": 243.01
+        },
+        "tp": 94,
+        "fp": 63,
+        "fn": 49
+      },
+      "ko": {
+        "n": 20,
+        "punct_precision": 0.7536,
+        "punct_recall": 0.65,
+        "punct_f1": 0.698,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 241.45,
+          "p95": 250.05,
+          "mean": 242.7
+        },
+        "tp": 52,
+        "fp": 17,
+        "fn": 28
+      },
+      "zh": {
+        "n": 20,
+        "punct_precision": 0.3372,
+        "punct_recall": 0.3648,
+        "punct_f1": 0.3505,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 243.35,
+          "p95": 253.99,
+          "mean": 244.36
+        },
+        "tp": 58,
+        "fp": 114,
+        "fn": 101
+      }
+    }
+  }
+}

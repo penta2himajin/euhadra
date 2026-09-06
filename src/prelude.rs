@@ -20,8 +20,8 @@ pub use crate::pipeline::{
     SessionResult, Stage, StageFailure,
 };
 pub use crate::processor::{
-    BasicPunctuationRestorer, Correction, CorrectionKind, ProcessResult, SelfCorrectionDetector,
-    TextProcessor,
+    BasicPunctuationRestorer, Correction, CorrectionKind, EsPunctNormalizer, JaPunctNormalizer,
+    ProcessResult, SelfCorrectionDetector, TextProcessor, ZhPunctNormalizer,
 };
 pub use crate::router::{AdapterRequest, AsrRouter, AsrRuntimeFactory, ModelSource, RouterError};
 pub use crate::traits::*;

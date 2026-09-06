@@ -28,7 +28,7 @@ The survey covered every model slot in the pipeline. The short version:
 | ASR zh | `paraformer-large` | Accuracy headroom exists |
 | ASR ko | `whisper-large-v3-turbo` q4 | **Worst offender** — RTF 1.34 in `ci_baseline.json` |
 | Tier 1/2 embedding | `bge-small-en-v1.5` | **English-only; measured and recalibrated in §3** |
-| Tier 2 punctuation | `felflare/bert-restore-punctuation` | English-only, 2021 vintage |
+| Tier 2 punctuation | `felflare/bert-restore-punctuation` | English-only, 2021 vintage; **xlm-r candidate measured in §7** |
 | Tier 2 NER | *unimplemented* | Redesign before implementing |
 | Tier 3 refiner | *unimplemented* | No change needed |
 
@@ -258,7 +258,7 @@ Stated plainly, because the sample is small:
 In priority order, each small enough to be its own PR:
 
 > **Status**: items 1 and 2 shipped — see §5 for the measurements they
-> produced. Items 3–5 remain open.
+> produced. Punctuation bake-off for the xlm-r candidate is in §7. Items 3–5 remain open.
 
 1. ~~**Move `ParagraphSplitter` and `PhonemeCorrector` to
    `granite-embedding-97m-multilingual-r2`, not the filler filter.**~~
@@ -598,3 +598,148 @@ correction (ZCA / all-but-the-top) or a distribution-free score mapping
   topic shifts are sharper than the ones a dictating user produces when
   moving between related subjects. §6.1 is an upper bound on that axis
   too, not just on prose quality.
+
+---
+
+## 7. Measured: Tier 2 punctuation backends
+
+§2.2 named `1-800-BAD-CODE/xlm-roberta_punctuation_fullstop_truecase`
+as the coverage fix for an English-only punct slot. This section is
+that measurement.
+
+**Harness** (not a Rust example — the candidate's ONNX graph does not
+match `OnnxPunctuationRestorer`, so the bake-off goes through the
+upstream `punctuators` package until a native adapter exists):
+
+```bash
+scripts/setup_punct_xlmr.sh
+scripts/build_punct_annotations.py --langs en,ja,zh,ko,es --per-lang 30
+scripts/eval_punctuation.py \
+  --annotations data/punct_eval \
+  --backends basic,xlmr \
+  --xlmr-dir vendor/punct_xlmr \
+  --output docs/benchmarks/punctuation/bakeoff.json
+```
+
+**Gold**: synthetic, per `docs/spec.md` §11.4 — strip punctuation (and
+lowercase Latin) from clean Wikipedia sentences. Built on demand into
+`data/punct_eval/` (gitignored, CC-BY-SA). Metrics are **slot F1** over
+punctuation marks between non-punct characters, plus terminal-mark
+accuracy. Layer ablation WER understates the gap because
+`BasicPunctuationRestorer` only appends a terminal.
+
+### 7.1 Results (CPU, 2026-09-06)
+
+| Lang | n | basic F1 | xlmr F1 | basic term | xlmr term | xlmr p50 |
+|---|---:|---:|---:|---:|---:|---:|
+| en | 30 | 0.351 | **0.775** | 0.967 | 1.000 | ~243 ms |
+| ja | 30 | 0.347 | **0.627** | 1.000 | 1.000 | ~242 ms |
+| ko | 20 | 0.400 | **0.698** | 1.000 | 1.000 | ~241 ms |
+| zh | 20 | 0.224 | **0.350** | 1.000 | 1.000 | ~243 ms |
+| es | 20 | 0.207 | **0.745** | 1.000 | 1.000 | ~253 ms |
+
+Raw report: [`docs/benchmarks/punctuation/bakeoff.json`](./benchmarks/punctuation/bakeoff.json).
+
+> **es note:** an earlier draft reported xlmr es F1 ≈ 0.33. That was an
+> annotation artefact — Wikipedia extracts contained U+200B zero-width
+> spaces that broke skeleton alignment. Stripping invisibles in
+> `build_punct_annotations.py` / `eval_punctuation.py` recovers the
+> real ~0.75 F1. See §7.5.
+
+### 7.2 What the numbers say
+
+1. **`basic` is a terminal-mark heuristic, not a punctuator.** Precision
+   is near 1.0 because it almost only inserts the final `。`/`.`; recall
+   sits around 0.2 because every internal `、`/`,` is a false negative.
+   That matches the "やや微妙" feeling on Japanese dictation output.
+2. **xlm-r wins every language we ship.** The lift is largest on
+   en / ja / ko (roughly 1.7–2.2× F1). zh stays weak in absolute terms
+   until the post-passes in §7.4–§7.5; es is competitive once gold is
+   cleaned of invisible characters.
+3. **Latency is the tax.** ~250 ms p50 per utterance on CPU is fine for
+   final-pass cleanup, not for per-partial streaming. The shipping
+   `BasicPunctuationRestorer` stays the right default for the hot path
+   until a smaller ONNX export or a quantised graph lands.
+4. **No Rust adapter yet.** Swapping this into `OnnxPunctuationRestorer`
+   needs SentencePiece + a 4-head decoder. The bake-off harness is the
+   measurement; the adapter is follow-up work if we adopt.
+
+### 7.3 Recommendation
+
+- **Adopt as the optional multilingual punct backend**, behind `onnx`,
+  once a native adapter exists — not as a silent replacement for
+  `BasicPunctuationRestorer` on the default (no-`onnx`) build.
+- **Chain language-specific over-seg normalizers** (§7.5) on zh / ja /
+  es paths only — do not run `ZhPunctNormalizer` on Japanese (it would
+  demote `。` → `，`).
+- Keep `BasicPunctuationRestorer` as the zero-dependency fallback.
+
+### 7.4 zh follow-up: glyph equivalence + `ZhPunctNormalizer`
+
+The zh gap in §7.1 is mostly `、` vs `，`, plus mid-clause over-
+segmentation. Checks:
+
+1. **Equivalence scoring** (`--equiv-zh-commas`): treat `、` and `，` as
+   the same mark. XLM-R zh F1 rises from 0.35 → **0.74**.
+2. **Product post-pass** (`ZhPunctNormalizer`): after XLM-R,
+   - demote mid-text `。` → `，` when the right neighbour is Han and the
+     left is not a sentence-final particle (`了` / `吗` / …);
+   - convert `，` → `、` when both neighbours are Han and the right-hand
+     run is short (≤ 6 chars);
+   - collapse `，。` / `、。` / `。。`.
+   Strict F1 rises from 0.35 → **0.67**. With comma equivalence,
+   **0.88**.
+
+Wire-up: chain `ZhPunctNormalizer` after the neural punctuator on zh
+paths only. Python bake-off backend name: `xlmr_zh`. Reports under
+`docs/benchmarks/punctuation/bakeoff_zh*.json`.
+
+### 7.5 Over-segmentation post-passes (zh / ja / es)
+
+XLM-R over-inserts sentence terminals inside clauses. Language-specific
+normalizers delete or demote those — they do not insert marks from
+scratch. Chain only on the matching language path.
+
+| Lang | Normalizer | Rule sketch | xlmr F1 | +fix F1 |
+|---|---|---|---:|---:|
+| zh | `ZhPunctNormalizer` | mid-Han `。` → `，`, then enum `，` → `、` | 0.35 | **0.67** |
+| ja | `JaPunctNormalizer` | delete `。` in 連体 / mid-Kanji compound; particle+`。` → `、` | 0.63 | **0.69** |
+| es | `EsPunctNormalizer` | `.` + lowercase → `,`; truecased continuations / gerunds → `,` | 0.75 | **0.79** |
+
+Python backends: `xlmr_zh` / `xlmr_ja` / `xlmr_es`. Reports:
+[`bakeoff_overseg.json`](./benchmarks/punctuation/bakeoff_overseg.json),
+[`bakeoff_overseg_ja_es.json`](./benchmarks/punctuation/bakeoff_overseg_ja_es.json).
+
+ko / en need no post-pass on this set (Δ terminals ≈ 0 / +4).
+
+### 7.6 End-to-end latency impact (ASR + XLM-R)
+
+**CI does not measure this yet.** `evaluate-asr` E2E ≈ ASR with
+`BasicPunctuationRestorer` (~μs). `evaluate-fast` reports punctuation
+p50 ≈ 0.5 μs. XLM-R is only timed in the local bake-off / this script.
+
+Projected E2E = CI ASR p50 (`docs/benchmarks/ci_baseline.json`) + XLM-R
+p50 on L1 fixture hyps (short, realistic). Rule post-fixes add nothing
+measurable. CPU, 2026-09-06:
+
+| Lang | ASR p50 | basic punct | xlmr punct | projected E2E | vs CI E2E |
+|---|---:|---:|---:|---:|---:|
+| en | 1226 ms | ~0 ms | ~234 ms | ~1460 ms | **1.19×** |
+| ja | 1267 ms | ~0 ms | ~234 ms | ~1501 ms | **1.18×** |
+| es | 1417 ms | ~0 ms | ~234 ms | ~1651 ms | **1.17×** |
+| ko | 1742 ms | ~0 ms | ~235 ms | ~1977 ms | **1.13×** |
+| zh | 307 ms | ~0 ms | ~233 ms | ~540 ms | **1.76×** |
+
+Takeaways:
+
+1. XLM-R is roughly a **fixed ~230–250 ms** per utterance on CPU (short
+   L1 hyps and longer wiki sentences differ by only ~10–20 ms).
+2. On en/ja/es/ko the whole path gets **~13–19% slower**.
+3. On zh (fast Paraformer) punct becomes comparable to ASR itself →
+   **~1.8×** end-to-end. Worth a quantised / smaller graph before
+   shipping as default there.
+4. Wiring this into CI needs an explicit decision (model download
+   ~1 GB + ~2 min CPU). Script is ready:
+   `scripts/eval_punct_e2e_impact.py`.
+
+Raw: [`docs/benchmarks/punctuation/e2e_impact.json`](./benchmarks/punctuation/e2e_impact.json).

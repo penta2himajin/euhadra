@@ -1,0 +1,58 @@
+{
+  "annotations": "data/punct_eval",
+  "n": 20,
+  "equiv_zh_commas": false,
+  "backends": {
+    "basic": {
+      "zh": {
+        "n": 20,
+        "punct_precision": 1.0,
+        "punct_recall": 0.1258,
+        "punct_f1": 0.2235,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 0.01,
+          "p95": 0.02,
+          "mean": 0.01
+        },
+        "tp": 20,
+        "fp": 0,
+        "fn": 139
+      }
+    },
+    "xlmr": {
+      "zh": {
+        "n": 20,
+        "punct_precision": 0.3372,
+        "punct_recall": 0.3648,
+        "punct_f1": 0.3505,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 244.38,
+          "p95": 252.7,
+          "mean": 245.34
+        },
+        "tp": 58,
+        "fp": 114,
+        "fn": 101
+      }
+    },
+    "xlmr_zh": {
+      "zh": {
+        "n": 20,
+        "punct_precision": 0.6395,
+        "punct_recall": 0.6918,
+        "punct_f1": 0.6647,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 243.39,
+          "p95": 250.88,
+          "mean": 243.93
+        },
+        "tp": 110,
+        "fp": 62,
+        "fn": 49
+      }
+    }
+  }
+}

@@ -1,0 +1,103 @@
+{
+  "annotations": "data/punct_eval",
+  "n": 50,
+  "equiv_zh_commas": false,
+  "backends": {
+    "xlmr": {
+      "es": {
+        "n": 20,
+        "punct_precision": 0.7083,
+        "punct_recall": 0.7861,
+        "punct_f1": 0.7452,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 255.0,
+          "p95": 293.45,
+          "mean": 257.84
+        },
+        "tp": 136,
+        "fp": 56,
+        "fn": 37
+      },
+      "ja": {
+        "n": 30,
+        "punct_precision": 0.5987,
+        "punct_recall": 0.6573,
+        "punct_f1": 0.6267,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 243.07,
+          "p95": 255.6,
+          "mean": 244.25
+        },
+        "tp": 94,
+        "fp": 63,
+        "fn": 49
+      }
+    },
+    "xlmr_ja": {
+      "es": {
+        "n": 20,
+        "punct_precision": 0.7083,
+        "punct_recall": 0.7861,
+        "punct_f1": 0.7452,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 255.87,
+          "p95": 298.72,
+          "mean": 258.34
+        },
+        "tp": 136,
+        "fp": 56,
+        "fn": 37
+      },
+      "ja": {
+        "n": 30,
+        "punct_precision": 0.7059,
+        "punct_recall": 0.6713,
+        "punct_f1": 0.6882,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 242.93,
+          "p95": 254.34,
+          "mean": 243.97
+        },
+        "tp": 96,
+        "fp": 40,
+        "fn": 47
+      }
+    },
+    "xlmr_es": {
+      "es": {
+        "n": 20,
+        "punct_precision": 0.7552,
+        "punct_recall": 0.8382,
+        "punct_f1": 0.7945,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 254.48,
+          "p95": 292.68,
+          "mean": 257.06
+        },
+        "tp": 145,
+        "fp": 47,
+        "fn": 28
+      },
+      "ja": {
+        "n": 30,
+        "punct_precision": 0.5987,
+        "punct_recall": 0.6573,
+        "punct_f1": 0.6267,
+        "terminal_accuracy": 1.0,
+        "latency_ms": {
+          "p50": 242.73,
+          "p95": 256.41,
+          "mean": 243.66
+        },
+        "tp": 94,
+        "fp": 63,
+        "fn": 49
+      }
+    }
+  }
+}
