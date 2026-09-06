@@ -1,0 +1,403 @@
+{
+  "schema_version": 1,
+  "note": "Projected E2E = ASR p50 from ci_baseline.json + punct p50. CI evaluate-asr currently uses BasicPunctuationRestorer only; XLM-R is not wired into CI. Post-ASR layers other than punct are ~μs and omitted.",
+  "asr_baseline": "/workspace/docs/benchmarks/ci_baseline.json",
+  "languages": {
+    "en": {
+      "asr_baseline_ms": {
+        "p50": 1226.0,
+        "p95": 2142.0
+      },
+      "ci_e2e_ms": {
+        "p50": 1226.0,
+        "p95": 2142.0
+      },
+      "corpora": {
+        "l1_fixtures": {
+          "texts": 27,
+          "backends": {
+            "basic": {
+              "n": 27,
+              "p50_ms": 0.0,
+              "p95_ms": 0.01,
+              "mean_ms": 0.0,
+              "chars_p50": 32,
+              "chars_mean": 34.0,
+              "projected_e2e_p50_ms": 1226.0,
+              "delta_vs_ci_e2e_ms": 0.0,
+              "projected_e2e_over_ci": 1.0
+            },
+            "xlmr": {
+              "n": 27,
+              "p50_ms": 233.51,
+              "p95_ms": 235.08,
+              "mean_ms": 233.6,
+              "chars_p50": 32,
+              "chars_mean": 34.0,
+              "projected_e2e_p50_ms": 1459.5,
+              "delta_vs_ci_e2e_ms": 233.5,
+              "projected_e2e_over_ci": 1.19
+            }
+          }
+        },
+        "punct_wiki": {
+          "texts": 30,
+          "backends": {
+            "basic": {
+              "n": 30,
+              "p50_ms": 0.02,
+              "p95_ms": 0.03,
+              "mean_ms": 0.02,
+              "chars_p50": 173,
+              "chars_mean": 188.9,
+              "projected_e2e_p50_ms": 1226.0,
+              "delta_vs_ci_e2e_ms": 0.0,
+              "projected_e2e_over_ci": 1.0
+            },
+            "xlmr": {
+              "n": 30,
+              "p50_ms": 243.12,
+              "p95_ms": 253.51,
+              "mean_ms": 243.99,
+              "chars_p50": 173,
+              "chars_mean": 188.9,
+              "projected_e2e_p50_ms": 1469.1,
+              "delta_vs_ci_e2e_ms": 243.1,
+              "projected_e2e_over_ci": 1.198
+            }
+          }
+        }
+      }
+    },
+    "ja": {
+      "asr_baseline_ms": {
+        "p50": 1267.0,
+        "p95": 1937.0
+      },
+      "ci_e2e_ms": {
+        "p50": 1267.0,
+        "p95": 1937.0
+      },
+      "corpora": {
+        "l1_fixtures": {
+          "texts": 23,
+          "backends": {
+            "basic": {
+              "n": 23,
+              "p50_ms": 0.0,
+              "p95_ms": 0.0,
+              "mean_ms": 0.0,
+              "chars_p50": 13,
+              "chars_mean": 13.9,
+              "projected_e2e_p50_ms": 1267.0,
+              "delta_vs_ci_e2e_ms": 0.0,
+              "projected_e2e_over_ci": 1.0
+            },
+            "xlmr": {
+              "n": 23,
+              "p50_ms": 234.08,
+              "p95_ms": 235.22,
+              "mean_ms": 234.1,
+              "chars_p50": 13,
+              "chars_mean": 13.9,
+              "projected_e2e_p50_ms": 1501.1,
+              "delta_vs_ci_e2e_ms": 234.1,
+              "projected_e2e_over_ci": 1.185
+            },
+            "xlmr_fix": {
+              "n": 23,
+              "p50_ms": 233.87,
+              "p95_ms": 234.9,
+              "mean_ms": 233.79,
+              "chars_p50": 13,
+              "chars_mean": 13.9,
+              "projected_e2e_p50_ms": 1500.9,
+              "delta_vs_ci_e2e_ms": 233.9,
+              "projected_e2e_over_ci": 1.185
+            }
+          }
+        },
+        "punct_wiki": {
+          "texts": 30,
+          "backends": {
+            "basic": {
+              "n": 30,
+              "p50_ms": 0.01,
+              "p95_ms": 0.02,
+              "mean_ms": 0.01,
+              "chars_p50": 73,
+              "chars_mean": 78.0,
+              "projected_e2e_p50_ms": 1267.0,
+              "delta_vs_ci_e2e_ms": 0.0,
+              "projected_e2e_over_ci": 1.0
+            },
+            "xlmr": {
+              "n": 30,
+              "p50_ms": 243.78,
+              "p95_ms": 254.0,
+              "mean_ms": 244.73,
+              "chars_p50": 73,
+              "chars_mean": 78.0,
+              "projected_e2e_p50_ms": 1510.8,
+              "delta_vs_ci_e2e_ms": 243.8,
+              "projected_e2e_over_ci": 1.192
+            },
+            "xlmr_fix": {
+              "n": 30,
+              "p50_ms": 244.09,
+              "p95_ms": 254.13,
+              "mean_ms": 244.91,
+              "chars_p50": 73,
+              "chars_mean": 78.0,
+              "projected_e2e_p50_ms": 1511.1,
+              "delta_vs_ci_e2e_ms": 244.1,
+              "projected_e2e_over_ci": 1.193
+            }
+          }
+        }
+      }
+    },
+    "zh": {
+      "asr_baseline_ms": {
+        "p50": 307.0,
+        "p95": 489.0
+      },
+      "ci_e2e_ms": {
+        "p50": 307.0,
+        "p95": 489.0
+      },
+      "corpora": {
+        "l1_fixtures": {
+          "texts": 32,
+          "backends": {
+            "basic": {
+              "n": 32,
+              "p50_ms": 0.0,
+              "p95_ms": 0.0,
+              "mean_ms": 0.0,
+              "chars_p50": 9,
+              "chars_mean": 9.9,
+              "projected_e2e_p50_ms": 307.0,
+              "delta_vs_ci_e2e_ms": 0.0,
+              "projected_e2e_over_ci": 1.0
+            },
+            "xlmr": {
+              "n": 32,
+              "p50_ms": 233.75,
+              "p95_ms": 235.27,
+              "mean_ms": 233.94,
+              "chars_p50": 9,
+              "chars_mean": 9.9,
+              "projected_e2e_p50_ms": 540.8,
+              "delta_vs_ci_e2e_ms": 233.8,
+              "projected_e2e_over_ci": 1.761
+            },
+            "xlmr_fix": {
+              "n": 32,
+              "p50_ms": 233.37,
+              "p95_ms": 234.74,
+              "mean_ms": 233.45,
+              "chars_p50": 9,
+              "chars_mean": 9.9,
+              "projected_e2e_p50_ms": 540.4,
+              "delta_vs_ci_e2e_ms": 233.4,
+              "projected_e2e_over_ci": 1.76
+            }
+          }
+        },
+        "punct_wiki": {
+          "texts": 20,
+          "backends": {
+            "basic": {
+              "n": 20,
+              "p50_ms": 0.01,
+              "p95_ms": 0.03,
+              "mean_ms": 0.02,
+              "chars_p50": 70,
+              "chars_mean": 68.8,
+              "projected_e2e_p50_ms": 307.0,
+              "delta_vs_ci_e2e_ms": 0.0,
+              "projected_e2e_over_ci": 1.0
+            },
+            "xlmr": {
+              "n": 20,
+              "p50_ms": 244.43,
+              "p95_ms": 251.36,
+              "mean_ms": 244.88,
+              "chars_p50": 70,
+              "chars_mean": 68.8,
+              "projected_e2e_p50_ms": 551.4,
+              "delta_vs_ci_e2e_ms": 244.4,
+              "projected_e2e_over_ci": 1.796
+            },
+            "xlmr_fix": {
+              "n": 20,
+              "p50_ms": 244.54,
+              "p95_ms": 254.96,
+              "mean_ms": 245.36,
+              "chars_p50": 70,
+              "chars_mean": 68.8,
+              "projected_e2e_p50_ms": 551.5,
+              "delta_vs_ci_e2e_ms": 244.5,
+              "projected_e2e_over_ci": 1.797
+            }
+          }
+        }
+      }
+    },
+    "es": {
+      "asr_baseline_ms": {
+        "p50": 1417.0,
+        "p95": 2563.0
+      },
+      "ci_e2e_ms": {
+        "p50": 1417.0,
+        "p95": 2563.0
+      },
+      "corpora": {
+        "l1_fixtures": {
+          "texts": 27,
+          "backends": {
+            "basic": {
+              "n": 27,
+              "p50_ms": 0.01,
+              "p95_ms": 0.01,
+              "mean_ms": 0.01,
+              "chars_p50": 35,
+              "chars_mean": 35.7,
+              "projected_e2e_p50_ms": 1417.0,
+              "delta_vs_ci_e2e_ms": 0.0,
+              "projected_e2e_over_ci": 1.0
+            },
+            "xlmr": {
+              "n": 27,
+              "p50_ms": 234.13,
+              "p95_ms": 237.18,
+              "mean_ms": 234.58,
+              "chars_p50": 35,
+              "chars_mean": 35.7,
+              "projected_e2e_p50_ms": 1651.1,
+              "delta_vs_ci_e2e_ms": 234.1,
+              "projected_e2e_over_ci": 1.165
+            },
+            "xlmr_fix": {
+              "n": 27,
+              "p50_ms": 233.99,
+              "p95_ms": 235.67,
+              "mean_ms": 234.15,
+              "chars_p50": 35,
+              "chars_mean": 35.7,
+              "projected_e2e_p50_ms": 1651.0,
+              "delta_vs_ci_e2e_ms": 234.0,
+              "projected_e2e_over_ci": 1.165
+            }
+          }
+        },
+        "punct_wiki": {
+          "texts": 20,
+          "backends": {
+            "basic": {
+              "n": 20,
+              "p50_ms": 0.03,
+              "p95_ms": 0.09,
+              "mean_ms": 0.04,
+              "chars_p50": 339,
+              "chars_mean": 445.9,
+              "projected_e2e_p50_ms": 1417.0,
+              "delta_vs_ci_e2e_ms": 0.0,
+              "projected_e2e_over_ci": 1.0
+            },
+            "xlmr": {
+              "n": 20,
+              "p50_ms": 253.54,
+              "p95_ms": 297.81,
+              "mean_ms": 258.15,
+              "chars_p50": 339,
+              "chars_mean": 445.9,
+              "projected_e2e_p50_ms": 1670.5,
+              "delta_vs_ci_e2e_ms": 253.5,
+              "projected_e2e_over_ci": 1.179
+            },
+            "xlmr_fix": {
+              "n": 20,
+              "p50_ms": 254.51,
+              "p95_ms": 294.43,
+              "mean_ms": 258.78,
+              "chars_p50": 339,
+              "chars_mean": 445.9,
+              "projected_e2e_p50_ms": 1671.5,
+              "delta_vs_ci_e2e_ms": 254.5,
+              "projected_e2e_over_ci": 1.18
+            }
+          }
+        }
+      }
+    },
+    "ko": {
+      "asr_baseline_ms": {
+        "p50": 1742.0,
+        "p95": 3221.0
+      },
+      "ci_e2e_ms": {
+        "p50": 1742.0,
+        "p95": 3221.0
+      },
+      "corpora": {
+        "l1_fixtures": {
+          "texts": 27,
+          "backends": {
+            "basic": {
+              "n": 27,
+              "p50_ms": 0.0,
+              "p95_ms": 0.01,
+              "mean_ms": 0.0,
+              "chars_p50": 18,
+              "chars_mean": 19.2,
+              "projected_e2e_p50_ms": 1742.0,
+              "delta_vs_ci_e2e_ms": 0.0,
+              "projected_e2e_over_ci": 1.0
+            },
+            "xlmr": {
+              "n": 27,
+              "p50_ms": 234.8,
+              "p95_ms": 237.45,
+              "mean_ms": 235.23,
+              "chars_p50": 18,
+              "chars_mean": 19.2,
+              "projected_e2e_p50_ms": 1976.8,
+              "delta_vs_ci_e2e_ms": 234.8,
+              "projected_e2e_over_ci": 1.135
+            }
+          }
+        },
+        "punct_wiki": {
+          "texts": 20,
+          "backends": {
+            "basic": {
+              "n": 20,
+              "p50_ms": 0.01,
+              "p95_ms": 0.02,
+              "mean_ms": 0.01,
+              "chars_p50": 87,
+              "chars_mean": 83.3,
+              "projected_e2e_p50_ms": 1742.0,
+              "delta_vs_ci_e2e_ms": 0.0,
+              "projected_e2e_over_ci": 1.0
+            },
+            "xlmr": {
+              "n": 20,
+              "p50_ms": 244.17,
+              "p95_ms": 251.9,
+              "mean_ms": 245.02,
+              "chars_p50": 87,
+              "chars_mean": 83.3,
+              "projected_e2e_p50_ms": 1986.2,
+              "delta_vs_ci_e2e_ms": 244.2,
+              "projected_e2e_over_ci": 1.14
+            }
+          }
+        }
+      }
+    }
+  }
+}
