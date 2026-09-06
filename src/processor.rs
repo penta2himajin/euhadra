@@ -812,6 +812,155 @@ impl TextProcessor for BasicPunctuationRestorer {
 }
 
 // ---------------------------------------------------------------------------
+// ZhPunctNormalizer — post-pass after a neural Chinese punctuator
+// ---------------------------------------------------------------------------
+
+/// Post-process Chinese punctuation after a neural restorer.
+///
+/// Stopgap until a zh-native punct model ships. The multilingual XLM-R
+/// candidate systematically emits `，` (clause comma) where written
+/// Chinese wants the enumeration comma `、`. This normalizer applies a
+/// conservative heuristic on top of neural output — it does not insert
+/// punctuation from scratch:
+///
+/// - `，` → `、` when both neighbours are Han ideographs **and** the
+///   run to the next punctuation on the right is short
+///   (≤ [`ZhPunctNormalizer::DEFAULT_ENUM_MAX`] chars). Clause commas
+///   before long phrases stay as `，`.
+/// - Collapse `，。` / `、。` → `。` and doubled `。。` → `。`.
+///
+/// Chain it after the neural punctuator:
+///
+/// ```text
+/// … → XlmrPunct → ZhPunctNormalizer → …
+/// ```
+///
+/// Latin / Hangul / Kana text is left alone: the rewrite only fires
+/// between Han ideographs.
+#[derive(Debug, Clone)]
+pub struct ZhPunctNormalizer {
+    /// Max chars after a `，` (before the next punct) for it to count
+    /// as an enumeration comma. Default 6.
+    pub enum_max_chars: usize,
+}
+
+impl Default for ZhPunctNormalizer {
+    fn default() -> Self {
+        Self {
+            enum_max_chars: Self::DEFAULT_ENUM_MAX,
+        }
+    }
+}
+
+impl ZhPunctNormalizer {
+    /// Default right-hand run length that still counts as enumeration.
+    /// Tuned against the Wikipedia synthetic gold in
+    /// `docs/benchmarks/punctuation/` (clause commas sit before much
+    /// longer spans).
+    pub const DEFAULT_ENUM_MAX: usize = 6;
+
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_enum_max_chars(mut self, n: usize) -> Self {
+        self.enum_max_chars = n;
+        self
+    }
+
+    fn is_han(ch: char) -> bool {
+        matches!(ch as u32,
+            0x4E00..=0x9FFF | // CJK Unified Ideographs
+            0x3400..=0x4DBF | // Extension A
+            0xF900..=0xFAFF   // Compatibility Ideographs
+        )
+    }
+
+    /// Pure transform used by the processor and by the Python bake-off
+    /// mirror in `scripts/eval_punctuation.py`. Keep those in sync.
+    pub fn normalize_str(&self, text: &str) -> (String, Vec<Correction>) {
+        if text.is_empty() {
+            return (String::new(), vec![]);
+        }
+
+        let chars: Vec<char> = text.chars().collect();
+        let n = chars.len();
+        let mut out: Vec<char> = Vec::with_capacity(n);
+        let mut corrections = Vec::new();
+
+        let mut i = 0usize;
+        while i < n {
+            let ch = chars[i];
+            if ch == '，' {
+                let left_han = out.last().copied().is_some_and(Self::is_han);
+                // Length of the Han/other run until the next punctuation.
+                let mut right_len = 0usize;
+                let mut j = i + 1;
+                while j < n && chars[j] != '，' && chars[j] != '、'
+                    && chars[j] != '。' && chars[j] != '！' && chars[j] != '？'
+                    && chars[j] != ';' && chars[j] != '；' && chars[j] != '：' && chars[j] != ':'
+                {
+                    right_len += 1;
+                    j += 1;
+                }
+                let right_han = chars.get(i + 1).copied().is_some_and(Self::is_han);
+                if left_han && right_han && right_len > 0 && right_len <= self.enum_max_chars {
+                    out.push('、');
+                    corrections.push(Correction {
+                        kind: CorrectionKind::PunctuationInserted,
+                        original: "，".to_string(),
+                        replacement: "、".to_string(),
+                        span: None,
+                    });
+                    i += 1;
+                    continue;
+                }
+            }
+            out.push(ch);
+            i += 1;
+        }
+
+        // Collapse ，。 / 、。 → 。 and 。。 → 。 in a single left-to-right pass.
+        let mut collapsed: Vec<char> = Vec::with_capacity(out.len());
+        for ch in out {
+            if ch == '。' {
+                if let Some(prev) = collapsed.last() {
+                    if *prev == '，' || *prev == '、' || *prev == '。' {
+                        let original = prev.to_string();
+                        *collapsed.last_mut().unwrap() = '。';
+                        corrections.push(Correction {
+                            kind: CorrectionKind::PunctuationInserted,
+                            original,
+                            replacement: "。".to_string(),
+                            span: None,
+                        });
+                        continue;
+                    }
+                }
+            }
+            collapsed.push(ch);
+        }
+
+        (collapsed.into_iter().collect(), corrections)
+    }
+}
+
+#[async_trait]
+impl TextProcessor for ZhPunctNormalizer {
+    async fn process(
+        &self,
+        text: &str,
+        _context: &ContextSnapshot,
+    ) -> Result<ProcessResult, ProcessError> {
+        let (normalized, corrections) = self.normalize_str(text);
+        Ok(ProcessResult {
+            text: normalized,
+            corrections,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
 // InverseTextNormalizer
 // ---------------------------------------------------------------------------
 
@@ -1313,6 +1462,65 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.text, "会议在下午三点开始。");
+    }
+
+    // --- ZhPunctNormalizer tests ---
+
+    #[tokio::test]
+    async fn zh_punct_converts_enumeration_commas() {
+        // Short Han runs after each ， → enumeration 、.
+        let proc = ZhPunctNormalizer::new();
+        let result = proc
+            .process(
+                "將茶分為綠茶，白茶，黃茶，青茶，紅茶及黑茶。",
+                &empty_context(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            result.text,
+            "將茶分為綠茶、白茶、黃茶、青茶、紅茶及黑茶。"
+        );
+        assert!(result
+            .corrections
+            .iter()
+            .any(|c| c.original == "，" && c.replacement == "、"));
+    }
+
+    #[tokio::test]
+    async fn zh_punct_keeps_clause_comma_before_long_phrase() {
+        // Right-hand run is longer than enum_max → leave as ，.
+        let proc = ZhPunctNormalizer::new();
+        let input = "至唐代，飲茶已成為社會各階層普遍的生活習慣。";
+        let result = proc.process(input, &empty_context()).await.unwrap();
+        assert_eq!(result.text, input);
+        assert!(result.corrections.is_empty());
+    }
+
+    #[tokio::test]
+    async fn zh_punct_collapses_comma_before_period() {
+        let proc = ZhPunctNormalizer::new();
+        let result = proc
+            .process("今天天气很好，。", &empty_context())
+            .await
+            .unwrap();
+        assert_eq!(result.text, "今天天气很好。");
+    }
+
+    #[tokio::test]
+    async fn zh_punct_is_noop_on_latin() {
+        let proc = ZhPunctNormalizer::new();
+        let input = "Hello, world.";
+        let result = proc.process(input, &empty_context()).await.unwrap();
+        assert_eq!(result.text, input);
+    }
+
+    #[tokio::test]
+    async fn zh_punct_leaves_existing_enumeration_comma() {
+        let proc = ZhPunctNormalizer::new();
+        let input = "綠茶、白茶、黃茶。";
+        let result = proc.process(input, &empty_context()).await.unwrap();
+        assert_eq!(result.text, input);
     }
 
     #[tokio::test]

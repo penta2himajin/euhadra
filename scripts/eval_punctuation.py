@@ -117,7 +117,24 @@ class SlotCounts:
         return 2 * p * r / (p + r) if (p + r) else 0.0
 
 
-def score_slots(gold: str, hyp: str) -> SlotCounts:
+def score_slots(
+    gold: str,
+    hyp: str,
+    *,
+    equiv_zh_commas: bool = False,
+) -> SlotCounts:
+    """Slot F1 between gold and hyp.
+
+    When `equiv_zh_commas` is set, treat the Chinese enumeration comma
+    `、` and the clause comma `，` as the same mark. That answers "how
+    much of the zh gap is just a glyph choice?" without changing the
+    hypothesis text itself.
+    """
+    if equiv_zh_commas:
+        # Canonicalise both sides to `，` so a 、/， disagreement is not
+        # scored as FN+FP. Other marks are untouched.
+        gold = gold.replace("、", "，")
+        hyp = hyp.replace("、", "，")
     g_skel, g_slots = skeleton_and_slots(gold)
     h_skel, h_slots = skeleton_and_slots(hyp)
     if normalize_skeleton(g_skel) != normalize_skeleton(h_skel):
@@ -128,12 +145,16 @@ def score_slots(gold: str, hyp: str) -> SlotCounts:
     else:
         n = min(len(g_slots), len(h_slots))
 
+    # Under equivalence, `、` has been folded into `，`, so scoring the
+    # full PUNCT_CHARS set would still be fine — `、` counts stay 0.
+    score_alphabet = PUNCT_CHARS
+
     counts = SlotCounts()
     for i in range(n):
         g = list(g_slots[i])
         h = list(h_slots[i])
         # Multiset compare of punct chars in this slot.
-        for ch in PUNCT_CHARS:
+        for ch in score_alphabet:
             gc = g.count(ch)
             hc = h.count(ch)
             counts.tp += min(gc, hc)
@@ -141,9 +162,9 @@ def score_slots(gold: str, hyp: str) -> SlotCounts:
             counts.fn += max(0, gc - hc)
     # Unaligned tails.
     for i in range(n, len(g_slots)):
-        counts.fn += sum(1 for ch in g_slots[i] if ch in PUNCT_CHARS)
+        counts.fn += sum(1 for ch in g_slots[i] if ch in score_alphabet)
     for i in range(n, len(h_slots)):
-        counts.fp += sum(1 for ch in h_slots[i] if ch in PUNCT_CHARS)
+        counts.fp += sum(1 for ch in h_slots[i] if ch in score_alphabet)
     return counts
 
 
@@ -153,6 +174,64 @@ def terminal_of(text: str) -> str | None:
         return None
     ch = t[-1]
     return ch if ch in TERMINALS else None
+
+
+# ---------------------------------------------------------------------------
+# ZhPunctNormalizer — Python mirror of src/processor.rs
+# ---------------------------------------------------------------------------
+
+# Keep in sync with `ZhPunctNormalizer::DEFAULT_ENUM_MAX`.
+_ZH_ENUM_MAX = 6
+_ZH_HAN_RANGES = (
+    (0x4E00, 0x9FFF),
+    (0x3400, 0x4DBF),
+    (0xF900, 0xFAFF),
+)
+_ZH_BREAK = set("，、。！？;；：:")
+
+
+def _is_han(ch: str) -> bool:
+    o = ord(ch)
+    return any(lo <= o <= hi for lo, hi in _ZH_HAN_RANGES)
+
+
+def zh_punct_normalize(text: str, enum_max: int = _ZH_ENUM_MAX) -> str:
+    """Mirror of `ZhPunctNormalizer::normalize_str` (text only).
+
+    Conservative post-pass: `，` → `、` when both neighbours are Han and
+    the right-hand run until the next punct is short; collapse
+    `，。` / `、。` / `。。` → `。`.
+    """
+    if not text:
+        return text
+    chars = list(text)
+    out: list[str] = []
+    i = 0
+    n = len(chars)
+    while i < n:
+        ch = chars[i]
+        if ch == "，":
+            left_han = bool(out) and _is_han(out[-1])
+            right_len = 0
+            j = i + 1
+            while j < n and chars[j] not in _ZH_BREAK:
+                right_len += 1
+                j += 1
+            right_han = i + 1 < n and _is_han(chars[i + 1])
+            if left_han and right_han and 0 < right_len <= enum_max:
+                out.append("、")
+                i += 1
+                continue
+        out.append(ch)
+        i += 1
+
+    collapsed: list[str] = []
+    for ch in out:
+        if ch == "。" and collapsed and collapsed[-1] in ("，", "、", "。"):
+            collapsed[-1] = "。"
+            continue
+        collapsed.append(ch)
+    return "".join(collapsed)
 
 
 # ---------------------------------------------------------------------------
@@ -312,6 +391,8 @@ def run_backend(
     name: str,
     restore: Callable[[str], str],
     rows: Iterable[dict],
+    *,
+    equiv_zh_commas: bool = False,
 ) -> BackendResult:
     by_lang_counts: dict[str, SlotCounts] = defaultdict(SlotCounts)
     by_lang_term_ok: dict[str, list[int]] = defaultdict(list)
@@ -326,7 +407,9 @@ def run_backend(
         hyp = restore(inp)
         dt_ms = (time.perf_counter() - t0) * 1000.0
         by_lang_latency[lang].append(dt_ms)
-        by_lang_counts[lang].add(score_slots(gold, hyp))
+        by_lang_counts[lang].add(
+            score_slots(gold, hyp, equiv_zh_commas=equiv_zh_commas)
+        )
         g_term, h_term = terminal_of(gold), terminal_of(hyp)
         by_lang_term_ok[lang].append(1 if g_term and g_term == h_term else 0)
         by_lang_n[lang] += 1
@@ -364,7 +447,7 @@ def main() -> int:
     ap.add_argument(
         "--backends",
         default="basic,xlmr",
-        help="Comma-separated: basic, xlmr",
+        help="Comma-separated: basic, xlmr, xlmr_zh",
     )
     ap.add_argument(
         "--xlmr-dir",
@@ -372,6 +455,11 @@ def main() -> int:
         default=Path(os.environ.get("PUNCT_XLMR_DIR", "vendor/punct_xlmr")),
     )
     ap.add_argument("--langs", default="", help="Optional lang filter, e.g. en,ja")
+    ap.add_argument(
+        "--equiv-zh-commas",
+        action="store_true",
+        help="Score 、 and ， as the same mark (zh glyph-equivalence diagnostic)",
+    )
     ap.add_argument("--output", type=Path, default=None)
     args = ap.parse_args()
 
@@ -383,21 +471,37 @@ def main() -> int:
         keep = {x.strip() for x in args.langs.split(",") if x.strip()}
         rows = [r for r in rows if r["lang"] in keep]
     print(f"[eval] {len(rows)} utterances")
+    if args.equiv_zh_commas:
+        print("[eval] scoring with zh comma equivalence (、 ≡ ，)")
+
+    need_xlmr = any(
+        n.strip() in ("xlmr", "xlmr_zh")
+        for n in args.backends.split(",")
+        if n.strip()
+    )
+    xlmr_fn: Callable[[str], str] | None = None
+    if need_xlmr:
+        if not (args.xlmr_dir / "model.onnx").exists():
+            print(
+                f"[error] {args.xlmr_dir}/model.onnx missing; "
+                "run scripts/setup_punct_xlmr.sh first",
+                file=sys.stderr,
+            )
+            return 3
+        print(f"[eval] loading xlmr from {args.xlmr_dir}…")
+        xlmr_fn = make_xlmr_fn(args.xlmr_dir)
 
     backends: list[tuple[str, Callable[[str], str]]] = []
     for name in [x.strip() for x in args.backends.split(",") if x.strip()]:
         if name == "basic":
             backends.append((name, basic_restore))
         elif name == "xlmr":
-            if not (args.xlmr_dir / "model.onnx").exists():
-                print(
-                    f"[error] {args.xlmr_dir}/model.onnx missing; "
-                    "run scripts/setup_punct_xlmr.sh first",
-                    file=sys.stderr,
-                )
-                return 3
-            print(f"[eval] loading xlmr from {args.xlmr_dir}…")
-            backends.append((name, make_xlmr_fn(args.xlmr_dir)))
+            assert xlmr_fn is not None
+            backends.append((name, xlmr_fn))
+        elif name == "xlmr_zh":
+            assert xlmr_fn is not None
+            base = xlmr_fn
+            backends.append((name, lambda t, b=base: zh_punct_normalize(b(t))))
         else:
             print(f"[error] unknown backend: {name}", file=sys.stderr)
             return 2
@@ -405,11 +509,14 @@ def main() -> int:
     report = {
         "annotations": str(args.annotations),
         "n": len(rows),
+        "equiv_zh_commas": args.equiv_zh_commas,
         "backends": {},
     }
     for name, fn in backends:
         print(f"[eval] backend={name}")
-        result = run_backend(name, fn, rows)
+        result = run_backend(
+            name, fn, rows, equiv_zh_commas=args.equiv_zh_commas
+        )
         report["backends"][name] = result.by_lang
         for lang, m in result.by_lang.items():
             print(

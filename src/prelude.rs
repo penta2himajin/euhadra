@@ -21,7 +21,7 @@ pub use crate::pipeline::{
 };
 pub use crate::processor::{
     BasicPunctuationRestorer, Correction, CorrectionKind, ProcessResult, SelfCorrectionDetector,
-    TextProcessor,
+    TextProcessor, ZhPunctNormalizer,
 };
 pub use crate::router::{AdapterRequest, AsrRouter, AsrRuntimeFactory, ModelSource, RouterError};
 pub use crate::traits::*;

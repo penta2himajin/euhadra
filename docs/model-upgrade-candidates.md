@@ -667,3 +667,21 @@ Raw report: [`docs/benchmarks/punctuation/bakeoff.json`](./benchmarks/punctuatio
   parity there. Wikipedia prose understates ASR noise and overstates
   comma density for dictation.
 - Keep `BasicPunctuationRestorer` as the zero-dependency fallback.
+
+### 7.4 zh follow-up: glyph equivalence + `ZhPunctNormalizer`
+
+The zh gap in §7.1 is mostly `、` vs `，`. Two checks:
+
+1. **Equivalence scoring** (`--equiv-zh-commas`): treat `、` and `，` as
+   the same mark. XLM-R zh F1 rises from 0.35 → **0.74**.
+2. **Product post-pass** (`ZhPunctNormalizer`): after XLM-R, convert
+   `，` → `、` when both neighbours are Han and the right-hand run is
+   short (≤ 6 chars); collapse `，。` / `、。` / `。。`. Strict F1 rises
+   from 0.35 → **0.59**. Equivalence F1 stays 0.74 (no position harm).
+
+The residual 0.59 → 0.74 is over-segmentation (extra `。`) and a few
+clause/enum boundary mistakes — out of scope for this rule.
+
+Wire-up: chain `ZhPunctNormalizer` after the neural punctuator on zh
+paths. Python bake-off backend name: `xlmr_zh`. Reports under
+`docs/benchmarks/punctuation/bakeoff_zh*.json`.
