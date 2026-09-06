@@ -65,6 +65,19 @@ Used by `OnnxEntityRecognizer`. `scripts/setup_ner.sh` downloads it.
 Trained on CoNLL-2003, whose own terms apply to the corpus rather than
 to these weights.
 
+## Punctuation model weights
+
+`OnnxPunctuationRestorer` today expects a felflare-shaped BERT
+token-classifier (English). The multilingual candidate below is scored
+by `scripts/eval_punctuation.py` via the upstream `punctuators`
+package; a native Rust adapter is not wired yet. Download with
+`scripts/setup_punct_xlmr.sh`.
+
+| Model | SPDX / Label | License declaration | License text |
+|---|---|---|---|
+| `felflare/bert-restore-punctuation` (shipping ONNX path) | `MIT` | <https://huggingface.co/felflare/bert-restore-punctuation> (model-card YAML: `license: mit`) | <https://opensource.org/licenses/MIT> |
+| `1-800-BAD-CODE/xlm-roberta_punctuation_fullstop_truecase` (candidate) | `Apache-2.0` | <https://huggingface.co/1-800-BAD-CODE/xlm-roberta_punctuation_fullstop_truecase> (model-card YAML: `license: apache-2.0`) | <https://www.apache.org/licenses/LICENSE-2.0.txt> |
+
 ## Text-embedding model weights
 
 Used by `OnnxTextEmbedder` (`PhonemeCorrector` / `ParagraphSplitter`).

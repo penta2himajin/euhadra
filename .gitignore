@@ -32,3 +32,7 @@
 # never ships it.
 /data/paragraph_corpus/
 __pycache__/
+
+# Synthetic punctuation-restoration gold (Wikipedia CC-BY-SA).
+# Built on demand by scripts/build_punct_annotations.py.
+/data/punct_eval/

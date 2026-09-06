@@ -28,7 +28,7 @@ The survey covered every model slot in the pipeline. The short version:
 | ASR zh | `paraformer-large` | Accuracy headroom exists |
 | ASR ko | `whisper-large-v3-turbo` q4 | **Worst offender** — RTF 1.34 in `ci_baseline.json` |
 | Tier 1/2 embedding | `bge-small-en-v1.5` | **English-only; measured and recalibrated in §3** |
-| Tier 2 punctuation | `felflare/bert-restore-punctuation` | English-only, 2021 vintage |
+| Tier 2 punctuation | `felflare/bert-restore-punctuation` | English-only, 2021 vintage; **xlm-r candidate measured in §7** |
 | Tier 2 NER | *unimplemented* | Redesign before implementing |
 | Tier 3 refiner | *unimplemented* | No change needed |
 
@@ -258,7 +258,7 @@ Stated plainly, because the sample is small:
 In priority order, each small enough to be its own PR:
 
 > **Status**: items 1 and 2 shipped — see §5 for the measurements they
-> produced. Items 3–5 remain open.
+> produced. Punctuation bake-off for the xlm-r candidate is in §7. Items 3–5 remain open.
 
 1. ~~**Move `ParagraphSplitter` and `PhonemeCorrector` to
    `granite-embedding-97m-multilingual-r2`, not the filler filter.**~~
@@ -598,3 +598,72 @@ correction (ZCA / all-but-the-top) or a distribution-free score mapping
   topic shifts are sharper than the ones a dictating user produces when
   moving between related subjects. §6.1 is an upper bound on that axis
   too, not just on prose quality.
+
+---
+
+## 7. Measured: Tier 2 punctuation backends
+
+§2.2 named `1-800-BAD-CODE/xlm-roberta_punctuation_fullstop_truecase`
+as the coverage fix for an English-only punct slot. This section is
+that measurement.
+
+**Harness** (not a Rust example — the candidate's ONNX graph does not
+match `OnnxPunctuationRestorer`, so the bake-off goes through the
+upstream `punctuators` package until a native adapter exists):
+
+```bash
+scripts/setup_punct_xlmr.sh
+scripts/build_punct_annotations.py --langs en,ja,zh,ko,es --per-lang 30
+scripts/eval_punctuation.py \
+  --annotations data/punct_eval \
+  --backends basic,xlmr \
+  --xlmr-dir vendor/punct_xlmr \
+  --output docs/benchmarks/punctuation/bakeoff.json
+```
+
+**Gold**: synthetic, per `docs/spec.md` §11.4 — strip punctuation (and
+lowercase Latin) from clean Wikipedia sentences. Built on demand into
+`data/punct_eval/` (gitignored, CC-BY-SA). Metrics are **slot F1** over
+punctuation marks between non-punct characters, plus terminal-mark
+accuracy. Layer ablation WER understates the gap because
+`BasicPunctuationRestorer` only appends a terminal.
+
+### 7.1 Results (CPU, 2026-09-06)
+
+| Lang | n | basic F1 | xlmr F1 | basic term | xlmr term | xlmr p50 |
+|---|---:|---:|---:|---:|---:|---:|
+| en | 30 | 0.351 | **0.775** | 0.967 | 1.000 | 246 ms |
+| ja | 30 | 0.347 | **0.627** | 1.000 | 1.000 | 246 ms |
+| ko | 20 | 0.400 | **0.698** | 1.000 | 1.000 | 245 ms |
+| zh | 20 | 0.224 | **0.350** | 1.000 | 1.000 | 247 ms |
+| es | 20 | 0.197 | **0.331** | 0.950 | 0.950 | 257 ms |
+
+Raw report: [`docs/benchmarks/punctuation/bakeoff.json`](./benchmarks/punctuation/bakeoff.json).
+
+### 7.2 What the numbers say
+
+1. **`basic` is a terminal-mark heuristic, not a punctuator.** Precision
+   is near 1.0 because it almost only inserts the final `。`/`.`; recall
+   sits around 0.2 because every internal `、`/`,` is a false negative.
+   That matches the "やや微妙" feeling on Japanese dictation output.
+2. **xlm-r wins every language we ship.** The lift is largest on
+   en / ja / ko (roughly 1.7–2.2× F1). zh and es improve but stay weak
+   in absolute terms (F1 ≈ 0.33–0.35) — worth a second look before
+   calling the candidate "done" for those two.
+3. **Latency is the tax.** ~250 ms p50 per utterance on CPU is fine for
+   final-pass cleanup, not for per-partial streaming. The shipping
+   `BasicPunctuationRestorer` stays the right default for the hot path
+   until a smaller ONNX export or a quantised graph lands.
+4. **No Rust adapter yet.** Swapping this into `OnnxPunctuationRestorer`
+   needs SentencePiece + a 4-head decoder. The bake-off harness is the
+   measurement; the adapter is follow-up work if we adopt.
+
+### 7.3 Recommendation
+
+- **Adopt as the optional multilingual punct backend**, behind `onnx`,
+  once a native adapter exists — not as a silent replacement for
+  `BasicPunctuationRestorer` on the default (no-`onnx`) build.
+- **Re-measure zh/es** on a larger, domain-matched set before promising
+  parity there. Wikipedia prose understates ASR noise and overstates
+  comma density for dictation.
+- Keep `BasicPunctuationRestorer` as the zero-dependency fallback.

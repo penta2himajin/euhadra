@@ -1,0 +1,4 @@
+{"id": "en_smoke_0", "lang": "en", "gold": "Hello, world. How are you?", "input": "hello world how are you"}
+{"id": "en_smoke_1", "lang": "en", "gold": "We need milk, eggs, and bread.", "input": "we need milk eggs and bread"}
+{"id": "ja_smoke_0", "lang": "ja", "gold": "今日は雨でした。午後は晴れます。", "input": "今日は雨でした午後は晴れます"}
+{"id": "ja_smoke_1", "lang": "ja", "gold": "含まれる成分により、様々な色、におい、効能の温泉がある。", "input": "含まれる成分により様々な色におい効能の温泉がある"}
