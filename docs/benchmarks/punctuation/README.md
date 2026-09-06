@@ -88,3 +88,24 @@ scripts/eval_punctuation.py \
 
 Chain each normalizer only on its language path (`ZhPunctNormalizer` on
 Japanese would wrongly demote `。` → `，`).
+
+## End-to-end impact (ASR + XLM-R)
+
+CI does **not** gate this. Projected E2E = CI ASR p50 + XLM-R p50 on
+L1 fixture hyps:
+
+| Lang | ASR p50 | +xlmr | projected E2E | slowdown |
+|---|---:|---:|---:|---:|
+| en | 1226 ms | +234 ms | 1460 ms | 1.19× |
+| ja | 1267 ms | +234 ms | 1501 ms | 1.18× |
+| es | 1417 ms | +234 ms | 1651 ms | 1.17× |
+| ko | 1742 ms | +235 ms | 1977 ms | 1.13× |
+| zh | 307 ms | +233 ms | 540 ms | **1.76×** |
+
+```bash
+scripts/eval_punct_e2e_impact.py \
+  --output docs/benchmarks/punctuation/e2e_impact.json
+```
+
+See [`e2e_impact.json`](./e2e_impact.json) and
+`docs/model-upgrade-candidates.md` §7.6.

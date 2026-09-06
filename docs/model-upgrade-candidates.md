@@ -711,3 +711,35 @@ Python backends: `xlmr_zh` / `xlmr_ja` / `xlmr_es`. Reports:
 [`bakeoff_overseg_ja_es.json`](./benchmarks/punctuation/bakeoff_overseg_ja_es.json).
 
 ko / en need no post-pass on this set (Δ terminals ≈ 0 / +4).
+
+### 7.6 End-to-end latency impact (ASR + XLM-R)
+
+**CI does not measure this yet.** `evaluate-asr` E2E ≈ ASR with
+`BasicPunctuationRestorer` (~μs). `evaluate-fast` reports punctuation
+p50 ≈ 0.5 μs. XLM-R is only timed in the local bake-off / this script.
+
+Projected E2E = CI ASR p50 (`docs/benchmarks/ci_baseline.json`) + XLM-R
+p50 on L1 fixture hyps (short, realistic). Rule post-fixes add nothing
+measurable. CPU, 2026-09-06:
+
+| Lang | ASR p50 | basic punct | xlmr punct | projected E2E | vs CI E2E |
+|---|---:|---:|---:|---:|---:|
+| en | 1226 ms | ~0 ms | ~234 ms | ~1460 ms | **1.19×** |
+| ja | 1267 ms | ~0 ms | ~234 ms | ~1501 ms | **1.18×** |
+| es | 1417 ms | ~0 ms | ~234 ms | ~1651 ms | **1.17×** |
+| ko | 1742 ms | ~0 ms | ~235 ms | ~1977 ms | **1.13×** |
+| zh | 307 ms | ~0 ms | ~233 ms | ~540 ms | **1.76×** |
+
+Takeaways:
+
+1. XLM-R is roughly a **fixed ~230–250 ms** per utterance on CPU (short
+   L1 hyps and longer wiki sentences differ by only ~10–20 ms).
+2. On en/ja/es/ko the whole path gets **~13–19% slower**.
+3. On zh (fast Paraformer) punct becomes comparable to ASR itself →
+   **~1.8×** end-to-end. Worth a quantised / smaller graph before
+   shipping as default there.
+4. Wiring this into CI needs an explicit decision (model download
+   ~1 GB + ~2 min CPU). Script is ready:
+   `scripts/eval_punct_e2e_impact.py`.
+
+Raw: [`docs/benchmarks/punctuation/e2e_impact.json`](./benchmarks/punctuation/e2e_impact.json).
