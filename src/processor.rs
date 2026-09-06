@@ -818,16 +818,17 @@ impl TextProcessor for BasicPunctuationRestorer {
 /// Post-process Chinese punctuation after a neural restorer.
 ///
 /// Stopgap until a zh-native punct model ships. The multilingual XLM-R
-/// candidate systematically emits `，` (clause comma) where written
-/// Chinese wants the enumeration comma `、`. This normalizer applies a
-/// conservative heuristic on top of neural output — it does not insert
-/// punctuation from scratch:
+/// candidate systematically (a) emits `，` where written Chinese wants
+/// the enumeration comma `、`, and (b) over-segments with mid-clause
+/// `。`. This normalizer applies heuristics on top of neural output —
+/// it does not insert punctuation from scratch:
 ///
-/// - `，` → `、` when both neighbours are Han ideographs **and** the
-///   run to the next punctuation on the right is short
-///   (≤ [`ZhPunctNormalizer::DEFAULT_ENUM_MAX`] chars). Clause commas
-///   before long phrases stay as `，`.
-/// - Collapse `，。` / `、。` → `。` and doubled `。。` → `。`.
+/// 1. Demote mid-text `。` → `，` when the right neighbour is Han and
+///    the left is not a sentence-final particle (`了` / `吗` / …).
+/// 2. `，` → `、` when both neighbours are Han **and** the run to the
+///    next punct on the right is short
+///    (≤ [`ZhPunctNormalizer::DEFAULT_ENUM_MAX`] chars).
+/// 3. Collapse `，。` / `、。` / `。。` → `。`.
 ///
 /// Chain it after the neural punctuator:
 ///
@@ -842,12 +843,15 @@ pub struct ZhPunctNormalizer {
     /// Max chars after a `，` (before the next punct) for it to count
     /// as an enumeration comma. Default 6.
     pub enum_max_chars: usize,
+    /// Demote mid-clause `。` → `，` (XLM-R over-segmentation fix).
+    pub demote_mid_periods: bool,
 }
 
 impl Default for ZhPunctNormalizer {
     fn default() -> Self {
         Self {
             enum_max_chars: Self::DEFAULT_ENUM_MAX,
+            demote_mid_periods: true,
         }
     }
 }
@@ -859,6 +863,10 @@ impl ZhPunctNormalizer {
     /// longer spans).
     pub const DEFAULT_ENUM_MAX: usize = 6;
 
+    /// Left-side chars that look like a real sentence end — keep `。`.
+    const SENTENCE_FINAL_LEFT: &'static [char] =
+        &['了', '吗', '嗎', '呢', '吧', '呀', '啊', '哦', '嘛', '矣', '耳'];
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -868,12 +876,21 @@ impl ZhPunctNormalizer {
         self
     }
 
+    pub fn with_demote_mid_periods(mut self, enabled: bool) -> Self {
+        self.demote_mid_periods = enabled;
+        self
+    }
+
     fn is_han(ch: char) -> bool {
         matches!(ch as u32,
             0x4E00..=0x9FFF | // CJK Unified Ideographs
             0x3400..=0x4DBF | // Extension A
             0xF900..=0xFAFF   // Compatibility Ideographs
         )
+    }
+
+    fn is_break(ch: char) -> bool {
+        matches!(ch, '，' | '、' | '。' | '！' | '？' | ';' | '；' | '：' | ':')
     }
 
     /// Pure transform used by the processor and by the Python bake-off
@@ -888,18 +905,44 @@ impl ZhPunctNormalizer {
         let mut out: Vec<char> = Vec::with_capacity(n);
         let mut corrections = Vec::new();
 
+        // Pass 1: demote mid-clause 。 → ， (before enum so short runs
+        // can still become 、).
+        let mut i = 0usize;
+        while i < n {
+            let ch = chars[i];
+            if self.demote_mid_periods && ch == '。' && i + 1 < n {
+                let right = chars[i + 1];
+                let left = out.last().copied();
+                let keep = matches!(right, '”' | '」' | '』' | '）' | ')' | ']' | '》' | '\n')
+                    || left.is_some_and(|l| Self::SENTENCE_FINAL_LEFT.contains(&l));
+                if !keep && Self::is_han(right) {
+                    out.push('，');
+                    corrections.push(Correction {
+                        kind: CorrectionKind::PunctuationInserted,
+                        original: "。".to_string(),
+                        replacement: "，".to_string(),
+                        span: None,
+                    });
+                    i += 1;
+                    continue;
+                }
+            }
+            out.push(ch);
+            i += 1;
+        }
+
+        // Pass 2: enumeration ， → 、 for short Han runs.
+        let chars = out;
+        let n = chars.len();
+        let mut out: Vec<char> = Vec::with_capacity(n);
         let mut i = 0usize;
         while i < n {
             let ch = chars[i];
             if ch == '，' {
                 let left_han = out.last().copied().is_some_and(Self::is_han);
-                // Length of the Han/other run until the next punctuation.
                 let mut right_len = 0usize;
                 let mut j = i + 1;
-                while j < n && chars[j] != '，' && chars[j] != '、'
-                    && chars[j] != '。' && chars[j] != '！' && chars[j] != '？'
-                    && chars[j] != ';' && chars[j] != '；' && chars[j] != '：' && chars[j] != ':'
-                {
+                while j < n && !Self::is_break(chars[j]) {
                     right_len += 1;
                     j += 1;
                 }
@@ -920,7 +963,7 @@ impl ZhPunctNormalizer {
             i += 1;
         }
 
-        // Collapse ，。 / 、。 → 。 and 。。 → 。 in a single left-to-right pass.
+        // Pass 3: collapse ，。 / 、。 → 。 and 。。 → 。.
         let mut collapsed: Vec<char> = Vec::with_capacity(out.len());
         for ch in out {
             if ch == '。' {
@@ -947,6 +990,318 @@ impl ZhPunctNormalizer {
 
 #[async_trait]
 impl TextProcessor for ZhPunctNormalizer {
+    async fn process(
+        &self,
+        text: &str,
+        _context: &ContextSnapshot,
+    ) -> Result<ProcessResult, ProcessError> {
+        let (normalized, corrections) = self.normalize_str(text);
+        Ok(ProcessResult {
+            text: normalized,
+            corrections,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// JaPunctNormalizer — over-segmentation post-pass for Japanese
+// ---------------------------------------------------------------------------
+
+/// Post-process Japanese punctuation after a neural restorer.
+///
+/// Stopgap until a ja-native punct model ships. XLM-R over-inserts `。`
+/// inside 連体修飾 (`とする。火山`), mid-compound Kanji runs
+/// (`越境。台風`), and after clause particles (`に。北西`). This
+/// normalizer deletes or demotes those — it does not insert marks.
+///
+/// ```text
+/// … → XlmrPunct → JaPunctNormalizer → …
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct JaPunctNormalizer;
+
+impl JaPunctNormalizer {
+    pub fn new() -> Self {
+        Self
+    }
+
+    fn is_kanji(ch: char) -> bool {
+        matches!(ch as u32, 0x4E00..=0x9FFF | 0x3400..=0x4DBF | 0xF900..=0xFAFF)
+    }
+
+    fn is_katakana(ch: char) -> bool {
+        matches!(ch as u32, 0x30A0..=0x30FF)
+    }
+
+    fn is_hiragana(ch: char) -> bool {
+        matches!(ch as u32, 0x3040..=0x309F)
+    }
+
+    /// Verb / adjective endings that commonly precede a noun head in
+    /// 連体修飾 — a period between these and content is almost always
+    /// over-segmentation on Wikipedia-style prose.
+    fn is_verbish_left(ch: char) -> bool {
+        matches!(
+            ch,
+            'る' | 'た' | 'う' | 'く' | 'い' | 'て' | 'で' | 'ぬ' | 'ん' | 'す'
+                | 'つ' | 'ぶ' | 'む' | 'ぐ' | 'ず' | 'み' | 'ま' | 'し' | 'ょ' | 'っ'
+        )
+    }
+
+    fn is_particle_left(ch: char) -> bool {
+        matches!(ch, 'が' | 'を' | 'に' | 'へ' | 'と' | 'や' | 'は' | 'の' | 'も' | 'よ' | 'り')
+    }
+
+    fn trailing(out: &[char], n: usize) -> String {
+        out.iter()
+            .rev()
+            .take(n)
+            .copied()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect()
+    }
+
+    fn ends_with_polite(out: &[char]) -> bool {
+        let s = Self::trailing(out, 3);
+        s.ends_with("です")
+            || s.ends_with("ます")
+            || s.ends_with("でした")
+            || s.ends_with("ました")
+            || s.ends_with("ません")
+    }
+
+    /// Long passive / causative endings often close a real sentence
+    /// (`分けられる。他国では…`). Bare `れる` / `せる` stay eligible for
+    /// 連体 deletion (`流れる。水` → `流れる水`).
+    fn ends_with_sentence_aux(out: &[char]) -> bool {
+        let s = Self::trailing(out, 4);
+        s.ends_with("られる")
+            || s.ends_with("させる")
+            || s.ends_with("させられる")
+    }
+
+    /// Pure transform — keep in sync with `ja_punct_normalize` in
+    /// `scripts/eval_punctuation.py`.
+    pub fn normalize_str(&self, text: &str) -> (String, Vec<Correction>) {
+        if text.is_empty() {
+            return (String::new(), vec![]);
+        }
+
+        let chars: Vec<char> = text.chars().collect();
+        let n = chars.len();
+        let mut out: Vec<char> = Vec::with_capacity(n);
+        let mut corrections = Vec::new();
+        let mut i = 0usize;
+
+        while i < n {
+            let ch = chars[i];
+            if ch == '。' && i + 1 < n {
+                if let Some(&left) = out.last() {
+                    let right = chars[i + 1];
+                    let content = Self::is_kanji(right)
+                        || Self::is_katakana(right)
+                        || Self::is_hiragana(right)
+                        || right.is_ascii_digit()
+                        || matches!(right, '「' | '『' | '（' | '(' | '《' | '"' | '“' | '\'' | '‘');
+
+                    // 連体: verbish + 。 + content → delete 。
+                    // Skip passive/causative sentence endings (られる。他国…).
+                    if Self::is_verbish_left(left)
+                        && content
+                        && !Self::ends_with_sentence_aux(&out)
+                        && !Self::ends_with_polite(&out)
+                    {
+                        corrections.push(Correction {
+                            kind: CorrectionKind::PunctuationInserted,
+                            original: "。".to_string(),
+                            replacement: String::new(),
+                            span: None,
+                        });
+                        i += 1;
+                        continue;
+                    }
+
+                    // Mid-compound Kanji。Kanji (not after です/ます).
+                    if Self::is_kanji(left) && Self::is_kanji(right) && !Self::ends_with_polite(&out)
+                    {
+                        corrections.push(Correction {
+                            kind: CorrectionKind::PunctuationInserted,
+                            original: "。".to_string(),
+                            replacement: String::new(),
+                            span: None,
+                        });
+                        i += 1;
+                        continue;
+                    }
+
+                    // Particle + 。 + content → 、
+                    if Self::is_particle_left(left)
+                        && (Self::is_kanji(right) || Self::is_hiragana(right) || Self::is_katakana(right))
+                    {
+                        out.push('、');
+                        corrections.push(Correction {
+                            kind: CorrectionKind::PunctuationInserted,
+                            original: "。".to_string(),
+                            replacement: "、".to_string(),
+                            span: None,
+                        });
+                        i += 1;
+                        continue;
+                    }
+                }
+            }
+            out.push(ch);
+            i += 1;
+        }
+
+        (out.into_iter().collect(), corrections)
+    }
+}
+
+#[async_trait]
+impl TextProcessor for JaPunctNormalizer {
+    async fn process(
+        &self,
+        text: &str,
+        _context: &ContextSnapshot,
+    ) -> Result<ProcessResult, ProcessError> {
+        let (normalized, corrections) = self.normalize_str(text);
+        Ok(ProcessResult {
+            text: normalized,
+            corrections,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// EsPunctNormalizer — over-segmentation post-pass for Spanish / Latin
+// ---------------------------------------------------------------------------
+
+/// Post-process Spanish (Latin-script) punctuation after a neural
+/// restorer.
+///
+/// Stopgap. XLM-R over-inserts `.` before clause continuations
+/// (`Chile. siendo` / truecased `Chile. Siendo`). This normalizer
+/// demotes those to `,` — it does not insert marks.
+///
+/// ```text
+/// … → XlmrPunct → EsPunctNormalizer → …
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct EsPunctNormalizer;
+
+impl EsPunctNormalizer {
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Clause-continuation / subordinator lemmas (lowercase). When the
+    /// token after `. ` matches (ignoring truecase), demote to `,` and
+    /// re-lowercase the token.
+    const CONT_WORDS: &'static [&'static str] = &[
+        "siendo", "mientras", "aunque", "cuando", "donde", "como", "porque",
+        "pero", "sino", "además", "ademas", "también", "tambien", "según",
+        "segun", "durante", "mediante", "hacia", "entre", "sobre", "bajo",
+        "desde", "hasta", "para", "por", "con", "sin", "que", "quien",
+        "cual", "cuyo", "cuya",
+    ];
+
+    fn is_cont_word(word: &str) -> bool {
+        let lower = word.to_lowercase();
+        if Self::CONT_WORDS.contains(&lower.as_str()) {
+            return true;
+        }
+        // Spanish gerunds: -ando / -iendo / -endo
+        lower.ends_with("ando") || lower.ends_with("iendo") || lower.ends_with("endo")
+    }
+
+    /// Pure transform — keep in sync with `es_punct_normalize` in
+    /// `scripts/eval_punctuation.py`.
+    pub fn normalize_str(&self, text: &str) -> (String, Vec<Correction>) {
+        if text.is_empty() {
+            return (String::new(), vec![]);
+        }
+
+        let mut corrections = Vec::new();
+        let mut out = String::with_capacity(text.len());
+        let chars: Vec<char> = text.chars().collect();
+        let n = chars.len();
+        let mut i = 0usize;
+
+        while i < n {
+            // Match `.` + whitespace + word
+            if chars[i] == '.' && i + 1 < n {
+                let mut j = i + 1;
+                let mut ws = String::new();
+                while j < n && chars[j].is_whitespace() {
+                    ws.push(chars[j]);
+                    j += 1;
+                }
+                if !ws.is_empty() && j < n {
+                    // lowercase continuation → always demote
+                    if chars[j].is_lowercase()
+                        && (chars[j].is_alphabetic()
+                            || matches!(chars[j], 'á' | 'é' | 'í' | 'ó' | 'ú' | 'ü' | 'ñ'))
+                    {
+                        out.push(',');
+                        out.push_str(&ws);
+                        corrections.push(Correction {
+                            kind: CorrectionKind::PunctuationInserted,
+                            original: ".".to_string(),
+                            replacement: ",".to_string(),
+                            span: None,
+                        });
+                        i = j;
+                        continue;
+                    }
+                    // truecased continuation word / gerund
+                    if chars[j].is_alphabetic()
+                        || matches!(
+                            chars[j],
+                            'Á' | 'É' | 'Í' | 'Ó' | 'Ú' | 'Ü' | 'Ñ' | 'á' | 'é' | 'í' | 'ó' | 'ú'
+                                | 'ü' | 'ñ'
+                        )
+                    {
+                        let start = j;
+                        while j < n
+                            && (chars[j].is_alphabetic()
+                                || matches!(
+                                    chars[j],
+                                    'Á' | 'É' | 'Í' | 'Ó' | 'Ú' | 'Ü' | 'Ñ' | 'á' | 'é' | 'í'
+                                        | 'ó' | 'ú' | 'ü' | 'ñ'
+                                ))
+                        {
+                            j += 1;
+                        }
+                        let word: String = chars[start..j].iter().collect();
+                        if Self::is_cont_word(&word) {
+                            out.push(',');
+                            out.push_str(&ws);
+                            out.push_str(&word.to_lowercase());
+                            corrections.push(Correction {
+                                kind: CorrectionKind::PunctuationInserted,
+                                original: format!(".{}", word),
+                                replacement: format!(",{}", word.to_lowercase()),
+                                span: None,
+                            });
+                            i = j;
+                            continue;
+                        }
+                    }
+                }
+            }
+            out.push(chars[i]);
+            i += 1;
+        }
+
+        (out, corrections)
+    }
+}
+
+#[async_trait]
+impl TextProcessor for EsPunctNormalizer {
     async fn process(
         &self,
         text: &str,
@@ -1519,6 +1874,139 @@ mod tests {
     async fn zh_punct_leaves_existing_enumeration_comma() {
         let proc = ZhPunctNormalizer::new();
         let input = "綠茶、白茶、黃茶。";
+        let result = proc.process(input, &empty_context()).await.unwrap();
+        assert_eq!(result.text, input);
+    }
+
+    #[tokio::test]
+    async fn zh_punct_demotes_mid_sentence_period() {
+        // Neural over-seg: 。 where gold wants ，. Demote when the
+        // right neighbour is Han and the left is not a sentence-final
+        // particle; short runs then become 、 via the enum pass.
+        let proc = ZhPunctNormalizer::new();
+        let result = proc
+            .process(
+                "飲茶已成為社會各階層普遍的生活習慣。陸羽所著《茶經》更是現存最早的專著。",
+                &empty_context(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            result.text,
+            "飲茶已成為社會各階層普遍的生活習慣，陸羽所著《茶經》更是現存最早的專著。"
+        );
+    }
+
+    #[tokio::test]
+    async fn zh_punct_demote_then_enum_for_short_list() {
+        let proc = ZhPunctNormalizer::new();
+        let result = proc
+            .process("长城墙体。敌楼、壕堑。", &empty_context())
+            .await
+            .unwrap();
+        assert_eq!(result.text, "长城墙体、敌楼、壕堑。");
+    }
+
+    #[tokio::test]
+    async fn zh_punct_keeps_period_after_sentence_particle() {
+        let proc = ZhPunctNormalizer::new();
+        let input = "你吃饭了。明天再来。";
+        let result = proc.process(input, &empty_context()).await.unwrap();
+        assert_eq!(result.text, input);
+    }
+
+    // --- JaPunctNormalizer tests ---
+
+    #[tokio::test]
+    async fn ja_punct_deletes_rentaikei_period() {
+        // 連体修飾の切れ目に誤挿入された 。 を削除する。
+        let proc = JaPunctNormalizer::new();
+        let result = proc
+            .process(
+                "マグマを熱源とする。火山性温泉と、非火山性温泉に分けられる。",
+                &empty_context(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            result.text,
+            "マグマを熱源とする火山性温泉と、非火山性温泉に分けられる。"
+        );
+    }
+
+    #[tokio::test]
+    async fn ja_punct_deletes_kanji_compound_period() {
+        let proc = JaPunctNormalizer::new();
+        let result = proc
+            .process("場合（越境。台風）は台風。番号のみが付番される。", &empty_context())
+            .await
+            .unwrap();
+        assert_eq!(
+            result.text,
+            "場合（越境台風）は台風番号のみが付番される。"
+        );
+    }
+
+    #[tokio::test]
+    async fn ja_punct_demotes_particle_period_to_comma() {
+        let proc = JaPunctNormalizer::new();
+        let result = proc
+            .process("2023年までの間に。北西太平洋で発生した。", &empty_context())
+            .await
+            .unwrap();
+        assert_eq!(
+            result.text,
+            "2023年までの間に、北西太平洋で発生した。"
+        );
+    }
+
+    #[tokio::test]
+    async fn ja_punct_keeps_true_sentence_break() {
+        let proc = JaPunctNormalizer::new();
+        let input = "温泉に分けられる。他国では基準が異なる。";
+        let result = proc.process(input, &empty_context()).await.unwrap();
+        assert_eq!(result.text, input);
+    }
+
+    // --- EsPunctNormalizer tests ---
+
+    #[tokio::test]
+    async fn es_punct_demotes_period_before_lowercase() {
+        let proc = EsPunctNormalizer::new();
+        let result = proc
+            .process(
+                "en Argentina y Chile. siendo además la segunda cumbre.",
+                &empty_context(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            result.text,
+            "en Argentina y Chile, siendo además la segunda cumbre."
+        );
+    }
+
+    #[tokio::test]
+    async fn es_punct_demotes_truecased_continuations() {
+        // XLM-R truecases after inserting a spurious period.
+        let proc = EsPunctNormalizer::new();
+        let result = proc
+            .process(
+                "en Argentina y Chile. Siendo además la segunda cumbre.",
+                &empty_context(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            result.text,
+            "en Argentina y Chile, siendo además la segunda cumbre."
+        );
+    }
+
+    #[tokio::test]
+    async fn es_punct_keeps_real_sentence_break() {
+        let proc = EsPunctNormalizer::new();
+        let input = "El café es popular. España produce menos.";
         let result = proc.process(input, &empty_context()).await.unwrap();
         assert_eq!(result.text, input);
     }

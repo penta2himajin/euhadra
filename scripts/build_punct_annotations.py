@@ -117,12 +117,24 @@ def fetch_extract(lang: str, title: str) -> str:
     return ""
 
 
+def _strip_invisible(text: str) -> str:
+    """Drop zero-width / BOM chars (common in Wikipedia extracts).
+
+    They break skeleton alignment in the punct bake-off without being
+    visible in diffs — especially costly for Spanish.
+    """
+    for ch in ("\u200b", "\ufeff", "\u200c", "\u200d"):
+        text = text.replace(ch, "")
+    return text
+
+
 def split_sentences(lang: str, text: str) -> list[str]:
     """Rough sentence split — good enough for gold synthesis.
 
     We keep only sentences that already carry terminal punctuation, so
     the reference is something a restorer can be scored against.
     """
+    text = _strip_invisible(text)
     text = re.sub(r"\s+", " ", text).strip()
     if not text:
         return []

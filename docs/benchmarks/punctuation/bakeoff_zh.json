@@ -28,9 +28,9 @@
         "punct_f1": 0.3505,
         "terminal_accuracy": 1.0,
         "latency_ms": {
-          "p50": 249.91,
-          "p95": 258.74,
-          "mean": 249.64
+          "p50": 244.38,
+          "p95": 252.7,
+          "mean": 245.34
         },
         "tp": 58,
         "fp": 114,
@@ -40,18 +40,18 @@
     "xlmr_zh": {
       "zh": {
         "n": 20,
-        "punct_precision": 0.564,
-        "punct_recall": 0.6101,
-        "punct_f1": 0.5861,
+        "punct_precision": 0.6395,
+        "punct_recall": 0.6918,
+        "punct_f1": 0.6647,
         "terminal_accuracy": 1.0,
         "latency_ms": {
-          "p50": 244.44,
-          "p95": 253.68,
-          "mean": 244.96
+          "p50": 243.39,
+          "p95": 250.88,
+          "mean": 243.93
         },
-        "tp": 97,
-        "fp": 75,
-        "fn": 62
+        "tp": 110,
+        "fp": 62,
+        "fn": 49
       }
     }
   }

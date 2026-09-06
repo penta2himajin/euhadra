@@ -632,13 +632,19 @@ accuracy. Layer ablation WER understates the gap because
 
 | Lang | n | basic F1 | xlmr F1 | basic term | xlmr term | xlmr p50 |
 |---|---:|---:|---:|---:|---:|---:|
-| en | 30 | 0.351 | **0.775** | 0.967 | 1.000 | 246 ms |
-| ja | 30 | 0.347 | **0.627** | 1.000 | 1.000 | 246 ms |
-| ko | 20 | 0.400 | **0.698** | 1.000 | 1.000 | 245 ms |
-| zh | 20 | 0.224 | **0.350** | 1.000 | 1.000 | 247 ms |
-| es | 20 | 0.197 | **0.331** | 0.950 | 0.950 | 257 ms |
+| en | 30 | 0.351 | **0.775** | 0.967 | 1.000 | ~243 ms |
+| ja | 30 | 0.347 | **0.627** | 1.000 | 1.000 | ~242 ms |
+| ko | 20 | 0.400 | **0.698** | 1.000 | 1.000 | ~241 ms |
+| zh | 20 | 0.224 | **0.350** | 1.000 | 1.000 | ~243 ms |
+| es | 20 | 0.207 | **0.745** | 1.000 | 1.000 | ~253 ms |
 
 Raw report: [`docs/benchmarks/punctuation/bakeoff.json`](./benchmarks/punctuation/bakeoff.json).
+
+> **es note:** an earlier draft reported xlmr es F1 ≈ 0.33. That was an
+> annotation artefact — Wikipedia extracts contained U+200B zero-width
+> spaces that broke skeleton alignment. Stripping invisibles in
+> `build_punct_annotations.py` / `eval_punctuation.py` recovers the
+> real ~0.75 F1. See §7.5.
 
 ### 7.2 What the numbers say
 
@@ -647,9 +653,9 @@ Raw report: [`docs/benchmarks/punctuation/bakeoff.json`](./benchmarks/punctuatio
    sits around 0.2 because every internal `、`/`,` is a false negative.
    That matches the "やや微妙" feeling on Japanese dictation output.
 2. **xlm-r wins every language we ship.** The lift is largest on
-   en / ja / ko (roughly 1.7–2.2× F1). zh and es improve but stay weak
-   in absolute terms (F1 ≈ 0.33–0.35) — worth a second look before
-   calling the candidate "done" for those two.
+   en / ja / ko (roughly 1.7–2.2× F1). zh stays weak in absolute terms
+   until the post-passes in §7.4–§7.5; es is competitive once gold is
+   cleaned of invisible characters.
 3. **Latency is the tax.** ~250 ms p50 per utterance on CPU is fine for
    final-pass cleanup, not for per-partial streaming. The shipping
    `BasicPunctuationRestorer` stays the right default for the hot path
@@ -663,25 +669,45 @@ Raw report: [`docs/benchmarks/punctuation/bakeoff.json`](./benchmarks/punctuatio
 - **Adopt as the optional multilingual punct backend**, behind `onnx`,
   once a native adapter exists — not as a silent replacement for
   `BasicPunctuationRestorer` on the default (no-`onnx`) build.
-- **Re-measure zh/es** on a larger, domain-matched set before promising
-  parity there. Wikipedia prose understates ASR noise and overstates
-  comma density for dictation.
+- **Chain language-specific over-seg normalizers** (§7.5) on zh / ja /
+  es paths only — do not run `ZhPunctNormalizer` on Japanese (it would
+  demote `。` → `，`).
 - Keep `BasicPunctuationRestorer` as the zero-dependency fallback.
 
 ### 7.4 zh follow-up: glyph equivalence + `ZhPunctNormalizer`
 
-The zh gap in §7.1 is mostly `、` vs `，`. Two checks:
+The zh gap in §7.1 is mostly `、` vs `，`, plus mid-clause over-
+segmentation. Checks:
 
 1. **Equivalence scoring** (`--equiv-zh-commas`): treat `、` and `，` as
    the same mark. XLM-R zh F1 rises from 0.35 → **0.74**.
-2. **Product post-pass** (`ZhPunctNormalizer`): after XLM-R, convert
-   `，` → `、` when both neighbours are Han and the right-hand run is
-   short (≤ 6 chars); collapse `，。` / `、。` / `。。`. Strict F1 rises
-   from 0.35 → **0.59**. Equivalence F1 stays 0.74 (no position harm).
-
-The residual 0.59 → 0.74 is over-segmentation (extra `。`) and a few
-clause/enum boundary mistakes — out of scope for this rule.
+2. **Product post-pass** (`ZhPunctNormalizer`): after XLM-R,
+   - demote mid-text `。` → `，` when the right neighbour is Han and the
+     left is not a sentence-final particle (`了` / `吗` / …);
+   - convert `，` → `、` when both neighbours are Han and the right-hand
+     run is short (≤ 6 chars);
+   - collapse `，。` / `、。` / `。。`.
+   Strict F1 rises from 0.35 → **0.67**. With comma equivalence,
+   **0.88**.
 
 Wire-up: chain `ZhPunctNormalizer` after the neural punctuator on zh
-paths. Python bake-off backend name: `xlmr_zh`. Reports under
+paths only. Python bake-off backend name: `xlmr_zh`. Reports under
 `docs/benchmarks/punctuation/bakeoff_zh*.json`.
+
+### 7.5 Over-segmentation post-passes (zh / ja / es)
+
+XLM-R over-inserts sentence terminals inside clauses. Language-specific
+normalizers delete or demote those — they do not insert marks from
+scratch. Chain only on the matching language path.
+
+| Lang | Normalizer | Rule sketch | xlmr F1 | +fix F1 |
+|---|---|---|---:|---:|
+| zh | `ZhPunctNormalizer` | mid-Han `。` → `，`, then enum `，` → `、` | 0.35 | **0.67** |
+| ja | `JaPunctNormalizer` | delete `。` in 連体 / mid-Kanji compound; particle+`。` → `、` | 0.63 | **0.69** |
+| es | `EsPunctNormalizer` | `.` + lowercase → `,`; truecased continuations / gerunds → `,` | 0.75 | **0.79** |
+
+Python backends: `xlmr_zh` / `xlmr_ja` / `xlmr_es`. Reports:
+[`bakeoff_overseg.json`](./benchmarks/punctuation/bakeoff_overseg.json),
+[`bakeoff_overseg_ja_es.json`](./benchmarks/punctuation/bakeoff_overseg_ja_es.json).
+
+ko / en need no post-pass on this set (Δ terminals ≈ 0 / +4).

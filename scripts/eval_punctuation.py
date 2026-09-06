@@ -195,17 +195,48 @@ def _is_han(ch: str) -> bool:
     return any(lo <= o <= hi for lo, hi in _ZH_HAN_RANGES)
 
 
-def zh_punct_normalize(text: str, enum_max: int = _ZH_ENUM_MAX) -> str:
+# Keep in sync with `ZhPunctNormalizer::SENTENCE_FINAL_LEFT`.
+_ZH_SENTENCE_FINAL_LEFT = set("了吗嗎呢吧呀啊哦嘛矣耳")
+
+
+def zh_punct_normalize(
+    text: str,
+    enum_max: int = _ZH_ENUM_MAX,
+    *,
+    demote_mid_periods: bool = True,
+) -> str:
     """Mirror of `ZhPunctNormalizer::normalize_str` (text only).
 
-    Conservative post-pass: `，` → `、` when both neighbours are Han and
-    the right-hand run until the next punct is short; collapse
-    `，。` / `、。` / `。。` → `。`.
+    1. Demote mid-text `。` → `，` when the right neighbour is Han and
+       the left is not a sentence-final particle.
+    2. `，` → `、` when both neighbours are Han and the right-hand run
+       until the next punct is short.
+    3. Collapse `，。` / `、。` / `。。` → `。`.
     """
     if not text:
         return text
     chars = list(text)
     out: list[str] = []
+    i = 0
+    n = len(chars)
+
+    # Pass 1: demote mid-clause 。 → ，
+    while i < n:
+        ch = chars[i]
+        if demote_mid_periods and ch == "。" and i + 1 < n:
+            right = chars[i + 1]
+            left = out[-1] if out else ""
+            keep = right in "”」』）)]》\n" or left in _ZH_SENTENCE_FINAL_LEFT
+            if not keep and _is_han(right):
+                out.append("，")
+                i += 1
+                continue
+        out.append(ch)
+        i += 1
+
+    # Pass 2: enumeration ， → 、
+    chars = out
+    out = []
     i = 0
     n = len(chars)
     while i < n:
@@ -225,6 +256,7 @@ def zh_punct_normalize(text: str, enum_max: int = _ZH_ENUM_MAX) -> str:
         out.append(ch)
         i += 1
 
+    # Pass 3: collapse
     collapsed: list[str] = []
     for ch in out:
         if ch == "。" and collapsed and collapsed[-1] in ("，", "、", "。"):
@@ -232,6 +264,132 @@ def zh_punct_normalize(text: str, enum_max: int = _ZH_ENUM_MAX) -> str:
             continue
         collapsed.append(ch)
     return "".join(collapsed)
+
+
+# ---------------------------------------------------------------------------
+# JaPunctNormalizer — Python mirror
+# ---------------------------------------------------------------------------
+
+_JA_VERBISH = set("るたうくいてでぬんすつぶむぐずみましょっ")
+_JA_PARTICLE = set("がをにへとやはのもより")
+
+
+def _ja_is_kanji(ch: str) -> bool:
+    o = ord(ch)
+    return 0x4E00 <= o <= 0x9FFF or 0x3400 <= o <= 0x4DBF or 0xF900 <= o <= 0xFAFF
+
+
+def _ja_is_katakana(ch: str) -> bool:
+    return 0x30A0 <= ord(ch) <= 0x30FF
+
+
+def _ja_is_hiragana(ch: str) -> bool:
+    return 0x3040 <= ord(ch) <= 0x309F
+
+
+def _ja_trailing(out: list[str], n: int) -> str:
+    return "".join(out[-n:]) if out else ""
+
+
+def ja_punct_normalize(text: str) -> str:
+    """Mirror of `JaPunctNormalizer::normalize_str` (text only)."""
+    if not text:
+        return text
+    chars = list(text)
+    out: list[str] = []
+    i = 0
+    n = len(chars)
+    while i < n:
+        ch = chars[i]
+        if ch == "。" and i + 1 < n and out:
+            left = out[-1]
+            right = chars[i + 1]
+            content = (
+                _ja_is_kanji(right)
+                or _ja_is_katakana(right)
+                or _ja_is_hiragana(right)
+                or right.isdigit()
+                or right in "「『（(《\"“'‘"
+            )
+            trail = _ja_trailing(out, 4)
+            polite = trail.endswith(("です", "ます", "でした", "ました", "ません"))
+            sent_aux = trail.endswith(("られる", "させる", "させられる"))
+            if left in _JA_VERBISH and content and not sent_aux and not polite:
+                i += 1
+                continue
+            if _ja_is_kanji(left) and _ja_is_kanji(right) and not polite:
+                i += 1
+                continue
+            if left in _JA_PARTICLE and (
+                _ja_is_kanji(right) or _ja_is_hiragana(right) or _ja_is_katakana(right)
+            ):
+                out.append("、")
+                i += 1
+                continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+# ---------------------------------------------------------------------------
+# EsPunctNormalizer — Python mirror
+# ---------------------------------------------------------------------------
+
+_ES_CONT_WORDS = {
+    "siendo", "mientras", "aunque", "cuando", "donde", "como", "porque",
+    "pero", "sino", "además", "ademas", "también", "tambien", "según",
+    "segun", "durante", "mediante", "hacia", "entre", "sobre", "bajo",
+    "desde", "hasta", "para", "por", "con", "sin", "que", "quien",
+    "cual", "cuyo", "cuya",
+}
+
+
+def _es_is_cont_word(word: str) -> bool:
+    lower = word.lower()
+    if lower in _ES_CONT_WORDS:
+        return True
+    return lower.endswith(("ando", "iendo", "endo"))
+
+
+def es_punct_normalize(text: str) -> str:
+    """Mirror of `EsPunctNormalizer::normalize_str` (text only)."""
+    if not text:
+        return text
+    # Defence in depth: drop zero-width chars that confuse slot alignment.
+    text = text.replace("\u200b", "").replace("\ufeff", "")
+    out: list[str] = []
+    chars = list(text)
+    i = 0
+    n = len(chars)
+    while i < n:
+        if chars[i] == "." and i + 1 < n:
+            j = i + 1
+            ws: list[str] = []
+            while j < n and chars[j].isspace():
+                ws.append(chars[j])
+                j += 1
+            if ws and j < n:
+                # lowercase continuation → always demote
+                if chars[j].isalpha() and chars[j].islower():
+                    out.append(",")
+                    out.extend(ws)
+                    i = j
+                    continue
+                # truecased continuation / gerund
+                if chars[j].isalpha():
+                    start = j
+                    while j < n and chars[j].isalpha():
+                        j += 1
+                    word = "".join(chars[start:j])
+                    if _es_is_cont_word(word):
+                        out.append(",")
+                        out.extend(ws)
+                        out.extend(list(word.lower()))
+                        i = j
+                        continue
+        out.append(chars[i])
+        i += 1
+    return "".join(out)
 
 
 # ---------------------------------------------------------------------------
@@ -363,6 +521,11 @@ class BackendResult:
     by_lang: dict = field(default_factory=dict)
 
 
+def _strip_invisible(text: str) -> str:
+    """Drop zero-width / BOM chars that break skeleton alignment."""
+    return text.replace("\u200b", "").replace("\ufeff", "").replace("\u200c", "").replace("\u200d", "")
+
+
 def load_annotations(path: Path) -> list[dict]:
     if path.is_dir():
         rows = []
@@ -375,7 +538,12 @@ def load_annotations(path: Path) -> list[dict]:
         for line in fh:
             line = line.strip()
             if line:
-                rows.append(json.loads(line))
+                row = json.loads(line)
+                if "gold" in row:
+                    row["gold"] = _strip_invisible(row["gold"])
+                if "input" in row:
+                    row["input"] = _strip_invisible(row["input"])
+                rows.append(row)
     return rows
 
 
@@ -447,7 +615,7 @@ def main() -> int:
     ap.add_argument(
         "--backends",
         default="basic,xlmr",
-        help="Comma-separated: basic, xlmr, xlmr_zh",
+        help="Comma-separated: basic, xlmr, xlmr_zh, xlmr_ja, xlmr_es",
     )
     ap.add_argument(
         "--xlmr-dir",
@@ -475,7 +643,7 @@ def main() -> int:
         print("[eval] scoring with zh comma equivalence (、 ≡ ，)")
 
     need_xlmr = any(
-        n.strip() in ("xlmr", "xlmr_zh")
+        n.strip() in ("xlmr", "xlmr_zh", "xlmr_ja", "xlmr_es")
         for n in args.backends.split(",")
         if n.strip()
     )
@@ -502,6 +670,14 @@ def main() -> int:
             assert xlmr_fn is not None
             base = xlmr_fn
             backends.append((name, lambda t, b=base: zh_punct_normalize(b(t))))
+        elif name == "xlmr_ja":
+            assert xlmr_fn is not None
+            base = xlmr_fn
+            backends.append((name, lambda t, b=base: ja_punct_normalize(b(t))))
+        elif name == "xlmr_es":
+            assert xlmr_fn is not None
+            base = xlmr_fn
+            backends.append((name, lambda t, b=base: es_punct_normalize(b(t))))
         else:
             print(f"[error] unknown backend: {name}", file=sys.stderr)
             return 2
