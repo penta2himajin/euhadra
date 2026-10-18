@@ -59,14 +59,15 @@ use crate::types::{ContextSnapshot, Language, Span};
 ///
 /// One character is indefensible in any script — a stray `e` or `あ`
 /// would rewrite half the transcript. Two is where this stops being
-/// obviously wrong and starts being a judgement call: `IT` passes, and
-/// an English speaker who registers it will find every `it` rewritten.
+/// obviously wrong and starts being a judgement call.
 ///
-/// **Length is a proxy for the real hazard, which is frequency.** `Qz`
-/// is two characters and harmless; `IT` is two characters and not,
-/// because `it` is common. Warning on frequency needs a per-language
-/// word-frequency list — the kind of per-language data `docs/spec.md`
-/// §11.4 classifies as not centrally scalable — so it is not here.
+/// The best-known two-character hazard, `IT` rewriting every `it`, came
+/// from case folding rather than length, and is handled there: an alias
+/// written all in capitals keeps its case (#139). What remains is a
+/// short *lower-case* alias that is also a common word — registering
+/// `it` itself. Warning on that needs a per-language word-frequency list,
+/// the kind of per-language data `docs/spec.md` §11.4 classifies as not
+/// centrally scalable, so it is not here.
 const MIN_ALIAS_CHARS: usize = 2;
 
 // ---------------------------------------------------------------------------
@@ -126,6 +127,10 @@ enum MatchScope {
 /// | Japanese | substring | ✓ | ✓ | ✓ |
 /// | Chinese | substring | ✓ | ✓ | — |
 /// | [`none`](Self::none) | substring | — | — | — |
+///
+/// Case folding skips an alias written all in capitals (`IT`, `US`): for
+/// an acronym it does lose information, since it merges the acronym with
+/// an ordinary word the ASR writes in lower case (#139).
 ///
 /// Not included for any language, and why: Spanish accent stripping
 /// (loses meaning, above); Chinese simplified↔traditional (needs an
@@ -287,6 +292,14 @@ fn fold(text: &str, policy: &MatchPolicy) -> Folded {
     Folded { chars, origin }
 }
 
+/// Written all in capitals, like `IT` or `US`: has an uppercase letter and
+/// no lowercase one. Such an alias keeps its case when matched, because
+/// folding it collides with an ordinary word the ASR writes in lower case
+/// (#139). Full-width capitals count — `ＩＴ` is an acronym too.
+fn is_acronym(alias: &str) -> bool {
+    alias.chars().any(char::is_uppercase) && !alias.chars().any(char::is_lowercase)
+}
+
 // ---------------------------------------------------------------------------
 // Dictionary
 // ---------------------------------------------------------------------------
@@ -295,6 +308,10 @@ fn fold(text: &str, policy: &MatchPolicy) -> Folded {
 #[derive(Debug)]
 struct CompiledAlias {
     folded: Vec<char>,
+    /// For an acronym (all capitals, `IT`), the alias folded with case
+    /// kept: a match must also equal this. `None` matches on `folded`
+    /// alone.
+    cased: Option<Vec<char>>,
     term: String,
 }
 
@@ -400,8 +417,19 @@ impl TermDictionary {
                     None => {}
                 }
                 claimed.insert(key, (entry.term.clone(), alias.clone()));
+                let cased = (policy.fold_case && is_acronym(alias)).then(|| {
+                    fold(
+                        alias,
+                        &MatchPolicy {
+                            fold_case: false,
+                            ..policy
+                        },
+                    )
+                    .chars
+                });
                 aliases.push(CompiledAlias {
                     folded,
+                    cased,
                     term: entry.term.clone(),
                 });
             }
@@ -441,10 +469,10 @@ impl TermDictionary {
 
         let mut i = 0usize;
         while i < folded.chars.len() {
-            let hit = self
-                .aliases
-                .iter()
-                .find(|alias| self.matches_at(&folded.chars, i, alias));
+            let hit = self.aliases.iter().find(|alias| {
+                self.matches_at(&folded.chars, i, alias)
+                    && self.case_matches(&original, &folded, i, alias)
+            });
 
             match hit {
                 Some(alias) => {
@@ -483,6 +511,31 @@ impl TermDictionary {
         }
         out.extend(original[cursor..].iter());
         (out, corrections)
+    }
+
+    /// For an acronym, re-fold the matched original text with case kept
+    /// and compare. Done per hit rather than as a second haystack because
+    /// case folding can change length (`ß` → `ss`), which would misalign
+    /// two folded copies of the same text.
+    fn case_matches(
+        &self,
+        original: &[char],
+        folded: &Folded,
+        at: usize,
+        alias: &CompiledAlias,
+    ) -> bool {
+        let Some(cased) = &alias.cased else {
+            return true;
+        };
+        let end = at + alias.folded.len();
+        let from = folded.origin[at];
+        let to = folded.origin[end - 1] + 1;
+        let span: String = original[from..to].iter().collect();
+        let policy = MatchPolicy {
+            fold_case: false,
+            ..self.policy
+        };
+        fold(&span, &policy).chars == *cased
     }
 
     fn matches_at(&self, haystack: &[char], at: usize, alias: &CompiledAlias) -> bool {
@@ -674,6 +727,44 @@ mod tests {
         let dict = en(vec![entry("typwrtr", &["typewriter"])]);
         let (text, _) = dict.apply("Typewriter is the tool.");
         assert_eq!(text, "typwrtr is the tool.");
+    }
+
+    // ── Acronyms keep their case (#139) ─────────────────────────────────
+
+    /// Folding `IT` to `it` would rewrite every pronoun. The ASR already
+    /// tells them apart — measured on Parakeet-v3: "eye tee" came out
+    /// `IT` 34/36 times, the pronoun `it`/`It` 36/36 and never `IT` — so
+    /// an alias written all in capitals is matched with its case.
+    #[test]
+    fn an_all_caps_alias_does_not_match_the_lowercase_word() {
+        let dict = en(vec![entry("Information Technology", &["IT"])]);
+        let (text, corrections) = dict.apply("Call IT about it.");
+        assert_eq!(text, "Call Information Technology about it.");
+        assert_eq!(corrections.len(), 1);
+
+        let (text, corrections) = dict.apply("It is what it is.");
+        assert_eq!(
+            text, "It is what it is.",
+            "a sentence-initial `It` is not an acronym"
+        );
+        assert!(corrections.is_empty());
+    }
+
+    /// Only case is kept. The other folds still apply to an acronym.
+    #[test]
+    fn an_all_caps_alias_still_folds_full_width() {
+        let dict = en(vec![entry("Information Technology", &["IT"])]);
+        let (text, _) = dict.apply("the ＩＴ desk");
+        assert_eq!(text, "the Information Technology desk");
+    }
+
+    /// Mixed or lower case is not an acronym, so it keeps folding — that is
+    /// what lets a sentence-initial capital match.
+    #[test]
+    fn a_mixed_case_alias_still_folds_case() {
+        let dict = en(vec![entry("iPhone", &["Iphone"])]);
+        let (text, _) = dict.apply("my iphone and my IPHONE");
+        assert_eq!(text, "my iPhone and my iPhone");
     }
 
     #[test]
