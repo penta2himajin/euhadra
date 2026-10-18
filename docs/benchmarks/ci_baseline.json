@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated": "epoch:1788104000",
-  "asr_model": "parakeet-tdt-0.6b-v3-int8 (en) / reazonspeech-zipformer-ja-en-int8 (ja) / paraformer-large-zh (zh) / parakeet-tdt-0.6b-v3-int8 (es) / dolphin-small-ctc-int8 (ko)",
+  "asr_model": "parakeet-tdt-0.6b-v3-int8 (en) / parakeet-tdt_ctc-0.6b-ja (ja) / paraformer-large-zh (zh) / parakeet-tdt-0.6b-v3-int8 (es) / dolphin-small-ctc-int8 (ko)",
   "languages": {
     "en": {
       "samples": 30,
@@ -31,7 +31,7 @@
     },
     "ja": {
       "samples": 30,
-      "cer": 0.1057,
+      "cer": 0.0724,
       "asr_latency_ms": {
         "p50": 1267.0,
         "p95": 1937.0

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # Download the sherpa-onnx Zipformer export of ReazonSpeech k2 v2 (ja/en)
-# used as the Japanese shipping ASR path.
+# offered as a lightweight Japanese ASR option (CI evaluates ja with
+# Parakeet-ja; see #167 for the accuracy comparison).
 #
 # Layout written to $REAZON_JA_DIR (default vendor/reazon_ja):
 #

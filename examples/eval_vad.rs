@@ -53,12 +53,12 @@ struct Cli {
     #[arg(long)]
     parakeet_en_dir: Option<PathBuf>,
 
-    /// ReazonSpeech Zipformer INT8 for `ja` (shipping path). Prefer over
-    /// `--parakeet-ja-dir` when both are set.
+    /// ReazonSpeech Zipformer INT8 for `ja` (lightweight option, #167).
+    /// Preferred over `--parakeet-ja-dir` when both are set.
     #[arg(long)]
     reazon_ja_dir: Option<PathBuf>,
 
-    /// `nvidia/parakeet-tdt_ctc-0.6b-ja` bundle, used for `ja` (legacy).
+    /// `nvidia/parakeet-tdt_ctc-0.6b-ja` bundle, used for `ja` (CI path).
     #[arg(long)]
     parakeet_ja_dir: Option<PathBuf>,
 
