@@ -233,12 +233,12 @@ jobs:
         env:
           PARAKEET_V3_DIR: vendor/parakeet_v3
 
-      - name: Cache parakeet-ja ONNX bundle (~2.4 GB)
+      - name: Cache parakeet-ja ONNX bundle (~885 MB, MatMul INT8)
         id: parakeet-ja-cache
         uses: actions/cache@v4
         with:
           path: vendor/parakeet_ja
-          key: parakeet-tdt-ctc-0.6b-ja-sunilmahendrakar-v1
+          key: parakeet-tdt-ctc-0.6b-ja-int8-matmul-ee02a07
 
       - name: Download parakeet-ja model (cache miss only)
         if: steps.parakeet-ja-cache.outputs.cache-hit != 'true'
@@ -350,12 +350,12 @@ jobs:
         env:
           PARAKEET_V3_DIR: vendor/parakeet_v3
 
-      - name: Cache parakeet-ja ONNX bundle (~2.4 GB)
+      - name: Cache parakeet-ja ONNX bundle (~885 MB, MatMul INT8)
         id: parakeet-ja-cache
         uses: actions/cache@v4
         with:
           path: vendor/parakeet_ja
-          key: parakeet-tdt-ctc-0.6b-ja-sunilmahendrakar-v1
+          key: parakeet-tdt-ctc-0.6b-ja-int8-matmul-ee02a07
 
       - name: Download parakeet-ja model (cache miss only)
         if: steps.parakeet-ja-cache.outputs.cache-hit != 'true'
@@ -414,6 +414,7 @@ jobs:
   # Parakeet-ja replaced whisper-tiny for `ja` in PR #11 (CER 42% → 3.3%),
   # then ReazonSpeech Zipformer INT8 replaced Parakeet-ja (#162), and
   # Parakeet-ja came back (#167: Reazon trails it even on sherpa-onnx FP32).
+  # The ja bundle is the MatMul-only, 7-bit INT8 build (#173): FP32 CER, ~885 MB.
   # Parakeet-v3 replaced whisper-tiny.en for `en` in PR #12 (WER 8.4% → 7.5%),
   # then Canary-180M-Flash INT8 replaced Parakeet-v3 for `en` in
   # PR #61 / issue #57 (WER 7.5% → 4.4%, ~2.4 GB → ~213 MB),
@@ -526,12 +527,12 @@ jobs:
         if: steps.fleurs-cache.outputs.cache-hit != 'true'
         run: python3 scripts/download_fleurs_subset.py --lang en --lang ja --lang zh --lang es --lang ko --n 30
 
-      - name: Cache parakeet-ja ONNX bundle (~2.4 GB)
+      - name: Cache parakeet-ja ONNX bundle (~885 MB, MatMul INT8)
         id: parakeet-ja-cache
         uses: actions/cache@v4
         with:
           path: vendor/parakeet_ja
-          key: parakeet-tdt-ctc-0.6b-ja-sunilmahendrakar-v1
+          key: parakeet-tdt-ctc-0.6b-ja-int8-matmul-ee02a07
 
       - name: Download parakeet-ja model (cache miss only)
         if: steps.parakeet-ja-cache.outputs.cache-hit != 'true'

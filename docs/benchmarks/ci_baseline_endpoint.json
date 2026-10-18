@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated": "epoch:1787735558",
-  "asr_model": "en=parakeet-tdt-0.6b-v3-int8 / ja=parakeet-tdt_ctc-0.6b-ja / es=parakeet-tdt-0.6b-v3-int8 / zh=paraformer-large / ko=dolphin-small-ctc-int8 (GitHub Actions ubuntu-latest; latency kept from prior Canary-era GHA scale)",
+  "asr_model": "en=parakeet-tdt-0.6b-v3-int8 / ja=parakeet-tdt_ctc-0.6b-ja-int8-matmul / es=parakeet-tdt-0.6b-v3-int8 / zh=paraformer-large / ko=dolphin-small-ctc-int8 (GitHub Actions ubuntu-latest; latency kept from prior Canary-era GHA scale)",
   "languages": {
     "en": {
       "utterances": 30,
@@ -18,16 +18,16 @@
     },
     "ja": {
       "utterances": 30,
-      "segments": 41,
+      "segments": 40,
       "endpoint_to_partial_ms": {
-        "p50": 1053.5,
-        "p95": 1645.0
+        "p50": 436.0,
+        "p95": 670.0
       },
       "endpoint_to_final_ms": {
-        "p50": 2326.9,
-        "p95": 3684.0
+        "p50": 945.0,
+        "p95": 1470.0
       },
-      "segment_rtf": 0.118
+      "segment_rtf": 0.048
     },
     "es": {
       "utterances": 30,

@@ -101,7 +101,7 @@ Ordered by how directly each one serves the stated goal. Effort figures are roug
   - Get the ja gold sets reviewed by a native speaker (issue #125).
   - Expand them beyond 25/40 utterances, including dictation-style speech rather than read speech.
   - Add a precision gate for "cleanup removed real speech". The goal promises accuracy, so false removals matter more than missed fillers.
-- **R5. Revisit the ja default model under the accuracy-first criterion.** Either keep Parakeet-ja as the default and offer Reazon as a small option, or record why a 46 % relative CER increase is acceptable. Measure a quantised Parakeet-ja first: FluidAudio's INT8-encoder CoreML build suggests model size can be reduced without that loss (§5.3). *Status: Parakeet-ja is the ja path again (#167). Reazon trails it even with sherpa-onnx's FP32 decode (FLEURS-ja CER 0.0885 vs 0.0724) and stays as an option; the quantised Parakeet-ja measurement is still open.*
+- **R5. Revisit the ja default model under the accuracy-first criterion.** Either keep Parakeet-ja as the default and offer Reazon as a small option, or record why a 46 % relative CER increase is acceptable. Measure a quantised Parakeet-ja first: FluidAudio's INT8-encoder CoreML build suggests model size can be reduced without that loss (§5.3). *Status: Parakeet-ja is the ja path again (#167). Reazon trails it even with sherpa-onnx's FP32 decode (FLEURS-ja CER 0.0885 vs 0.0724) and stays as an option; a MatMul-only INT8 build with 7-bit weights (#173) keeps the FP32 CER at ~885 MB (FLEURS-ja test 0.0549 vs 0.0566), while an all-op INT8 build loses 35 %.*
 
 ### Fix what blocks always-on use
 
