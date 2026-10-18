@@ -61,6 +61,7 @@ pub struct ReazonAdapter {
     joiner: Mutex<Session>,
     fbank: Fbank,
     vocab: Vocab,
+    unk_id: Option<i64>,
     model_dir: PathBuf,
 }
 
@@ -86,6 +87,7 @@ impl ReazonAdapter {
             decoder: Mutex::new(decoder),
             joiner: Mutex::new(joiner),
             fbank: Fbank::new(FbankOpts::dolphin_default()),
+            unk_id: vocab.id_of("<unk>"),
             vocab,
             model_dir: dir.to_path_buf(),
         })
@@ -107,7 +109,13 @@ impl ReazonAdapter {
                 samples.len()
             )));
         }
+        self.decode_features(feats, n_frames)
+    }
 
+    /// Encoder + greedy search on precomputed `[n_frames, 80]` FBANK
+    /// features (row-major). Lets the decode path be checked against
+    /// sherpa-onnx on its own captured encoder input.
+    pub fn decode_features(&self, feats: Vec<f32>, n_frames: usize) -> Result<String, AsrError> {
         let dim = self.fbank.n_mels();
         let x: Array3<f32> = Array3::from_shape_vec((1, n_frames, dim), feats).map_err(|e| {
             AsrError::Inference(format!("reazon x tensor shape: {e}"))
@@ -146,7 +154,11 @@ impl ReazonAdapter {
         };
 
         let t_enc = enc_out.shape()[1];
-        let mut hyp: Vec<i64> = vec![BLANK_ID; CONTEXT_SIZE];
+        // sherpa-onnx primes the decoder with `[-1, …, -1, blank]`, not all
+        // blanks: icefall's decoder zeroes the embedding of negative ids, so
+        // the two contexts differ and `[blank, blank]` drops opening words.
+        let mut hyp: Vec<i64> = vec![-1; CONTEXT_SIZE];
+        hyp[CONTEXT_SIZE - 1] = BLANK_ID;
         let mut decoder_out = self.run_decoder(&hyp[hyp.len() - CONTEXT_SIZE..])?;
         let mut tokens: Vec<i64> = Vec::new();
 
@@ -155,7 +167,8 @@ impl ReazonAdapter {
             let enc_row: Array2<f32> = enc_t.insert_axis(ndarray::Axis(0));
             let logit = self.run_joiner(&enc_row, &decoder_out)?;
             let y = argmax(&logit) as i64;
-            if y != BLANK_ID {
+            // sherpa-onnx treats `<unk>` as blank: no emit, no decoder rerun.
+            if y != BLANK_ID && Some(y) != self.unk_id {
                 tokens.push(y);
                 hyp.push(y);
                 decoder_out = self.run_decoder(&hyp[hyp.len() - CONTEXT_SIZE..])?;
@@ -314,6 +327,28 @@ mod tests {
         let text = adapter.transcribe_samples(&chunk.samples).unwrap();
         eprintln!("TEXT={text:?}");
         assert!(!text.is_empty(), "empty hyp for 1893 via read_wav");
+    }
+
+    /// sherpa-onnx 1.13.8 greedy output on the same INT8 files (#167).
+    /// This used to lose the opening name (decoder primed with
+    /// `[blank, blank]` instead of `[-1, blank]`) and the space after `M`
+    /// (every `▁` stripped).
+    ///
+    /// Only noise-stable utterances belong here. The INT8 encoder
+    /// re-quantises activations per call, so ~1e-6 FBANK differences flip
+    /// near-tie tokens on 4–7 of the 30 FLEURS-ja clips (e.g. 1861's final
+    /// `す`); 1736 holds under that perturbation.
+    #[test]
+    fn matches_sherpa_onnx_greedy_on_fleurs_ja() {
+        let dir = std::path::Path::new("vendor/reazon_ja");
+        let wav = std::path::Path::new("data/fleurs_subset/ja/audio/1736.wav");
+        if !dir.join("encoder.int8.onnx").is_file() || !wav.is_file() {
+            eprintln!("skip: vendor/reazon_ja or fleurs 1736.wav not present");
+            return;
+        }
+        let adapter = ReazonAdapter::load(dir).unwrap();
+        let text = adapter.transcribe_samples(&read_pcm16_wav(wav)).unwrap();
+        assert_eq!(text, "ロランドメンドーサはM 十六ライフルで観光客に発砲しました");
     }
 
     fn read_pcm16_wav(path: &Path) -> Vec<f32> {
