@@ -162,6 +162,8 @@ pub fn normalize_lenient(text: &str) -> String {
     let mut out = String::with_capacity(digits_normalised.len());
     let mut last_space = true; // suppress leading whitespace
     for c in digits_normalised.chars() {
+        // Fullwidth ％ is the same symbol as `%`; fold rather than drop.
+        let c = if c == '％' { '%' } else { c };
         if DROP_PUNCT.contains(&c) {
             continue;
         }
@@ -206,7 +208,10 @@ fn normalize_chinese_numerals(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut run = String::new();
     for c in text.chars() {
-        if is_zh_numeric(c) {
+        // ASCII digits join the run so `1万` / `100万` scale (as
+        // `parse_kr_positional` does for `15만`); an all-ASCII run is
+        // returned untouched by `convert_zh_numeric_run`.
+        if is_zh_numeric(c) || c.is_ascii_digit() {
             run.push(c);
         } else {
             if !run.is_empty() {
@@ -240,6 +245,7 @@ fn is_zh_numeric(c: char) -> bool {
             | '千'
             | '万'
             | '亿'
+            | '億'
     )
 }
 
@@ -260,14 +266,17 @@ fn zh_digit_value(c: char) -> Option<u64> {
 }
 
 fn convert_zh_numeric_run(run: &str) -> String {
+    if run.chars().all(|c| c.is_ascii_digit()) {
+        return run.to_string();
+    }
     let has_positional = run
         .chars()
-        .any(|c| matches!(c, '十' | '百' | '千' | '万' | '亿'));
+        .any(|c| matches!(c, '十' | '百' | '千' | '万' | '亿' | '億'));
     if has_positional {
         parse_positional(run).to_string()
     } else {
         run.chars()
-            .filter_map(zh_digit_value)
+            .filter_map(|c| c.to_digit(10).map(u64::from).or_else(|| zh_digit_value(c)))
             .filter_map(|d| char::from_digit(d as u32, 10))
             .collect()
     }
@@ -277,13 +286,18 @@ fn parse_positional(s: &str) -> u64 {
     // Standard Chinese-number scale parser. `total` holds the value
     // accumulated across 万/亿 boundaries; `section` is the in-progress
     // sub-10000 segment; `last` is the most recent unit digit awaiting
-    // a 十/百/千 multiplier.
+    // a 十/百/千 multiplier. Implicit-1 applies to every unit char, as in
+    // `parse_kr_positional`: bare `百` → 100, `万` → 10000.
     let mut total: u64 = 0;
     let mut section: u64 = 0;
     let mut last: u64 = 0;
     let mut have_last = false;
     for c in s.chars() {
-        if let Some(d) = zh_digit_value(c) {
+        if let Some(d) = c.to_digit(10) {
+            // Multi-digit Arabic block (`100万`); `last` is 0 after a unit.
+            last = last * 10 + u64::from(d);
+            have_last = true;
+        } else if let Some(d) = zh_digit_value(c) {
             last = d;
             have_last = true;
         } else {
@@ -294,23 +308,23 @@ fn parse_positional(s: &str) -> u64 {
                     have_last = false;
                 }
                 '百' => {
-                    section += last * 100;
+                    section += if have_last { last } else { 1 } * 100;
                     last = 0;
                     have_last = false;
                 }
                 '千' => {
-                    section += last * 1000;
+                    section += if have_last { last } else { 1 } * 1000;
                     last = 0;
                     have_last = false;
                 }
                 '万' => {
-                    total += (section + last) * 10_000;
+                    total += (section + last).max(1) * 10_000;
                     section = 0;
                     last = 0;
                     have_last = false;
                 }
-                '亿' => {
-                    total += (section + last) * 100_000_000;
+                '亿' | '億' => {
+                    total += (section + last).max(1) * 100_000_000;
                     section = 0;
                     last = 0;
                     have_last = false;
@@ -821,6 +835,44 @@ mod tests {
         assert_eq!(normalize_lenient("〇"), "0");
         // Run of pure zeros stays as zeros (digit-by-digit).
         assert_eq!(normalize_lenient("〇〇"), "00");
+    }
+
+    #[test]
+    fn zh_bare_scale_units_imply_one() {
+        // 百 / 千 / 万 / 亿 without a leading digit mean 1×, like 十.
+        // ReazonSpeech-ja writes 百キロ / 百十七人; these used to
+        // normalise to `0` / `17` and cost CER the model didn't earn.
+        assert_eq!(normalize_lenient("百"), "100");
+        assert_eq!(normalize_lenient("百十七"), "117");
+        assert_eq!(normalize_lenient("千"), "1000");
+        assert_eq!(normalize_lenient("千五百"), "1500");
+        assert_eq!(normalize_lenient("万"), "10000");
+        assert_eq!(normalize_lenient("亿"), "100000000");
+        assert_eq!(normalize_lenient("一万"), "10000");
+    }
+
+    #[test]
+    fn zh_arabic_digits_scale_with_adjacent_unit() {
+        // FLEURS-ja/zh references mix Arabic digits with 万 (`約1万年前`).
+        // The digits must scale, not sit beside a converted unit.
+        assert_eq!(normalize_lenient("約1万年前"), "約10000年前");
+        assert_eq!(normalize_lenient("100万"), "1000000");
+        assert_eq!(normalize_lenient("1万2000"), "12000");
+        assert_eq!(cer_lenient("約1万年前", "約一万年前"), 0.0);
+        // Pure Arabic runs are untouched.
+        assert_eq!(normalize_lenient("2011年"), "2011年");
+    }
+
+    #[test]
+    fn ja_oku_is_the_same_unit_as_yi() {
+        assert_eq!(normalize_lenient("三億"), "300000000");
+        assert_eq!(normalize_lenient("1億"), "100000000");
+    }
+
+    #[test]
+    fn fullwidth_percent_folds_to_ascii() {
+        assert_eq!(normalize_lenient("百％"), "100%");
+        assert_eq!(cer_lenient("100%の確率", "百％の確率"), 0.0);
     }
 
     #[test]
