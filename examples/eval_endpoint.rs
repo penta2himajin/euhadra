@@ -334,6 +334,10 @@ async fn measure_lang(
         async fn transcribe(&self, chunks: &[AudioChunk]) -> Result<Transcript, AsrError> {
             self.0.transcribe(chunks).await
         }
+
+        fn max_input_duration(&self) -> Option<std::time::Duration> {
+            self.0.max_input_duration()
+        }
     }
 
     let mut partial_samples = Samples::new();

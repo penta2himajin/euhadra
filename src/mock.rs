@@ -104,6 +104,7 @@ pub struct AsrCall {
 pub struct RecordingAsr {
     calls: std::sync::Arc<std::sync::Mutex<Vec<AsrCall>>>,
     transcripts: Vec<String>,
+    max_input: Option<std::time::Duration>,
 }
 
 impl RecordingAsr {
@@ -118,7 +119,15 @@ impl RecordingAsr {
         Self {
             calls: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             transcripts,
+            max_input: None,
         }
+    }
+
+    /// Declare a [`max_input_duration`](AsrAdapter::max_input_duration),
+    /// as a backend with a length limit would.
+    pub fn with_max_input(mut self, max: std::time::Duration) -> Self {
+        self.max_input = Some(max);
+        self
     }
 
     /// A handle to the call log, cloneable before the adapter is moved
@@ -143,6 +152,10 @@ impl AsrAdapter for RecordingAsr {
             .or_else(|| self.transcripts.last())
             .expect("checked non-empty in new");
         Ok(Transcript::new(text.clone()))
+    }
+
+    fn max_input_duration(&self) -> Option<std::time::Duration> {
+        self.max_input
     }
 }
 

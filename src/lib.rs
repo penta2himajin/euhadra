@@ -41,6 +41,9 @@ pub mod eval;
 #[cfg(feature = "mic")]
 pub mod mic;
 
+#[cfg(all(feature = "fluidaudio", target_os = "macos"))]
+pub mod fluidaudio;
+
 #[cfg(feature = "onnx")]
 pub mod embedding;
 
