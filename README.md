@@ -26,7 +26,7 @@ Each stage is a Rust trait. Swap any component without touching the rest.
 
 ```toml
 [dependencies]
-euhadra = "0.3"
+euhadra = "0.4"
 ```
 
 The default build is deliberately lean — the pipeline runtime plus the rule-based

@@ -8,6 +8,78 @@ stated in the README's Stability section.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-10-18
+
+Additive at the API level: nothing public was removed and no signature
+changed. `AsrAdapter` gained a method with a default, and `PipelineError`
+gained a variant; `PipelineError` is `#[non_exhaustive]`. It is a minor
+rather than a patch release for two reasons: two modules are new, and
+some behaviour changed — where a forced segment cut lands, and how
+all-caps dictionary aliases match.
+
+### Added
+
+- **`FluidAudioAdapter`** (`euhadra::fluidaudio`, `fluidaudio` feature,
+  macOS only). Runs Parakeet-ja on CoreML and the Apple Neural Engine via
+  FluidAudio, using
+  [`fluidaudio-rs-featmodels`](https://crates.io/crates/fluidaudio-rs-featmodels),
+  a published fork of fluidaudio-rs (#166). On FLEURS-ja test (321
+  utterances), through the same VAD pipeline:
+
+  | adapter | CER | RTF | peak RSS |
+  |---|---|---|---|
+  | FluidAudio | 0.0565 | 0.008 | 102 MB |
+  | ONNX INT8 Parakeet-ja | 0.0499 | 0.025 | 1 080 MB |
+
+  The RSS figures come from a run without VAD. The CER gap is the cost
+  of the 15 s input limit below, not the model. Building the feature
+  needs Xcode. Binaries that link it need `/usr/lib/swift` on their
+  rpath.
+- **Adapter input limits.** A backend that degrades past a certain
+  input length declares it with `AsrAdapter::max_input_duration()`
+  (default `None`). The pipeline then enforces it in three ways:
+  - It tightens the segmenter's forced cut to fit.
+  - `FinalPass::SpeechOnly` packs whole utterances into calls within the
+    limit. Packs are joined with a space, except next to kana, kanji or
+    full-width text.
+  - A recording over the limit with no VAD fails with
+    `PipelineError::InputTooLong` instead of being cut blind.
+
+  FluidAudio declares 15 s. A sweep over 8–15 s found 15 s best.
+- **`AsrLifecycle`**: `load_state` / `unload` / `reload` for adapters that
+  hold heavy runtime state (#145).
+- **`ReazonAdapter`** (`onnx`): ReazonSpeech Zipformer INT8. It is a
+  ~72 MB Apache-2.0 option for Japanese, and its output matches
+  sherpa-onnx's greedy decode (#162, #171).
+- **`SegmenterConfig::preroll`** and a boundary guard. These reduce
+  clipped utterance onsets without letting one utterance's padding
+  bleed into the next (#144).
+- **Punctuation normalizers** `ZhPunctNormalizer`, `JaPunctNormalizer` and
+  `EsPunctNormalizer` for over-segmented punctuation (#165).
+- The CLI `record` command runs VAD and prints partials, and the `cli`
+  feature now implies `vad` (#155).
+
+### Changed
+
+- **A forced segment cut lands on the last ≥100 ms pause** inside the
+  utterance instead of at the `max_speech` frame. Cutting mid-word made
+  the ASR transcribe the word's ending twice. Recordings that never reach
+  `max_speech` (30 s by default) segment exactly as before (#179).
+- **All-caps dictionary aliases match with their case.** `IT` no longer
+  rewrites every `it`. The ASR already distinguishes them: measured on
+  Parakeet-v3, the spoken acronym came out as `IT` 34/36 times and the
+  pronoun never did (#139).
+- The CI evaluation paths and setup scripts moved:
+  - en/es: Parakeet-v3 INT8 (#163)
+  - ja: Parakeet-ja as a MatMul-only, 7-bit INT8 build (#170, #175),
+    published as `penta2himajin/parakeet-tdt_ctc-0.6b-ja-onnx-int8`.
+    7-bit weights avoid U8S8 saturation on x86 without VNNI.
+
+### Fixed
+
+- Canary's EOS guard counts speech frames rather than the recording's
+  length, so silence no longer forces token generation (#136).
+
 ## [0.3.0] — 2026-08-08
 
 Additive. Nothing was removed and no signature changed, so `0.2` code
@@ -257,7 +329,8 @@ with `crate version 0.1.0 already uploaded`.
   capture behind `mic`; the `euhadra` binary behind `cli`.
 - Evaluation harness and mock adapters behind `testing`.
 
-[Unreleased]: https://github.com/penta2himajin/euhadra/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/penta2himajin/euhadra/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/penta2himajin/euhadra/releases/tag/v0.4.0
 [0.3.0]: https://github.com/penta2himajin/euhadra/releases/tag/v0.3.0
 [0.2.0]: https://github.com/penta2himajin/euhadra/releases/tag/v0.2.0
 [0.1.0]: https://crates.io/crates/euhadra/0.1.0
