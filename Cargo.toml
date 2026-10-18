@@ -174,12 +174,13 @@ required-features = ["onnx"]
 name = "bench_dolphin_ko"
 required-features = ["onnx"]
 
-# A fork of FluidInference/fluidaudio-rs that bumps FluidAudio to 0.17.7
-# and adds model-version selection (Japanese) and local model loading.
-# A git dependency until it is published to crates.io, so `cargo publish`
-# needs that first (the parakeet-rs-featsize precedent above).
+# A published fork of FluidInference/fluidaudio-rs that bumps FluidAudio to
+# 0.17.7 and adds model-version selection (Japanese) and local model
+# loading — the parakeet-rs-featsize precedent above. It keeps the library
+# name `fluidaudio_rs`; renamed here so the feature reads `fluidaudio-rs`,
+# and switching back to upstream once the changes land is this one line.
 [target.'cfg(target_os = "macos")'.dependencies]
-fluidaudio-rs = { git = "https://github.com/penta2himajin/fluidaudio-rs", rev = "a8eec1d834f540264c28bf1866c22ab34587f81f", default-features = false, features = ["asr"], optional = true }
+fluidaudio-rs = { package = "fluidaudio-rs-featmodels", version = "0.17.7", default-features = false, features = ["asr"], optional = true }
 
 [dev-dependencies]
 # euhadra depends on itself with `testing` on so that integration tests
