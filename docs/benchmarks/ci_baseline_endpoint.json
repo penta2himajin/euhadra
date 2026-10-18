@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated": "epoch:1787735558",
-  "asr_model": "en=parakeet-tdt-0.6b-v3-int8 / ja=reazonspeech-zipformer-ja-en-int8 / es=parakeet-tdt-0.6b-v3-int8 / zh=paraformer-large / ko=dolphin-small-ctc-int8 (GitHub Actions ubuntu-latest; latency kept from prior Canary-era GHA scale)",
+  "asr_model": "en=parakeet-tdt-0.6b-v3-int8 / ja=parakeet-tdt_ctc-0.6b-ja / es=parakeet-tdt-0.6b-v3-int8 / zh=paraformer-large / ko=dolphin-small-ctc-int8 (GitHub Actions ubuntu-latest; latency kept from prior Canary-era GHA scale)",
   "languages": {
     "en": {
       "utterances": 30,
