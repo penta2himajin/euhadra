@@ -33,25 +33,53 @@ const PRINTABLE_BASE_CHARS: [u32; 256] = [
 /// BPE `<unk>` codepoint (`chr(8263)`); icefall maps it to space.
 const BPE_UNK: char = '\u{2047}';
 
+/// Byte for one printable-base char (`<unk>` → space).
+fn byte_of(ch: char) -> Option<u8> {
+    if ch == BPE_UNK {
+        return Some(b' ');
+    }
+    // Linear scan is fine — vocab decode is tiny vs ONNX.
+    PRINTABLE_BASE_CHARS
+        .iter()
+        .position(|&c| c == ch as u32)
+        .map(|i| i as u8)
+}
+
 /// icefall `byte_decode`: map the BPE surface string back to UTF-8 text.
 pub fn byte_decode(text: &str) -> String {
-    let mut out = Vec::with_capacity(text.len());
-    for ch in text.chars() {
-        let b = if ch == BPE_UNK {
-            Some(32u8)
-        } else {
-            // Linear scan is fine — vocab decode is tiny vs ONNX.
-            PRINTABLE_BASE_CHARS
-                .iter()
-                .position(|&c| c == ch as u32)
-                .map(|i| i as u8)
-        };
-        match b {
-            Some(byte) => out.push(byte),
-            None => return String::new(),
-        }
-    }
+    let Some(out) = text.chars().map(byte_of).collect::<Option<Vec<u8>>>() else {
+        return String::new();
+    };
     String::from_utf8(out).unwrap_or_default()
+}
+
+/// sherpa-onnx `IsCJK` (text-utils.cc).
+fn is_cjk(c: char) -> bool {
+    matches!(c as u32,
+        0x1100..=0x11FF | 0x2E80..=0xA4CF | 0xA840..=0xD7AF | 0xF900..=0xFAFF
+        | 0xFE30..=0xFE4F | 0xFF65..=0xFFDC | 0x20000..=0x2FFFF)
+}
+
+/// sherpa-onnx `IsPunct` (text-utils.cc).
+fn is_punct(c: char) -> bool {
+    matches!(c as u32,
+        0x21..=0x2F | 0x3A..=0x40 | 0x5B..=0x60 | 0x7B..=0x7E | 0x3000..=0x303F
+        | 0xFF01..=0xFF0F | 0xFF1A..=0xFF20 | 0xFF3B..=0xFF40 | 0xFF5B..=0xFF65)
+}
+
+/// sherpa-onnx `RemoveSpaceBetweenCjk`: drop a space between two CJK
+/// chars or before punctuation.
+fn remove_space_between_cjk(text: &str) -> String {
+    let c: Vec<char> = text.chars().collect();
+    (0..c.len())
+        .filter(|&i| {
+            !(c[i] == ' '
+                && i > 0
+                && i + 1 < c.len()
+                && ((is_cjk(c[i - 1]) && is_cjk(c[i + 1])) || is_punct(c[i + 1])))
+        })
+        .map(|i| c[i])
+        .collect()
 }
 
 /// `tokens.txt` lines: `<symbol> <id>`.
@@ -103,21 +131,34 @@ impl Vocab {
         self.tokens.get(id as usize).map(|s| s.as_str())
     }
 
-    /// Join non-blank token strings (strip SentencePiece `▁`), then byte-decode.
+    pub fn id_of(&self, sym: &str) -> Option<i64> {
+        self.tokens.iter().position(|t| t == sym).map(|i| i as i64)
+    }
+
+    /// Port of sherpa-onnx `SymbolTable::DecodeByteBpe` +
+    /// `RemoveSpaceBetweenCjk`: `▁` becomes a space only after a printable
+    /// ASCII byte, so Japanese stays unspaced while English words split.
     pub fn decode_hyp(&self, ids: &[i64], blank_id: i64) -> String {
-        let mut surface = String::new();
+        let mut bytes: Vec<u8> = Vec::new();
         for &id in ids {
             if id == blank_id {
                 continue;
             }
-            if let Some(tok) = self.get(id) {
-                if tok.starts_with('<') && tok.ends_with('>') {
-                    continue;
+            let Some(tok) = self.get(id) else { continue };
+            if tok.starts_with('<') && tok.ends_with('>') {
+                continue;
+            }
+            for ch in tok.chars() {
+                if ch == '\u{2581}' {
+                    if matches!(bytes.last(), Some(&b) if (0x21..=0x7e).contains(&b)) {
+                        bytes.push(b' ');
+                    }
+                } else if let Some(b) = byte_of(ch) {
+                    bytes.push(b);
                 }
-                surface.push_str(&tok.replace('\u{2581}', ""));
             }
         }
-        byte_decode(&surface)
+        remove_space_between_cjk(&String::from_utf8_lossy(&bytes))
     }
 }
 
@@ -138,6 +179,35 @@ mod tests {
         // tokens.txt id 3 is `▁ƊĢĥ`; after stripping ▁ the surface byte-decodes to い.
         let surface: String = ['\u{018a}', '\u{0122}', '\u{0125}'].iter().collect();
         assert_eq!(byte_decode(&surface), "い");
+    }
+
+    /// Token surface for `s`: one printable-base char per UTF-8 byte.
+    fn bbpe(s: &str) -> String {
+        s.bytes()
+            .map(|b| char::from_u32(PRINTABLE_BASE_CHARS[b as usize]).unwrap())
+            .collect()
+    }
+
+    fn decode(toks: &[&str]) -> String {
+        let vocab = Vocab {
+            tokens: toks.iter().map(|t| t.to_string()).collect(),
+        };
+        let ids: Vec<i64> = (0..toks.len() as i64).collect();
+        vocab.decode_hyp(&ids, -1)
+    }
+
+    #[test]
+    fn word_boundary_is_a_space_only_after_ascii_like_sherpa_onnx() {
+        let (m, ju, i) = (bbpe("M"), bbpe("十"), bbpe("い"));
+        // Reazon emits `▁` on every token; sherpa-onnx renders it as a
+        // space only after a printable ASCII byte (FLEURS-ja 1736).
+        assert_eq!(decode(&[&format!("▁{i}"), &format!("▁{m}"), &format!("▁{ju}")]), "いM 十");
+        assert_eq!(
+            decode(&[&format!("▁{}", bbpe("He")), &bbpe("llo"), &format!("▁{}", bbpe("world"))]),
+            "Hello world"
+        );
+        // ... and drops it again before punctuation.
+        assert_eq!(decode(&[&format!("▁{m}"), &format!("▁{}", bbpe("。"))]), "M。");
     }
 
     #[test]
