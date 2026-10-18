@@ -138,6 +138,14 @@ struct AsrResult {
 }
 ```
 
+**1 回に渡せる入力の上限（`max_input_duration`）。** ある長さを超えると精度が落ちるバックエンドは、`AsrAdapter::max_input_duration()` で上限を宣言する（既定は `None` で上限なし）。上限を守らせるのはパイプラインの役目になる。発話の切れ目を知っているのがパイプラインだけだからだ。パイプラインは次の 3 つを行う（§3.7）:
+
+- `Segmenter` の強制分割（`max_speech`）を、前後の余白を含めても上限に収まるように縮める
+- `FinalPass::SpeechOnly` では、発話をまるごと上限以下にまとめ、まとめた単位ごとに 1 回ずつ転写する
+- VAD が無いまま上限を超える録音は、`PipelineError::InputTooLong` で拒否する。音声の途中で切ると語の途中で切れてしまうからだ
+
+FluidAudio の日本語モデルは 15 秒を宣言する（#166）。15 秒を超えると、FluidAudio が自分で区切った継ぎ目で文字を落とすためだ（FluidAudio#1031）。
+
 **想定実装**:
 - `WhisperLocalAdapter` — Whisper.cpp / MLX Whisper（オンデバイス）
 - `WhisperCloudAdapter` — OpenAI Whisper API
@@ -543,7 +551,7 @@ L1 の ASR / E2E p50 は **ファイル全文を渡してから結果が返る�
 
 | ポリシー | 最終 transcript | ASR パス数 |
 |---|---|---|
-| `SpeechOnly`（既定） | 検出された音声を連結し、**1 発話として**転写 | 2 |
+| `SpeechOnly`（既定） | 検出された音声を連結し、**1 発話として**転写する。アダプタが上限を宣言していれば、発話をまるごと上限以下にまとめ、まとめた単位ごとに転写してつなぐ | 2 |
 | `WholeUtterance` | 録音そのまま（無音込み） | 2 |
 | `JoinSegments` | 発話ごとの transcript を連結 | 1 |
 
@@ -1124,6 +1132,9 @@ MIT / Apache ライセンスのため、コード自体による参入障壁は�
    - **ja: `nvidia/parakeet-tdt_ctc-0.6b-ja` (Hybrid TDT-CTC、80-mel)** — `load_with_feature_size(dir, 80)` で読む。L1 の ja で whisper-tiny を置き換え、CER 42% → 3.3%、RTF 0.14 → 0.05 (PR #11)
    - v2 (en、128-mel) も `load(dir)` で同様に動作 (内部的に v3 と同じパス)
    - 80-mel サポートのため `parakeet-rs` を `penta2himajin/parakeet-rs@feature-size-injection` に git pin (`from_pretrained_with_feature_size` を追加した patch)
+- [x] FluidAudioAdapter（Parakeet-ja を CoreML / Apple Neural Engine で実行、FluidAudio 経由）[fluidaudio、macOS のみ]
+   - fluidaudio-rs のフォーク（`penta2himajin/fluidaudio-rs`。FluidAudio 0.17.7、日本語モデルの選択、ローカルからの読み込み）を git で依存している。crates.io に公開する前は `cargo publish` が通らない
+   - 1 回の入力の上限は 15 秒（`max_input_duration`）
 - [ ] Whisper Cloud (OpenAI API)
 
 **Tier 1: TextFilter**:
@@ -1288,6 +1299,7 @@ Tier 3（LlmRefiner）と `MacAccessibilityProvider` は未実装のため、上
 | `ndarray` | 多次元配列（ONNX モデル入出力） | `onnx` |
 | `tokenizers` | HuggingFace トークナイザ（BERT, bge-small） | `onnx` |
 | `rustfft` | FFT（Parakeet メルスペクトログラム計算） | `onnx` |
+| `fluidaudio-rs`（フォーク） | FluidAudio（Swift / CoreML）のバインディング（FluidAudioAdapter）。macOS のみ。ビルドに Swift のツールチェーンが必要で、リンクする実行ファイルには rpath `/usr/lib/swift` が必要 | `fluidaudio` |
 | `llama-cpp-2` (予定) | llama.cpp C API バインディング（LlamaCppRefiner） | `llm` (予定) |
 
 **Feature gate 設計**: デフォルトビルドは ML 依存ゼロ（ルールベース処理のみ）。`onnx` フラグで ONNX モデル推論を有効化。`llm` フラグ（予定）で llama.cpp 統合を有効化。
@@ -1295,6 +1307,8 @@ Tier 3（LlmRefiner）と `MacAccessibilityProvider` は未実装のため、上
 ### 10.3 FFI Strategy
 
 **現状: 未着工。消費者が現れるまで着工しない。**
+
+ここで保留しているのは、**euhadra を他の言語へ公開する FFI**（UniFFI / C ABI）である。euhadra が**バックエンドを呼び出す側の FFI** は別の話で、ONNX Runtime と同じく依存クレートの内側に閉じる。`FluidAudioAdapter` が呼ぶ Swift のブリッジ（fluidaudio-rs）がその例である（#166）。
 
 `uniffi` / `extern "C"` / `#[no_mangle]` はリポジトリに存在しない。これは意図的な保留であり、根拠は #119 の経験にある。`AsrAdapter` はチャネルベースで設計されていたが、実アダプタが 9 個揃った段階でバッチ API へ作り直す必要が生じた。設計が不注意だったのではなく、**実装が揃うまで誤りが見えなかった**。
 

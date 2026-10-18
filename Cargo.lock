@@ -593,6 +593,7 @@ dependencies = [
  "cpal",
  "earshot",
  "euhadra",
+ "fluidaudio-rs",
  "ndarray",
  "ort",
  "parakeet-rs-featsize",
@@ -629,6 +630,14 @@ name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
+
+[[package]]
+name = "fluidaudio-rs"
+version = "0.14.8"
+source = "git+https://github.com/penta2himajin/fluidaudio-rs?rev=a8eec1d834f540264c28bf1866c22ab34587f81f#a8eec1d834f540264c28bf1866c22ab34587f81f"
+dependencies = [
+ "thiserror 1.0.69",
+]
 
 [[package]]
 name = "fnv"

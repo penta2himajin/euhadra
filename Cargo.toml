@@ -141,6 +141,13 @@ onnx = [
     "dep:rustfft",
 ]
 
+# `FluidAudioAdapter`: Parakeet on CoreML / the Apple Neural Engine via
+# FluidAudio (#166). macOS only; on other targets the feature compiles to
+# nothing. Building it needs a Swift toolchain (Xcode), and binaries that
+# link it need `/usr/lib/swift` on their rpath — build.rs adds it for
+# euhadra's own tests and examples.
+fluidaudio = ["dep:fluidaudio-rs"]
+
 [[bin]]
 name = "euhadra"
 path = "src/main.rs"
@@ -166,6 +173,13 @@ required-features = ["onnx"]
 [[example]]
 name = "bench_dolphin_ko"
 required-features = ["onnx"]
+
+# A fork of FluidInference/fluidaudio-rs that bumps FluidAudio to 0.17.7
+# and adds model-version selection (Japanese) and local model loading.
+# A git dependency until it is published to crates.io, so `cargo publish`
+# needs that first (the parakeet-rs-featsize precedent above).
+[target.'cfg(target_os = "macos")'.dependencies]
+fluidaudio-rs = { git = "https://github.com/penta2himajin/fluidaudio-rs", rev = "a8eec1d834f540264c28bf1866c22ab34587f81f", default-features = false, features = ["asr"], optional = true }
 
 [dev-dependencies]
 # euhadra depends on itself with `testing` on so that integration tests
