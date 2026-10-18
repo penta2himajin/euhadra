@@ -64,6 +64,12 @@ pub struct SegmenterConfig {
     pub max_speech: Option<Duration>,
 }
 
+/// How long a pause must be to cut at when an utterance reaches
+/// [`SegmenterConfig::max_speech`]. Short enough that speakers take one
+/// between most sentences, long enough not to be the gap inside a word —
+/// the same 100 ms Silero VAD uses for its forced splits.
+const MIN_SPLIT_PAUSE: Duration = Duration::from_millis(100);
+
 impl Default for SegmenterConfig {
     fn default() -> Self {
         Self {
@@ -98,6 +104,12 @@ pub struct Segmenter {
     /// Left-side rewind in samples: `max(speech_pad, preroll)`.
     left_margin_samples: usize,
     max_speech_frames: Option<usize>,
+    /// Silence frames that make a pause worth cutting at when the
+    /// utterance has to be forced closed. See [`MIN_SPLIT_PAUSE`].
+    split_pause_frames: usize,
+    /// The last such pause inside the open utterance, as (last speech
+    /// frame before it, first speech frame after it).
+    pause: Option<(usize, usize)>,
 
     /// Frames pushed so far — the cursor into the recording.
     frame_index: usize,
@@ -155,6 +167,8 @@ impl Segmenter {
             pad_samples,
             left_margin_samples: pad_samples.max(preroll_samples),
             max_speech_frames: config.max_speech.map(|d| frames(d).max(1)),
+            split_pause_frames: frames(MIN_SPLIT_PAUSE).max(1),
+            pause: None,
             frame_index: 0,
             open_at: None,
             speech_run: 0,
@@ -195,6 +209,9 @@ impl Segmenter {
             // ── Utterance open ───────────────────────────────────────
             Some(start) => {
                 if is_speech {
+                    if self.silence_run >= self.split_pause_frames {
+                        self.pause = Some((self.last_speech, index));
+                    }
                     self.last_speech = index;
                     self.silence_run = 0;
                 } else {
@@ -208,6 +225,16 @@ impl Segmenter {
                 // genuine boundary always wins over a forced one.
                 if let Some(limit) = self.max_speech_frames {
                     if index + 1 - start >= limit {
+                        // Cut at the last pause the speaker took, and carry
+                        // on from where they resumed: a cut mid-word makes
+                        // the ASR transcribe the word's ending twice.
+                        if let Some((before, after)) = self.pause.take() {
+                            let silence_run = self.silence_run;
+                            let segment = self.close(start, before);
+                            self.open_at = Some(after);
+                            self.silence_run = silence_run;
+                            return Some(segment);
+                        }
                         return Some(self.close(start, index));
                     }
                 }
@@ -250,6 +277,7 @@ impl Segmenter {
         self.open_at = None;
         self.speech_run = 0;
         self.silence_run = 0;
+        self.pause = None;
         self.boundary_guard = end;
         SpeechSegment { start, end }
     }
@@ -399,6 +427,60 @@ mod tests {
             segments.len(),
             1,
             "with no cap, 60s of continuous speech is one utterance"
+        );
+    }
+
+    /// A forced cut lands mid-word, and the ASR then transcribes the word's
+    /// ending twice — once completed from the first half, once from the
+    /// second (#166 measured this on FLEURS-ja: `しています` repeated at
+    /// every cut). A short pause the speaker did take is a better place.
+    #[test]
+    fn a_forced_cut_lands_on_the_last_short_pause() {
+        let config = SegmenterConfig {
+            max_speech: Some(Duration::from_secs(1)),
+            speech_pad: Duration::ZERO,
+            preroll: Duration::ZERO,
+            ..SegmenterConfig::default()
+        };
+        let mut probs = frames(30, 1.0); // 300 ms
+        probs.extend(frames(15, 0.0)); // 150 ms pause, under min_silence
+        probs.extend(frames(40, 1.0)); // 400 ms
+        probs.extend(frames(12, 0.0)); // 120 ms pause — the last one
+        probs.extend(frames(80, 1.0)); // speech through the 1 s cap
+        probs.extend(frames(100, 0.0));
+
+        let segments = run(segmenter(config), &probs);
+        assert_eq!(segments.len(), 2, "got {segments:?}");
+        assert_eq!(
+            segments[0].end,
+            85 * 160,
+            "the cut should fall where speech stopped before the last pause"
+        );
+        assert_eq!(
+            segments[1].start,
+            97 * 160,
+            "the next utterance should start where speech resumed"
+        );
+    }
+
+    /// A dip shorter than the split pause is not a pause.
+    #[test]
+    fn a_dip_shorter_than_a_pause_is_not_a_cut_point() {
+        let config = SegmenterConfig {
+            max_speech: Some(Duration::from_secs(1)),
+            speech_pad: Duration::ZERO,
+            preroll: Duration::ZERO,
+            ..SegmenterConfig::default()
+        };
+        let mut probs = frames(50, 1.0);
+        probs.extend(frames(5, 0.0)); // 50 ms
+        probs.extend(frames(200, 1.0));
+
+        let segments = run(segmenter(config), &probs);
+        assert_eq!(
+            segments[0].end,
+            100 * 160,
+            "with no pause to use, the cut stays at the cap: {segments:?}"
         );
     }
 

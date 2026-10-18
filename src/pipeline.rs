@@ -327,8 +327,15 @@ impl Pipeline {
         let source = match self.final_pass {
             FinalPass::WholeUtterance => AsrSource::Audio(audio),
             FinalPass::SpeechOnly => {
-                speech_source(&self.asr, &samples, &segments, sample_rate, channels, &cancel)
-                    .await?
+                speech_source(
+                    &self.asr,
+                    &samples,
+                    &segments,
+                    sample_rate,
+                    channels,
+                    &cancel,
+                )
+                .await?
             }
             FinalPass::JoinSegments => {
                 let mut texts = Vec::new();
@@ -1088,7 +1095,9 @@ pub enum PipelineError {
     /// is no voice activity detector to split it at utterance
     /// boundaries. Cutting it blind would land mid-word, so it is refused
     /// instead; add a [`vad`](PipelineBuilder::vad).
-    #[error("{duration:?} of audio exceeds the ASR adapter's {max:?} limit; add a VAD to split it")]
+    #[error(
+        "{duration:?} of audio exceeds the ASR adapter's {max:?} limit; add a VAD to split it"
+    )]
     InputTooLong { duration: Duration, max: Duration },
 }
 

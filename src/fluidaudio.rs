@@ -17,8 +17,13 @@
 //! The > 15 s column is why [`max_input_duration`](AsrAdapter::max_input_duration)
 //! is declared: FluidAudio splits longer Japanese input itself and drops
 //! text at the seams (FluidAudio#1031), so the pipeline packs utterances
-//! into ≤ 15 s calls instead. ANE-resident memory lives in the `aned`
-//! process and is not in the RSS figure.
+//! into ≤ 15 s calls instead. Through the pipeline (Earshot +
+//! `SpeechOnly`, same 321 utterances) that takes > 15 s from 0.1011 to
+//! 0.0773 and the whole set to 0.0565, against 0.0499 for the ONNX adapter
+//! with no limit; packing the ONNX adapter the same way gives 0.0561, so
+//! the gap is the cost of splitting long sentences, not the model.
+//! ANE-resident memory lives in the `aned` process and is not in the RSS
+//! figure.
 //!
 //! Binaries that link this need `/usr/lib/swift` on their rpath for the
 //! Swift concurrency runtime; euhadra's `build.rs` adds it for its own

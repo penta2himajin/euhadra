@@ -140,7 +140,11 @@ async fn one_long_utterance_fits_in_session_partials_too() {
 
     let calls = calls.lock().unwrap();
     assert_all_fit(&calls);
-    assert!(calls.len() > 2, "partials plus a final pass expected, got {}", calls.len());
+    assert!(
+        calls.len() > 2,
+        "partials plus a final pass expected, got {}",
+        calls.len()
+    );
 }
 
 /// Without a detector there is nowhere safe to cut, and a silent cut
@@ -157,7 +161,10 @@ async fn over_the_limit_without_a_vad_is_an_error() {
         matches!(err, PipelineError::InputTooLong { .. }),
         "got {err:?}"
     );
-    assert!(calls.lock().unwrap().is_empty(), "the adapter must not be called");
+    assert!(
+        calls.lock().unwrap().is_empty(),
+        "the adapter must not be called"
+    );
 }
 
 #[tokio::test]
@@ -165,7 +172,10 @@ async fn under_the_limit_without_a_vad_is_unchanged() {
     let samples = synth(&[(2.0, true)]);
     let asr = RecordingAsr::new(["a"]).with_max_input(MAX);
     let pipeline = Pipeline::builder().asr(asr).build().unwrap();
-    assert_eq!(pipeline.transcribe(&chunks(&samples)).await.unwrap().text(), "a");
+    assert_eq!(
+        pipeline.transcribe(&chunks(&samples)).await.unwrap().text(),
+        "a"
+    );
 }
 
 /// Pieces are joined the way the language writes: Japanese has no word
