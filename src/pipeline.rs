@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -171,15 +172,20 @@ impl PipelineBuilder {
     /// written anywhere. Those three defaults are what makes the
     /// LLM-free path — the one this crate exists for — expressible.
     pub fn build(self) -> Result<Pipeline, PipelineError> {
+        let asr = self.asr.ok_or(PipelineError::MissingComponent("asr"))?;
+        let mut segmenter_config = self.segmenter_config;
+        if let Some(max) = asr.max_input_duration() {
+            fit_segmenter(&mut segmenter_config, max);
+        }
         Ok(Pipeline {
-            asr: self.asr.ok_or(PipelineError::MissingComponent("asr"))?,
+            asr,
             filters: self.filters,
             processors: self.processors,
             refiner: self.refiner,
             context: self.context,
             emitter: self.emitter,
             vad: self.vad,
-            segmenter_config: self.segmenter_config,
+            segmenter_config,
             final_pass: self.final_pass,
             audio_channel_size: self.audio_channel_size,
         })
@@ -321,7 +327,8 @@ impl Pipeline {
         let source = match self.final_pass {
             FinalPass::WholeUtterance => AsrSource::Audio(audio),
             FinalPass::SpeechOnly => {
-                AsrSource::Owned(speech_only(&samples, &segments, sample_rate, channels)?)
+                speech_source(&self.asr, &samples, &segments, sample_rate, channels, &cancel)
+                    .await?
             }
             FinalPass::JoinSegments => {
                 let mut texts = Vec::new();
@@ -565,7 +572,15 @@ impl Pipeline {
                 match final_pass {
                     FinalPass::WholeUtterance => AsrSource::Owned(chunks),
                     FinalPass::SpeechOnly => {
-                        AsrSource::Owned(speech_only(&samples, &segments, sample_rate, channels)?)
+                        speech_source(
+                            &asr,
+                            &samples,
+                            &segments,
+                            sample_rate,
+                            channels,
+                            &cancel_inner,
+                        )
+                        .await?
                     }
                     FinalPass::JoinSegments => AsrSource::Text(segment_texts.join(" ")),
                 }
@@ -738,32 +753,121 @@ fn slice_chunk(
     }
 }
 
-/// Join the detected speech into one recording, dropping the silence.
+/// Join the detected speech into recordings, dropping the silence.
+///
+/// One recording when `max` is `None`. Otherwise whole utterances are
+/// packed greedily, in order, into recordings of at most `max` samples;
+/// an utterance that is itself longer — only possible through rounding,
+/// since [`fit_segmenter`] tightens the forced cut — is split as a last
+/// resort so that the limit holds without exception.
 ///
 /// Overlapping segments are trimmed rather than duplicated — padding
 /// wider than half the minimum silence can make two neighbours meet.
-fn speech_only(
+fn speech_packs(
     samples: &[f32],
     segments: &[SpeechSegment],
-    sample_rate: u32,
-    channels: u16,
-) -> Result<Vec<AudioChunk>, PipelineError> {
-    let mut speech: Vec<f32> = Vec::new();
+    max: Option<usize>,
+) -> Result<Vec<Vec<f32>>, PipelineError> {
+    let mut pieces: Vec<&[f32]> = Vec::new();
     let mut cursor = 0usize;
     for segment in segments {
         let start = segment.start.max(cursor).min(samples.len());
         let end = segment.end.clamp(start, samples.len());
-        speech.extend_from_slice(&samples[start..end]);
+        if end > start {
+            pieces.push(&samples[start..end]);
+        }
         cursor = end;
     }
-    if speech.is_empty() {
+    if pieces.is_empty() {
         return Err(PipelineError::NoSpeech);
     }
-    Ok(vec![AudioChunk {
-        samples: speech,
+    let Some(max) = max.filter(|&m| m > 0) else {
+        return Ok(vec![pieces.concat()]);
+    };
+    let mut packs = Vec::new();
+    let mut current: Vec<f32> = Vec::new();
+    for piece in pieces {
+        for part in piece.chunks(max) {
+            if !current.is_empty() && current.len() + part.len() > max {
+                packs.push(std::mem::take(&mut current));
+            }
+            current.extend_from_slice(part);
+        }
+    }
+    packs.push(current);
+    Ok(packs)
+}
+
+/// The final transcript's source under [`FinalPass::SpeechOnly`].
+///
+/// One pack is handed over as audio, exactly as before limits existed.
+/// Several are transcribed here, one call each, and joined.
+async fn speech_source(
+    asr: &Arc<dyn AsrAdapter>,
+    samples: &[f32],
+    segments: &[SpeechSegment],
+    sample_rate: u32,
+    channels: u16,
+    cancel: &CancellationToken,
+) -> Result<AsrSource<'static>, PipelineError> {
+    let max = asr.max_input_duration().map(|d| {
+        let per_channel = (d.as_secs_f64() * sample_rate as f64) as usize;
+        per_channel * channels.max(1) as usize
+    });
+    let mut packs = speech_packs(samples, segments, max)?;
+    let chunk = |samples| AudioChunk {
+        samples,
         sample_rate,
         channels,
-    }])
+    };
+    if packs.len() == 1 {
+        return Ok(AsrSource::Owned(vec![chunk(packs.remove(0))]));
+    }
+    let mut texts = Vec::new();
+    for pack in packs {
+        if let Some(text) = transcribe_segment(asr, &chunk(pack), cancel).await? {
+            texts.push(text);
+        }
+    }
+    Ok(AsrSource::Text(join_texts(&texts)))
+}
+
+/// Tighten the segmenter's forced cut so that a segment, padding
+/// included, fits within an adapter's `max` input.
+///
+/// A segment is the speech run plus the left margin
+/// (`max(speech_pad, preroll)`) plus the trailing `speech_pad`, rounded
+/// up to whole frames; the slack covers that rounding.
+fn fit_segmenter(config: &mut SegmenterConfig, max: Duration) {
+    const SLACK: Duration = Duration::from_millis(100);
+    let margin = config.speech_pad.max(config.preroll) + config.speech_pad + SLACK;
+    let cap = max.saturating_sub(margin).max(SLACK);
+    config.max_speech = Some(config.max_speech.map_or(cap, |m| m.min(cap)));
+}
+
+/// Join per-pack transcripts the way the text is written: a space
+/// between words, but none next to Japanese or Chinese characters, which
+/// are written without word spaces. Hangul is spaced and keeps the space.
+fn join_texts(texts: &[String]) -> String {
+    let unspaced = |c: char| {
+        matches!(c,
+            '\u{3000}'..='\u{30FF}'   // CJK punctuation, kana
+            | '\u{3400}'..='\u{4DBF}' // CJK extension A
+            | '\u{4E00}'..='\u{9FFF}' // CJK unified ideographs
+            | '\u{F900}'..='\u{FAFF}' // CJK compatibility ideographs
+            | '\u{FF00}'..='\u{FFEF}' // full-width forms
+        )
+    };
+    let mut out = String::new();
+    for text in texts {
+        if let (Some(left), Some(right)) = (out.chars().last(), text.chars().next()) {
+            if !unspaced(left) && !unspaced(right) {
+                out.push(' ');
+            }
+        }
+        out.push_str(text);
+    }
+    out
 }
 
 /// Transcribe one utterance, returning `None` when the adapter found
@@ -978,6 +1082,14 @@ pub enum PipelineError {
     /// rather than in the caller's configuration.
     #[error("invalid state transition: {0}")]
     InvalidTransition(String),
+
+    /// A whole recording is longer than the adapter's
+    /// [`max_input_duration`](AsrAdapter::max_input_duration) and there
+    /// is no voice activity detector to split it at utterance
+    /// boundaries. Cutting it blind would land mid-word, so it is refused
+    /// instead; add a [`vad`](PipelineBuilder::vad).
+    #[error("{duration:?} of audio exceeds the ASR adapter's {max:?} limit; add a VAD to split it")]
+    InputTooLong { duration: Duration, max: Duration },
 }
 
 // ---------------------------------------------------------------------------
@@ -1025,6 +1137,18 @@ async fn run_session(
                 AsrSource::Owned(audio) => audio,
                 AsrSource::Text(_) => unreachable!("matched above"),
             };
+            if let Some(max) = asr.max_input_duration() {
+                let samples: usize = audio.iter().map(|c| c.samples.len()).sum();
+                let rate = AudioChunk::sample_rate_of(audio).unwrap_or(0) as f64
+                    * audio.first().map_or(1, |c| c.channels.max(1)) as f64;
+                if rate > 0.0 {
+                    let duration = Duration::from_secs_f64(samples as f64 / rate);
+                    if duration > max {
+                        sm.reset();
+                        return Err(PipelineError::InputTooLong { duration, max });
+                    }
+                }
+            }
             let transcript = tokio::select! {
                 biased;
                 _ = cancel.cancelled() => {

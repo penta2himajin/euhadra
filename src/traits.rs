@@ -25,6 +25,28 @@ pub trait AsrAdapter: Send + Sync {
     /// contiguous buffer should concatenate; the split between chunks
     /// carries no meaning beyond how the audio happened to arrive.
     async fn transcribe(&self, audio: &[AudioChunk]) -> Result<Transcript, AsrError>;
+
+    /// The longest audio this adapter can take in one call, if it has a
+    /// limit.
+    ///
+    /// The pipeline is the only stage that knows where the utterances
+    /// are, so it keeps every call within this: the segmenter's forced
+    /// cut is tightened to fit, [`FinalPass::SpeechOnly`](crate::pipeline::FinalPass)
+    /// transcribes the detected speech in packs of whole utterances
+    /// rather than as one recording, and a recording over the limit with
+    /// no detector to split it fails with
+    /// [`PipelineError::InputTooLong`](crate::pipeline::PipelineError)
+    /// instead of being cut blind.
+    ///
+    /// `None`, the default, keeps the single final pass. Declare a limit
+    /// only for a backend that degrades past it — FluidAudio's Japanese
+    /// model drops text at its own chunk seams beyond 15 s (#166).
+    ///
+    /// A wrapper that forwards only [`transcribe`](Self::transcribe)
+    /// silently loses the limit, so forward this too.
+    fn max_input_duration(&self) -> Option<std::time::Duration> {
+        None
+    }
 }
 
 /// Why an [`AsrAdapter`] could not produce a transcript.
