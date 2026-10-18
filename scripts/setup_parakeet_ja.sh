@@ -4,9 +4,9 @@
 #
 # Default: the INT8 build (~885 MB) from
 # `penta2himajin/parakeet-tdt_ctc-0.6b-ja-onnx-int8`, verified against its
-# SHA256SUMS. Only the encoder's MatMuls are quantised, which keeps the
-# FP32 CER (FLEURS-ja test 0.0559 vs 0.0566) at ~1.9× the speed; a build
-# that quantises every op loses 35 % (#173). Built reproducibly by
+# SHA256SUMS. Only the encoder's MatMuls are quantised (7-bit weights, so
+# x86 without VNNI doesn't saturate), which keeps the FP32 CER (FLEURS-ja
+# test 0.0549 vs 0.0566); a build that quantises every op loses 35 % (#173). Built reproducibly by
 # `scripts/quantize_parakeet_ja.py`.
 #
 #   encoder-model.int8.onnx + .data      (INT8 MatMuls)
@@ -55,7 +55,7 @@ if [[ "${1:-}" == "--fp32" ]]; then
     ENCODER=encoder-model.onnx
 else
     DIR="${PARAKEET_JA_DIR:-vendor/parakeet_ja}"
-    HF_REPO="https://huggingface.co/penta2himajin/parakeet-tdt_ctc-0.6b-ja-onnx-int8/resolve/6eab63685c4f2a879e93b2e5fb6e6accb479cbc7"
+    HF_REPO="https://huggingface.co/penta2himajin/parakeet-tdt_ctc-0.6b-ja-onnx-int8/resolve/ee02a07f222c412607efc718ed343e075d9a81a3"
     FILES=(SHA256SUMS vocab.txt config.json encoder-model.int8.onnx decoder_joint-model.onnx encoder-model.int8.onnx.data decoder_joint-model.onnx.data)
     ENCODER=encoder-model.int8.onnx
     # parakeet-rs prefers encoder-model.onnx over the INT8 file, so a

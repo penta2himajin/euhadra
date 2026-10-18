@@ -6,8 +6,8 @@
 `penta2himajin/parakeet-tdt_ctc-0.6b-ja-onnx-int8` (#173).
 
 Only the encoder's constant-weight MatMuls are quantised (per-channel,
-dynamic, QInt8). Quantising every op, as the public OpenVoiceOS INT8 build
-does, costs FLEURS-ja CER 0.0566 → 0.0765; MatMul-only keeps it at 0.0559.
+dynamic, QInt8 with 7-bit range). Quantising every op, as the public OpenVoiceOS INT8 build
+does, costs FLEURS-ja CER 0.0566 → 0.0765; MatMul-only keeps it at 0.0549.
 The decoder/joint stays FP32 (46 MB).
 
 The output is byte-for-byte reproducible from the same input and pinned
@@ -34,6 +34,12 @@ quantize_dynamic(
     op_types_to_quantize=["MatMul"],
     weight_type=QuantType.QInt8,
     per_channel=True,
+    # 7-bit weights: x86 without VNNI multiplies U8S8 with VPMADDUBSW,
+    # which saturates a 16-bit pair sum (255·127·2 > 32767). Per-channel
+    # scales put every channel at ±127. Without this, the same files
+    # scored ja CER 0.30 in one CI job and 0.07 in another (#175);
+    # 255·63·2 stays below 32767. ARM and VNNI x86 are unaffected.
+    reduce_range=True,
     use_external_data_format=True,
 )
 for f in ["decoder_joint-model.onnx", "decoder_joint-model.onnx.data", "vocab.txt"]:
