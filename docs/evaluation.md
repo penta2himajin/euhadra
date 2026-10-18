@@ -22,7 +22,7 @@ euhadra のパイプラインを評価する際に使用する ASR テストデ�
 1. **`evaluate-asr` ジョブ — ASR live スモーク**
    - FLEURS の en / ja / zh / es / ko から各 10 発話を実音声で ASR に通す
      (**en: parakeet-tdt-0.6b-v3 INT8** — 出荷経路（旧: Canary INT8 / issue #57、その前は Parakeet-v3 FP32 PR #12）、
-     **ja: parakeet-tdt_ctc-0.6b-ja** — PR #11 以降。#162 で ReazonSpeech Zipformer INT8 に替えたが、#167 で精度を理由に戻した（Reazon は軽量な選択肢として残す）、
+     **ja: parakeet-tdt_ctc-0.6b-ja（MatMul のみ INT8 化、#173）** — PR #11 以降。#162 で ReazonSpeech Zipformer INT8 に替えたが、#167 で精度を理由に戻した（Reazon は軽量な選択肢として残す）、
      **zh: paraformer-large** — PR #14 以降、
      **es: parakeet-tdt-0.6b-v3 INT8** — en と同梱（旧: Canary INT8 / PR #28）、
      **ko: dolphin-small-ctc INT8** — §I 以降（旧: whisper-onnx-turbo / SenseVoice）)

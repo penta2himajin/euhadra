@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated": "epoch:1788104000",
-  "asr_model": "parakeet-tdt-0.6b-v3-int8 (en) / parakeet-tdt_ctc-0.6b-ja (ja) / paraformer-large-zh (zh) / parakeet-tdt-0.6b-v3-int8 (es) / dolphin-small-ctc-int8 (ko)",
+  "asr_model": "parakeet-tdt-0.6b-v3-int8 (en) / parakeet-tdt_ctc-0.6b-ja-int8-matmul (ja) / paraformer-large-zh (zh) / parakeet-tdt-0.6b-v3-int8 (es) / dolphin-small-ctc-int8 (ko)",
   "languages": {
     "en": {
       "samples": 30,
