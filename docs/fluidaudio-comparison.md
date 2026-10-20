@@ -69,7 +69,7 @@ Each item represents something a FluidAudio caller must account for and handle, 
 
 It is not euhadra's job to match these feature for feature. Where euhadra needs the capability, it can integrate it as a backend (§7).
 
-- **Hardware.** The ANE is the default for ASR and VAD, and the GPU is opt-in per model [FA-3]. One Shrec run on an M1 with VAD, Parakeet-ja and a diarizer loaded measured a 119 MB average / 152 MB peak app footprint and a 47 MB `aned` peak, while 1.35 GB of weights sat on disk [FA-6]. That run did not separate ANE-resident memory, so it is a lower bound **(inferred)**.
+- **Hardware.** The ANE is the default for ASR and VAD, and the GPU is opt-in per model [FA-3]. One Shrec run on an M3 Pro with VAD, Parakeet-ja and a diarizer loaded measured a 119 MB average / 152 MB peak app footprint and a 47 MB `aned` peak, while 1.35 GB of weights sat on disk [FA-6]. That run did not separate ANE-resident memory, so it is a lower bound **(inferred)**.
 - **Model catalogue.** It offers several sizes within the same model family, such as Parakeet Redux at 2-bit (183 MB encoder) and QAT Phonon-2 [FA-2]. It also offers streaming models with partial results [FA-5].
 - **Distribution.** Models download lazily, with support for mirrors, proxies, revision pinning, offline mode, resumable downloads, and explicit `cleanup()` [FA-6].
 - **Adoption and cadence.** Releases are published roughly weekly, with ~2,800 tests and macOS CI benchmarks [FA-9][FA-10].
@@ -151,7 +151,7 @@ FluidAudio (`503b4bd`, v0.17.7; GitHub and Hugging Face queried 2026-10-17):
 - [FA-3] Hardware: `Shared/MLModelConfigurationUtils.swift:11-30`; `ASR/Parakeet/SlidingWindow/TDT/AsrModels.swift:144-160`; `Package.swift:7-11`; `README.md:739` (Windows → fluid-server).
 - [FA-4] Japanese: `TDT/AsrManager.swift:335-345`, `:373-496`; `ITN/TextNormalizer.swift:68-145`; issue #1031.
 - [FA-5] Streaming and VAD: `TDT/ChunkProcessor.swift:27-28`; `Shared/ASRConstants.swift:12-15`; `Streaming/StreamingAsrManager.swift:20-60`; `VAD/VadTypes.swift:12-47`; `Benchmarks.md:615-637`.
-- [FA-6] Resources: `Shared/Download/ModelHub.swift:23-140`; `ModelRegistry.swift:27-196`; `Streaming/StreamingAsrManager.swift:50-53`; Shrec measurement, 2026-10-17 (M1, seminar mode, 56 s of audio).
+- [FA-6] Resources: `Shared/Download/ModelHub.swift:23-140`; `ModelRegistry.swift:27-196`; `Streaming/StreamingAsrManager.swift:50-53`; Shrec measurement, 2026-10-17 (M3 Pro, seminar mode, 56 s of audio).
 - [FA-8] Extensibility: `ASR/Parakeet/Streaming/StreamingAsrManager.swift:20-74`; `Diarizer/DiarizerProtocol.swift:6`; `Documentation/Orukeet.md:1-10`; `ITN/TextNormalizer.swift:184-215`.
 - [FA-9] Evaluation: `Documentation/CLI.md`; `Documentation/Benchmarks.md`; `.github/workflows/*benchmark*.yml`.
 - [FA-10] Maturity: `gh repo view FluidInference/FluidAudio`; releases and `stats/commit_activity` API; `Tests/FluidAudioTests/`; `README.md:25-126`.
